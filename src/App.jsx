@@ -1,43 +1,105 @@
 
-import { useEffect, useState } from 'react';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth } from './firebase';
-import LoginPage from './pages/LoginPage.jsx';
-import FlightsPage from './pages/FlightsPage.jsx';
-import CounterPage from './pages/CounterPage.jsx';
-import BagroomScanPage from './pages/BagroomScanPage.jsx';
-import AircraftScanPage from './pages/AircraftScanPage.jsx';
+// src/App.jsx
+import { useState } from "react";
+import LoginPage from "./pages/LoginPage.jsx";
+import FlightsPage from "./pages/FlightsPage.jsx";
+import CounterPage from "./pages/CounterPage.jsx";
+import BagroomScanPage from "./pages/BagroomScanPage.jsx";
+import AircraftScanPage from "./pages/AircraftScanPage.jsx";
 
-export default function App(){
+export default function App() {
+  // Usuario que viene de Firestore (users collection)
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("flights");
-  const [flightId, setFlightId] = useState(null);
 
-  useEffect(()=> {
-    const unsub = onAuthStateChanged(auth, u => { setUser(u); setLoading(false); });
-    return ()=>unsub();
-  },[]);
+  const [currentView, setCurrentView] = useState("flights");
+  const [selectedFlightId, setSelectedFlightId] = useState(null);
 
-  if(loading) return <p>Loading...</p>;
-  if(!user) return <LoginPage/>;
+  if (!user) {
+    // Mientras no haya user, mostramos solo Login
+    return <LoginPage onLogin={setUser} />;
+  }
+
+  const handleLogout = () => {
+    setUser(null);
+    setSelectedFlightId(null);
+    setCurrentView("flights");
+  };
+
+  const renderView = () => {
+    if (currentView === "flights") {
+      return (
+        <FlightsPage
+          onFlightSelected={(flightId) => {
+            setSelectedFlightId(flightId);
+            setCurrentView("counter");
+          }}
+        />
+      );
+    }
+
+    if (!selectedFlightId) {
+      return <p>Please select a flight first.</p>;
+    }
+
+    if (currentView === "counter") {
+      return <CounterPage flightId={selectedFlightId} user={user} />;
+    }
+
+    if (currentView === "bagroom") {
+      return <BagroomScanPage flightId={selectedFlightId} user={user} />;
+    }
+
+    if (currentView === "aircraft") {
+      return <AircraftScanPage flightId={selectedFlightId} user={user} />;
+    }
+
+    return null;
+  };
 
   return (
-    <div style={{padding:20}}>
-      <h1>BLCS System</h1>
-      <p>Logged in as {user.email} <button onClick={()=>signOut(auth)}>Logout</button></p>
+    <div className="app-container" style={{ maxWidth: 960, margin: "0 auto", padding: 16 }}>
+      <header className="app-header" style={{ marginBottom: 16 }}>
+        <h1>Baggage Loading Control System</h1>
 
-      <div style={{display:'flex',gap:10}}>
-        <button onClick={()=>setView("flights")}>Flights</button>
-        <button disabled={!flightId} onClick={()=>setView("counter")}>Counter</button>
-        <button disabled={!flightId} onClick={()=>setView("bagroom")}>Bagroom</button>
-        <button disabled={!flightId} onClick={()=>setView("aircraft")}>Aircraft</button>
-      </div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <nav className="nav-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => setCurrentView("flights")}>Flights</button>
+            <button onClick={() => setCurrentView("counter")} disabled={!selectedFlightId}>
+              Counter
+            </button>
+            <button onClick={() => setCurrentView("bagroom")} disabled={!selectedFlightId}>
+              Bagroom
+            </button>
+            <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
+              Aircraft
+            </button>
+          </nav>
 
-      {view === "flights" && <FlightsPage onFlightSelected={(id)=>{setFlightId(id); setView("counter");}}/>}
-      {view === "counter" && <CounterPage flightId={flightId}/>}
-      {view === "bagroom" && <BagroomScanPage flightId={flightId}/>}
-      {view === "aircraft" && <AircraftScanPage flightId={flightId}/>}
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.85rem" }}>
+              Logged in as <strong>{user.username}</strong> (PIN {user.pin})
+            </div>
+            <button onClick={handleLogout} style={{ marginTop: 4 }}>
+              Logout
+            </button>
+          </div>
+        </div>
+
+        {selectedFlightId && (
+          <p>
+            <strong>Flight selected:</strong> {selectedFlightId}
+          </p>
+        )}
+      </header>
+
+      <main>{renderView()}</main>
     </div>
   );
 }
