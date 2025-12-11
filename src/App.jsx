@@ -1,17 +1,16 @@
-
 // src/App.jsx
 import { useState } from "react";
 import LoginPage from "./pages/LoginPage.jsx";
+import DashboardPage from "./pages/DashboardPage.jsx";
 import FlightsPage from "./pages/FlightsPage.jsx";
 import CounterPage from "./pages/CounterPage.jsx";
 import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
 
 export default function App() {
-  // Usuario que viene de Firestore (users collection)
   const [user, setUser] = useState(null);
 
-  const [currentView, setCurrentView] = useState("flights");
+  const [currentView, setCurrentView] = useState("dashboard"); // 👈 ahora empieza en dashboard
   const [selectedFlightId, setSelectedFlightId] = useState(null);
 
   if (!user) {
@@ -22,10 +21,19 @@ export default function App() {
   const handleLogout = () => {
     setUser(null);
     setSelectedFlightId(null);
-    setCurrentView("flights");
+    setCurrentView("dashboard");
+  };
+
+  const handleOpenFlightFromDashboard = (flightId, targetView) => {
+    setSelectedFlightId(flightId);
+    setCurrentView(targetView);
   };
 
   const renderView = () => {
+    if (currentView === "dashboard") {
+      return <DashboardPage user={user} onOpenFlight={handleOpenFlightFromDashboard} />;
+    }
+
     if (currentView === "flights") {
       return (
         <FlightsPage
@@ -70,6 +78,7 @@ export default function App() {
           }}
         >
           <nav className="nav-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>
             <button onClick={() => setCurrentView("flights")}>Flights</button>
             <button onClick={() => setCurrentView("counter")} disabled={!selectedFlightId}>
               Counter
@@ -84,7 +93,8 @@ export default function App() {
 
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: "0.85rem" }}>
-              Logged in as <strong>{user.username}</strong> (PIN {user.pin})
+              Logged in as <strong>{user.username}</strong>
+              {user.role && <> ({user.role})</>}
             </div>
             <button onClick={handleLogout} style={{ marginTop: 4 }}>
               Logout
@@ -93,7 +103,7 @@ export default function App() {
         </div>
 
         {selectedFlightId && (
-          <p>
+          <p style={{ marginTop: 8 }}>
             <strong>Flight selected:</strong> {selectedFlightId}
           </p>
         )}
