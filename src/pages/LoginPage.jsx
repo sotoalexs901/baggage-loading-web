@@ -118,7 +118,7 @@ export default function LoginPage({ onLogin }) {
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="e.g. anapoles"
+            placeholder="e.g.Enter your username"
             style={{
               width: "100%",
               padding: "8px",
@@ -146,7 +146,7 @@ export default function LoginPage({ onLogin }) {
             value={pin}
             onChange={(e) => setPin(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="e.g. 9005"
+            placeholder="e.g. Enter your PIN"
             style={{
               width: "100%",
               padding: "8px",
