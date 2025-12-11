@@ -4,7 +4,7 @@ import { auth } from "../firebase";
 
 // Dominio interno para construir el email a partir del PIN.
 // Debe coincidir con el que usaste al crear los usuarios en Firebase Auth.
-const PIN_LOGIN_DOMAIN = "tpa.local"; // puedes cambiarlo por otro, ej: "baggage.local"
+const PIN_LOGIN_DOMAIN = blcsystem.com
 
 export default function LoginPage() {
   const [pin, setPin] = useState("");
