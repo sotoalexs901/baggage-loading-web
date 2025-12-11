@@ -1,43 +1,60 @@
-import { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "../firebase";
+// src/pages/LoginPage.jsx
+import React, { useState } from "react";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "../firebase";
 
-// Dominio interno para construir el email a partir del PIN.
-// Debe coincidir con el que usaste al crear los usuarios en Firebase Auth.
-const PIN_LOGIN_DOMAIN = blcsystem.com
-
-export default function LoginPage() {
+// Este Login NO usa Firebase Auth.
+// Usa la colección "users" en Firestore con campos: username, pin, etc.
+export default function LoginPage({ onLogin }) {
+  const [username, setUsername] = useState("");
   const [pin, setPin] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setErrorMsg("");
-    setLoading(true);
+  const handleLogin = async () => {
+    setError("");
+
+    const cleanUsername = username.trim();
+    const cleanPin = pin.trim();
+
+    if (!cleanUsername || !cleanPin) {
+      setError("Please enter username and PIN.");
+      return;
+    }
 
     try {
-      const trimmedPin = pin.trim();
-      if (!trimmedPin) {
-        throw new Error("PIN requerido");
+      setLoading(true);
+
+      const q = query(
+        collection(db, "users"),
+        where("username", "==", cleanUsername),
+        where("pin", "==", cleanPin)
+      );
+
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        setError("Invalid credentials.");
+        setLoading(false);
+        return;
       }
 
-      const email = `${trimmedPin}@${PIN_LOGIN_DOMAIN}`;
-      const password = trimmedPin; // o una contraseña fija si así lo decides
+      const userData = { id: snap.docs[0].id, ...snap.docs[0].data() };
 
-      await signInWithEmailAndPassword(auth, email, password);
-      // onAuthStateChanged en App.jsx se encargará del resto
+      // Aquí ya tenemos el mismo tipo de usuario que en TPA Schedule.
+      // En lugar de navigate/context, usamos la prop onLogin:
+      onLogin(userData);
+      setLoading(false);
     } catch (err) {
       console.error(err);
-      let niceMessage = "Error al iniciar sesión con PIN.";
-      if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
-        niceMessage = "PIN incorrecto.";
-      } else if (err.code === "auth/user-not-found") {
-        niceMessage = "No existe un usuario con ese PIN.";
-      }
-      setErrorMsg(niceMessage);
-    } finally {
+      setError("Login error. Try again.");
       setLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") {
+      handleLogin();
     }
   };
 
@@ -48,88 +65,145 @@ export default function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f3f4f6",
+        background: "#0f172a",
+        backgroundImage: "radial-gradient(circle at top, #1d4ed8 0, #0f172a 60%)",
       }}
     >
       <div
         style={{
-          background: "white",
+          background: "rgba(15,23,42,0.9)",
           padding: "24px",
-          borderRadius: "8px",
-          boxShadow: "0 10px 25px rgba(0,0,0,0.1)",
+          borderRadius: "16px",
+          boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
           width: "100%",
-          maxWidth: "320px",
+          maxWidth: "360px",
+          color: "white",
         }}
       >
-        <h2
+        <h1
           style={{
             marginTop: 0,
-            marginBottom: "16px",
+            marginBottom: "4px",
             textAlign: "center",
+            fontSize: "1.6rem",
           }}
         >
-          BLCS – Login
-        </h2>
+          BLCS System
+        </h1>
         <p
           style={{
-            fontSize: "0.9rem",
             textAlign: "center",
+            marginTop: 0,
             marginBottom: "16px",
+            fontSize: "0.85rem",
+            color: "#cbd5f5",
           }}
         >
-          Ingresa tu <strong>PIN</strong> (mismo que en TPA Schedule).
+          Baggage Loading Control · TPA
         </p>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: "12px" }}>
-            <label
-              style={{
-                display: "block",
-                marginBottom: "4px",
-                fontSize: "0.9rem",
-              }}
-            >
-              PIN
-            </label>
-            <input
-              type="password"
-              // type password para que no se vea el PIN
-              value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              required
-              style={{
-                width: "100%",
-                padding: "8px",
-                borderRadius: "4px",
-                border: "1px solid #d1d5db",
-                fontSize: "1rem",
-              }}
-            />
-          </div>
-
-          {errorMsg && (
-            <p style={{ color: "red", fontSize: "0.85rem", marginBottom: "8px" }}>
-              {errorMsg}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
+        {/* Username */}
+        <div style={{ marginBottom: "12px" }}>
+          <label
             style={{
-              width: "100%",
-              padding: "8px 0",
-              borderRadius: "4px",
-              border: "none",
-              background: "#2563eb",
-              color: "white",
-              fontWeight: "600",
-              cursor: loading ? "default" : "pointer",
+              display: "block",
+              marginBottom: "4px",
+              fontSize: "0.9rem",
             }}
           >
-            {loading ? "Ingresando..." : "Entrar"}
-          </button>
-        </form>
+            User
+          </label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="e.g. anapoles"
+            style={{
+              width: "100%",
+              padding: "8px",
+              borderRadius: "6px",
+              border: "1px solid #4b5563",
+              background: "#020617",
+              color: "white",
+            }}
+          />
+        </div>
+
+        {/* PIN */}
+        <div style={{ marginBottom: "12px" }}>
+          <label
+            style={{
+              display: "block",
+              marginBottom: "4px",
+              fontSize: "0.9rem",
+            }}
+          >
+            PIN
+          </label>
+          <input
+            type="password"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="e.g. 9005"
+            style={{
+              width: "100%",
+              padding: "8px",
+              borderRadius: "6px",
+              border: "1px solid #4b5563",
+              background: "#020617",
+              color: "white",
+            }}
+          />
+        </div>
+
+        {/* Error */}
+        {error && (
+          <p
+            style={{
+              color: "#fecaca",
+              fontSize: "0.75rem",
+              textAlign: "center",
+              marginTop: "0.25rem",
+              marginBottom: "0.5rem",
+            }}
+          >
+            {error}
+          </p>
+        )}
+
+        {/* Button */}
+        <button
+          onClick={handleLogin}
+          disabled={loading}
+          style={{
+            width: "100%",
+            padding: "8px 0",
+            borderRadius: "999px",
+            border: "none",
+            background: loading ? "#1f2937" : "#2563eb",
+            color: "white",
+            fontWeight: 600,
+            cursor: loading ? "default" : "pointer",
+            marginTop: "4px",
+            marginBottom: "8px",
+          }}
+        >
+          {loading ? "Checking..." : "Login"}
+        </button>
+
+        <p
+          style={{
+            fontSize: "0.7rem",
+            textAlign: "center",
+            color: "#9ca3af",
+            marginTop: "4px",
+          }}
+        >
+          Use the same <strong>username</strong> and <strong>PIN</strong> as in
+          TPA Schedule System.
+        </p>
       </div>
     </div>
   );
