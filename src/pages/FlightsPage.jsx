@@ -11,8 +11,8 @@ import {
   getDocs,
   limit,
 } from "firebase/firestore";
-import { db, functions } from "../firebase"; // ✅ usa functions con región correcta
 import { httpsCallable } from "firebase/functions";
+import { db, functions } from "../firebase"; // ✅ usa functions con región correcta
 
 function getTodayYYYYMMDD() {
   const d = new Date();
@@ -33,7 +33,7 @@ function canCreateFlights(roleRaw) {
 
 function isManager(roleRaw) {
   const role = normalizeRole(roleRaw);
-  return role === "station_manager" || role === "duty_manager";
+  return role === "station_manager" || role === "duty_manager" || role === "duty_managers";
 }
 
 function normalizeStatus(s) {
@@ -71,12 +71,19 @@ function StatusPill({ status }) {
   );
 }
 
+function formatCallableError(e) {
+  // FirebaseError (functions/httpsCallable) usual fields: code, message, details
+  const code = e?.code ? String(e.code) : "";
+  const msg = e?.message ? String(e.message) : "Unknown error";
+  const details = e?.details ? JSON.stringify(e.details) : "";
+  return [code && `(${code})`, msg, details && `Details: ${details}`].filter(Boolean).join(" ");
+}
+
 export default function FlightsPage({ user, onFlightSelected }) {
   const today = useMemo(() => getTodayYYYYMMDD(), []);
   const [selectedDate, setSelectedDate] = useState(today);
 
   const [statusFilter, setStatusFilter] = useState("active"); // "active" | "completed" | "all"
-
   const [flights, setFlights] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -90,7 +97,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // ✅ manager actions UI
+  // manager actions UI
   const [actionMsg, setActionMsg] = useState("");
   const [actionErr, setActionErr] = useState("");
   const [deletingId, setDeletingId] = useState("");
@@ -223,7 +230,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
     });
   };
 
-  // ✅ Reopen (LOADED -> LOADING) via Cloud Function (REGION FIXED)
+  // Reopen (LOADED -> LOADING) via Cloud Function
   const handleReopen = async (f) => {
     if (!allowManage) return;
 
@@ -238,7 +245,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
     try {
       setReopeningId(f.id);
 
-      // ✅ IMPORTANT: use functions from ../firebase (region fixed)
       const fn = httpsCallable(functions, "reopenFlight");
       await fn({ flightId: f.id });
 
@@ -246,13 +252,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setTimeout(() => setActionMsg(""), 2500);
     } catch (e) {
       console.error("reopenFlight failed:", e);
-      setActionErr(e?.message || "Failed to reopen flight. Check permissions / Cloud Function deployment.");
+      setActionErr(formatCallableError(e));
     } finally {
       setReopeningId("");
     }
   };
 
-  // ✅ Delete cascade via Cloud Function (REGION FIXED)
+  // Delete cascade via Cloud Function
   const handleDelete = async (f) => {
     if (!allowManage) return;
 
@@ -268,7 +274,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
     try {
       setDeletingId(f.id);
 
-      // ✅ IMPORTANT: use functions from ../firebase (region fixed)
       const fn = httpsCallable(functions, "deleteFlightCascade");
       await fn({ flightId: f.id });
 
@@ -276,7 +281,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setTimeout(() => setActionMsg(""), 2500);
     } catch (e) {
       console.error("deleteFlightCascade failed:", e);
-      setActionErr(e?.message || "Failed to delete flight. Check permissions / Cloud Function deployment.");
+      setActionErr(formatCallableError(e));
     } finally {
       setDeletingId("");
     }
