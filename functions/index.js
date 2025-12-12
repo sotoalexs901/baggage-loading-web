@@ -25,14 +25,17 @@ async function requireManager(context) {
     throw new functions.https.HttpsError("unauthenticated", "Login required.");
   }
 
+  // 1) claims
   let role = normalizeRole(context.auth.token?.role);
 
+  // 2) fallback users/{uid}
   if (!role) {
     const uSnap = await db.collection("users").doc(context.auth.uid).get();
     role = normalizeRole(uSnap.data()?.role);
   }
 
-  if (role !== "station_manager" && role !== "duty_manager") {
+  const can = role === "station_manager" || role === "duty_manager";
+  if (!can) {
     throw new functions.https.HttpsError(
       "permission-denied",
       "Only Station Manager or Duty Manager allowed."
@@ -43,7 +46,8 @@ async function requireManager(context) {
 }
 
 /**
- * Borra una colección completa en batches
+ * Borra una colección completa en batches.
+ * (Para subcolecciones con IDs = bagtag, funciona perfecto.)
  */
 async function deleteCollection(path, batchSize = 400) {
   const colRef = db.collection(path);
@@ -59,52 +63,26 @@ async function deleteCollection(path, batchSize = 400) {
 }
 
 /**
- * Borra archivos de Storage por prefijo
+ * Borra archivos de Storage por prefijo (best-effort)
  */
 async function deleteStoragePrefix(prefix) {
   try {
     await bucket.deleteFiles({ prefix });
   } catch (e) {
-    // best-effort: no bloquea si no hay archivos
-    console.warn(`Storage cleanup skipped for ${prefix}`);
+    // No rompe si no hay archivos o si ya fueron borrados.
+    console.warn(`[deleteStoragePrefix] skipped for "${prefix}":`, e?.message || e);
   }
 }
 
-/* =========================
-   DELETE FLIGHT (CASCADE)
-========================= */
-
-exports.deleteFlightCascade = functions.https.onCall(async (data, context) => {
-  await requireManager(context);
-
-  const flightId = String(data?.flightId || "").trim();
-  if (!flightId) {
-    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
-  }
-
-  const flightRef = db.collection("flights").doc(flightId);
-  const flightSnap = await flightRef.get();
-
-  if (!flightSnap.exists) {
-    throw new functions.https.HttpsError("not-found", "Flight not found.");
-  }
-
-  // 1) Delete subcollections
-  await deleteCollection(`flights/${flightId}/aircraftScans`);
-  await deleteCollection(`flights/${flightId}/bagroomScans`);
-  await deleteCollection(`flights/${flightId}/allowedBagTags`);
-  await deleteCollection(`flights/${flightId}/reports`);
-
-  // 2) Delete Storage files
-  await deleteStoragePrefix(`flights/${flightId}/reports/`);
-  await deleteStoragePrefix(`flights/${flightId}/manifests/`);
-
-  // 3) Delete global bagTags index
+/**
+ * Borra el índice global bagTags para un flightId (en batches).
+ */
+async function deleteBagTagsIndexForFlight(flightId, batchSize = 400) {
   while (true) {
     const snap = await db
       .collection("bagTags")
       .where("flightId", "==", flightId)
-      .limit(400)
+      .limit(batchSize)
       .get();
 
     if (snap.empty) break;
@@ -113,60 +91,100 @@ exports.deleteFlightCascade = functions.https.onCall(async (data, context) => {
     snap.docs.forEach((d) => batch.delete(d.ref));
     await batch.commit();
   }
+}
 
-  // 4) Delete flight document
-  await flightRef.delete();
+/* =========================
+   DELETE FLIGHT (CASCADE)
+========================= */
 
-  return { ok: true };
-});
+exports.deleteFlightCascade = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    await requireManager(context);
+
+    const flightId = String(data?.flightId || "").trim();
+    if (!flightId) {
+      throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+    }
+
+    const flightRef = db.collection("flights").doc(flightId);
+    const flightSnap = await flightRef.get();
+
+    if (!flightSnap.exists) {
+      throw new functions.https.HttpsError("not-found", "Flight not found.");
+    }
+
+    // 1) Delete subcollections
+    await deleteCollection(`flights/${flightId}/aircraftScans`);
+    await deleteCollection(`flights/${flightId}/bagroomScans`);
+    await deleteCollection(`flights/${flightId}/allowedBagTags`);
+    await deleteCollection(`flights/${flightId}/reports`);
+
+    // 2) Delete Storage files (reports + manifests)
+    await deleteStoragePrefix(`flights/${flightId}/reports/`);
+    await deleteStoragePrefix(`flights/${flightId}/manifests/`);
+
+    // 3) Delete global bagTags index
+    await deleteBagTagsIndexForFlight(flightId);
+
+    // 4) Delete flight document
+    await flightRef.delete();
+
+    return { ok: true };
+  });
 
 /* =========================
    REOPEN FLIGHT
 ========================= */
 
-exports.reopenFlight = functions.https.onCall(async (data, context) => {
-  await requireManager(context);
+exports.reopenFlight = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    await requireManager(context);
 
-  const flightId = String(data?.flightId || "").trim();
-  if (!flightId) {
-    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
-  }
+    const flightId = String(data?.flightId || "").trim();
+    if (!flightId) {
+      throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+    }
 
-  const ref = db.collection("flights").doc(flightId);
-  const snap = await ref.get();
+    const ref = db.collection("flights").doc(flightId);
+    const snap = await ref.get();
 
-  if (!snap.exists) {
-    throw new functions.https.HttpsError("not-found", "Flight not found.");
-  }
+    if (!snap.exists) {
+      throw new functions.https.HttpsError("not-found", "Flight not found.");
+    }
 
-  const flight = snap.data() || {};
-  const status = String(flight.status || "OPEN").toUpperCase();
+    const flight = snap.data() || {};
+    const status = String(flight.status || "OPEN").trim().toUpperCase();
 
-  if (status !== "LOADED") {
-    throw new functions.https.HttpsError(
-      "failed-precondition",
-      "Only LOADED flights can be reopened."
-    );
-  }
+    if (status !== "LOADED") {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Only LOADED flights can be reopened."
+      );
+    }
 
-  await ref.set(
-    {
-      status: "LOADING",
-      aircraftLoadingCompleted: false,
-      aircraftLoadingCompletedAt: null,
-      aircraftLoadingCompletedBy: null,
-      aircraftLoadedBags: null,
+    await ref.set(
+      {
+        // Reabrimos a LOADING (para permitir seguir escaneando en aircraft)
+        status: "LOADING",
 
-      reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
-      reopenedBy: {
-        uid: context.auth.uid,
-        name: context.auth.token.name || null,
-        username: context.auth.token.username || null,
-        role: context.auth.token.role || null,
+        // Unlock
+        aircraftLoadingCompleted: false,
+        aircraftLoadingCompletedAt: null,
+        aircraftLoadingCompletedBy: null,
+        aircraftLoadedBags: null,
+
+        reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reopenedBy: {
+          uid: context.auth.uid,
+          name: context.auth.token?.name || null,
+          username: context.auth.token?.username || null,
+          role: context.auth.token?.role || null,
+        },
       },
-    },
-    { merge: true }
-  );
+      { merge: true }
+    );
 
-  return { ok: true };
-});
+    return { ok: true };
+  });
