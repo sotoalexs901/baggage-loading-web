@@ -4,7 +4,6 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -22,7 +21,8 @@ function normalizeRole(role) {
 }
 
 function cleanTagValue(v) {
-  return String(v || "").trim();
+  // ✅ quita saltos de línea (scanners a veces mandan \n o \r)
+  return String(v || "").replace(/[\r\n]+/g, "").trim();
 }
 
 function normalizeStatus(s) {
@@ -34,6 +34,10 @@ function safeStr(v, fallback = "-") {
   const s = String(v ?? "").trim();
   return s ? s : fallback;
 }
+
+// ✅ Ajusta si tus bagtags son siempre de 6–12 dígitos
+const MIN_TAG_LEN = 6;
+const AUTO_SUBMIT_IDLE_MS = 90;
 
 export default function AircraftScanPage({ flightId, user }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
@@ -60,7 +64,7 @@ export default function AircraftScanPage({ flightId, user }) {
   const [scans, setScans] = useState([]);
   const [loadingScans, setLoadingScans] = useState(true);
 
-  // Bagroom total
+  // Bagroom total (only count)
   const [bagroomTotal, setBagroomTotal] = useState(0);
   const [loadingBagroomTotal, setLoadingBagroomTotal] = useState(true);
 
@@ -76,6 +80,10 @@ export default function AircraftScanPage({ flightId, user }) {
 
   // Modal
   const { modal, show, close } = useModal();
+
+  // ✅ Auto-submit control
+  const autoTimerRef = useRef(null);
+  const isSubmittingRef = useRef(false);
 
   const popup = (title, message, tone = "info") => {
     show({
@@ -176,6 +184,13 @@ export default function AircraftScanPage({ flightId, user }) {
 
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
+  }, []);
+
+  // cleanup timer
+  useEffect(() => {
+    return () => {
+      if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+    };
   }, []);
 
   const isLoadingCompleted =
@@ -304,7 +319,9 @@ export default function AircraftScanPage({ flightId, user }) {
     return true;
   };
 
-  const handleScanSubmit = async () => {
+  const handleScanSubmit = async (forcedTag) => {
+    if (isSubmittingRef.current) return;
+
     setMsg("");
     setErr("");
     setCompleteMsg("");
@@ -315,12 +332,16 @@ export default function AircraftScanPage({ flightId, user }) {
       return;
     }
 
-    const tag = cleanTagValue(tagInput);
+    const tag = cleanTagValue(forcedTag ?? tagInput);
     if (!tag) return;
+
+    if (tag.length < MIN_TAG_LEN) return;
 
     const zoneNum = Number(zone);
 
     try {
+      isSubmittingRef.current = true;
+
       if (!flight) {
         setErr("Flight not loaded yet. Try again.");
         return;
@@ -356,11 +377,36 @@ export default function AircraftScanPage({ flightId, user }) {
     } catch (e) {
       console.error(e);
       setErr("Scan failed. Check Firestore rules/connection.");
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
+  // ✅ Auto-submit cuando el scanner termina (idle)
+  const scheduleAutoSubmit = (nextValue) => {
+    if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+
+    const cleaned = cleanTagValue(nextValue);
+
+    // si el scanner manda newline, submit inmediato
+    if (/[\r\n]/.test(String(nextValue || "")) && cleaned.length >= MIN_TAG_LEN) {
+      handleScanSubmit(cleaned);
+      return;
+    }
+
+    autoTimerRef.current = setTimeout(() => {
+      if (cleaned.length >= MIN_TAG_LEN) handleScanSubmit(cleaned);
+    }, AUTO_SUBMIT_IDLE_MS);
+  };
+
+  const handleChange = (e) => {
+    const v = e.target.value;
+    setTagInput(v);
+    if (!isLoadingCompleted) scheduleAutoSubmit(v);
+  };
+
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       handleScanSubmit();
     }
@@ -439,7 +485,6 @@ export default function AircraftScanPage({ flightId, user }) {
       headStyles: { fillColor: [240, 240, 240] },
     });
 
-    // Bingo sheet
     const tags = aircraftRows
       .slice()
       .sort((a, b) => String(a.tag).localeCompare(String(b.tag)))
@@ -496,10 +541,6 @@ export default function AircraftScanPage({ flightId, user }) {
       setMsg("");
       setCompleteMsg("");
 
-      // Siempre usamos los scans actuales del state (ya vienen en vivo),
-      // pero si quieres “snapshot exacto” del server:
-      // const snap = await getDocs(collection(db, "flights", flightId, "aircraftScans"));
-      // const aircraftRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const aircraftRows = scans;
 
       const pdfDoc = buildPdf({
@@ -508,14 +549,12 @@ export default function AircraftScanPage({ flightId, user }) {
         bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
       });
 
-      // 1) Descargar
       const downloadName = `BLCS_${safeStr(flight.flightNumber, flightId)}_${safeStr(
         flight.flightDate,
         "date"
       )}.pdf`;
       pdfDoc.save(downloadName);
 
-      // 2) Subir a storage + guardar en Firestore
       const uploaded = await uploadPdfToStorage(pdfDoc);
 
       await setDoc(
@@ -539,7 +578,6 @@ export default function AircraftScanPage({ flightId, user }) {
         { merge: true }
       );
 
-      // 3) Si quieren marcar LOADED también desde aquí
       if (alsoMarkLoaded) {
         await setDoc(
           doc(db, "flights", flightId),
@@ -561,7 +599,6 @@ export default function AircraftScanPage({ flightId, user }) {
     }
   };
 
-  // ✅ Loading Completed (modal) + generates PDF + saves report
   const handleLoadingCompleted = async () => {
     setCompleteMsg("");
 
@@ -621,11 +658,7 @@ export default function AircraftScanPage({ flightId, user }) {
                 username: user?.username || null,
                 role: user?.role || null,
               },
-
-              // ✅ Ramp supervisor name (easy reference)
               rampSupervisorOnDuty: user?.username || null,
-
-              // ✅ Final status
               status: "LOADED",
               statusUpdatedAt: serverTimestamp(),
               statusUpdatedBy: {
@@ -637,7 +670,6 @@ export default function AircraftScanPage({ flightId, user }) {
             { merge: true }
           );
 
-          // ✅ Export PDF automatically
           await exportReportPdf();
 
           setCompleteMsg("✅ Aircraft loading completed successfully. Report saved.");
@@ -683,7 +715,7 @@ export default function AircraftScanPage({ flightId, user }) {
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
           <h3 style={{ margin: 0 }}>Scan</h3>
           <p style={{ margin: "6px 0 10px", color: "#6b7280", fontSize: "0.9rem" }}>
-            Select zone, then scan bag tag.
+            Select zone, then scan bag tag. (Auto-save — no Enter needed)
           </p>
 
           <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
@@ -707,7 +739,7 @@ export default function AircraftScanPage({ flightId, user }) {
           <input
             ref={inputRef}
             value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
             disabled={isLoadingCompleted}
             placeholder={isLoadingCompleted ? "Loading completed (locked)" : "Scan bag tag…"}
@@ -720,8 +752,9 @@ export default function AircraftScanPage({ flightId, user }) {
             }}
           />
 
+          {/* Botón queda como fallback manual */}
           <button
-            onClick={handleScanSubmit}
+            onClick={() => handleScanSubmit()}
             disabled={isLoadingCompleted}
             style={{
               width: "100%",
@@ -738,7 +771,6 @@ export default function AircraftScanPage({ flightId, user }) {
             Add Scan
           </button>
 
-          {/* ✅ Export PDF anytime (also after completed) */}
           <button
             onClick={() => exportReportPdf()}
             disabled={exporting || !flight || loadingScans}
@@ -843,7 +875,7 @@ export default function AircraftScanPage({ flightId, user }) {
           </div>
 
           <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-            Tip: most scanners send ENTER automatically — you can scan without clicking the button.
+            Tip: ahora guarda automático al terminar el scan (ENTER opcional).
           </p>
         </div>
       </div>
