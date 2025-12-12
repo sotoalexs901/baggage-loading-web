@@ -1,1 +1,246 @@
-body { font-family: sans-serif; margin: 0; padding: 20px; background:#f3f4f6;}
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top, #1d4ed8 0, #020617 55%);
+  color: #0f172a;
+}
+
+.app-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.app-header h1 {
+  margin: 0 0 8px;
+}
+
+.nav-buttons button {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: white;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.nav-buttons button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.nav-buttons button:not(:disabled):hover {
+  background: #eff6ff;
+}
+
+/* DASHBOARD */
+
+.dash-root {
+  background: white;
+  border-radius: 16px;
+  padding: 20px 20px 24px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.3);
+}
+
+.dash-header-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 16px;
+}
+
+.dash-greeting {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+.dash-title {
+  margin: 4px 0;
+  font-size: 1.4rem;
+}
+
+.dash-role-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.dash-subtitle {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+.dash-summary-box {
+  min-width: 180px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1d4ed8, #0ea5e9);
+  color: white;
+  text-align: right;
+  align-self: center;
+}
+
+.dash-summary-label {
+  margin: 0;
+  font-size: 0.8rem;
+  opacity: 0.9;
+}
+
+.dash-summary-number {
+  margin: 4px 0;
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.dash-summary-caption {
+  margin: 0;
+  font-size: 0.75rem;
+  opacity: 0.9;
+}
+
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dash-card {
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  padding: 14px 14px 16px;
+  background: #f9fafb;
+}
+
+.dash-card h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.dash-card p {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: #4b5563;
+}
+
+.dash-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.dash-section {
+  margin-top: 8px;
+}
+
+.dash-section-header h3 {
+  margin: 0 0 2px;
+}
+
+.dash-section-header p {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  color: #6b7280;
+}
+
+/* Table */
+
+.dash-table-wrapper {
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+}
+
+.dash-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.dash-table thead {
+  background: #f3f4f6;
+}
+
+.dash-table th,
+.dash-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.dash-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.dash-table tr:last-child td {
+  border-bottom: none;
+}
+
+.dash-status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.dash-status-open {
+  background: #ecfdf5;
+  color: #16a34a;
+}
+
+.dash-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Buttons */
+
+button {
+  font-family: inherit;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.btn-primary {
+  background: #2563eb;
+  color: white;
+  border-color: #1d4ed8;
+}
+
+.btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.btn-secondary {
+  background: white;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+.btn-secondary:hover {
+  background: #f3f4f6;
+}
