@@ -1,5 +1,5 @@
 // src/pages/GateControllerPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   doc,
@@ -8,6 +8,9 @@ import {
   serverTimestamp,
   setDoc,
   writeBatch,
+  query,
+  orderBy,
+  deleteDoc,
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 
@@ -41,13 +44,23 @@ function normalizeStatus(s) {
   return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
 }
 
-// Extrae SOLO números (bag tags) e ignora todo lo demás
-function extractBagTagsFromText(text, { minLen = 6, maxLen = 12 } = {}) {
+// ---- tag helpers ----
+function cleanTagValue(v) {
+  return String(v || "").trim();
+}
+function onlyDigits(s) {
+  return String(s || "").replace(/\D+/g, "");
+}
+function isValidTag10(tag) {
+  const t = onlyDigits(tag);
+  return t.length === 10;
+}
+
+// ✅ Extract ONLY numeric bag tags of EXACT LENGTH = 10
+function extractBagTagsFromText(text, { exactLen = 10 } = {}) {
   const src = String(text || "");
   const matches = src.match(/\d+/g) || [];
-  const tags = matches
-    .map((s) => s.trim())
-    .filter((s) => s.length >= minLen && s.length <= maxLen);
+  const tags = matches.map((s) => s.trim()).filter((s) => s.length === exactLen);
 
   const seen = new Set();
   const unique = [];
@@ -131,6 +144,22 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
   // Strict manifest toggle
   const [strictManifest, setStrictManifest] = useState(false);
 
+  // ✅ Scan-to-build manifest
+  const [scanInput, setScanInput] = useState("");
+  const scanRef = useRef(null);
+  const [scanMsg, setScanMsg] = useState("");
+  const [scanErr, setScanErr] = useState("");
+  const [savingScan, setSavingScan] = useState(false);
+
+  // ✅ live manifest count + recent list
+  const [allowedCount, setAllowedCount] = useState(0);
+  const [recentAllowed, setRecentAllowed] = useState([]);
+  const [loadingAllowed, setLoadingAllowed] = useState(true);
+  const [deletingTag, setDeletingTag] = useState("");
+
+  // Debounce timer (for scanners that don't send Enter)
+  const debounceRef = useRef(null);
+
   // Load flight doc
   useEffect(() => {
     if (!flightId) return;
@@ -166,6 +195,33 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         console.error("GateControllerPage flight onSnapshot error:", err);
         setFlight(null);
         setFlightLoading(false);
+      }
+    );
+
+    return () => unsub();
+  }, [flightId]);
+
+  // ✅ Live allowedBagTags count + recent
+  useEffect(() => {
+    if (!flightId) return;
+
+    setLoadingAllowed(true);
+    const colRef = collection(db, "flights", flightId, "allowedBagTags");
+    const qy = query(colRef, orderBy("importedAt", "desc"));
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        setAllowedCount(snap.size);
+        const rows = snap.docs.slice(0, 60).map((d) => ({ id: d.id, ...d.data() }));
+        setRecentAllowed(rows);
+        setLoadingAllowed(false);
+      },
+      (e) => {
+        console.error("allowedBagTags snapshot error:", e);
+        setAllowedCount(0);
+        setRecentAllowed([]);
+        setLoadingAllowed(false);
       }
     );
 
@@ -212,6 +268,27 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
   // === Status info ===
   const flightStatus = normalizeStatus(flight?.status);
   const statusStyle = STATUS_COLORS[flightStatus] || STATUS_COLORS.OPEN;
+
+  // ✅ Auto set to RECEIVING when Gate starts scanning tags (only from OPEN)
+  const ensureStatusReceiving = async () => {
+    if (!flightId || !flight) return;
+    const st = normalizeStatus(flight.status);
+    if (st !== "OPEN") return;
+
+    await setDoc(
+      doc(db, "flights", flightId),
+      {
+        status: "RECEIVING",
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
+      },
+      { merge: true }
+    );
+  };
 
   const updateFlightStatus = async (nextStatus) => {
     setManifestMsg("");
@@ -311,19 +388,24 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
   };
 
+  // ✅ Preview ONLY 10-digit tags
   const previewFromText = (text) => {
     setManifestMsg("");
     setManifestErr("");
 
-    const tags = extractBagTagsFromText(text, { minLen: 6, maxLen: 12 });
+    const tags = extractBagTagsFromText(text, { exactLen: 10 });
     setManifestTagsPreview(tags);
 
     if (tags.length === 0) {
-      setManifestErr("No bag tag numbers found. If this is a scanned PDF, use OCR upload.");
+      setManifestErr("No 10-digit bag tag numbers found. If this is a scanned PDF, use OCR upload.");
       return;
     }
 
-    setManifestMsg(`Preview: found ${tags.length} bag tags (names/PNR ignored).`);
+    setManifestMsg(`Preview: found ${tags.length} bag tags (ONLY 10 digits).`);
+  };
+
+  const removeFromPreview = (tag) => {
+    setManifestTagsPreview((prev) => prev.filter((t) => t !== tag));
   };
 
   // ✅ handles CSV/TXT OR PDF; for scanned PDF triggers OCR upload
@@ -335,7 +417,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
 
       let text = "";
-
       if (isPdf) {
         setManifestMsg("Reading PDF (local)...");
         text = await readPdfAsText(file);
@@ -347,11 +428,11 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       setManifestText(text);
       previewFromText(text);
 
-      const found = extractBagTagsFromText(text).length;
+      const found = extractBagTagsFromText(text, { exactLen: 10 }).length;
 
       // Fallback to OCR for scanned PDFs
       if (isPdf && found === 0) {
-        setManifestMsg("No tags found locally. Uploading PDF for OCR...");
+        setManifestMsg("No 10-digit tags found locally. Uploading PDF for OCR...");
         const up = await uploadPdfForOcr({ file, flightId, user });
 
         setManifestMsg(
@@ -375,7 +456,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
     const tags = manifestTagsPreview;
     if (!tags || tags.length === 0) {
-      setManifestErr("Nothing to import. Click Preview first (or upload PDF for OCR).");
+      setManifestErr("Nothing to import. Preview first. (ONLY 10-digit tags are imported.)");
       return;
     }
 
@@ -390,6 +471,9 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         const batch = writeBatch(db);
 
         for (const tag of chunk) {
+          // Hard safety: only allow 10 digits
+          if (!isValidTag10(tag)) continue;
+
           const ref = doc(db, "flights", flightId, "allowedBagTags", tag);
           batch.set(ref, {
             tag,
@@ -399,6 +483,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               username: user?.username || null,
               role: user?.role || null,
             },
+            source: "import",
           });
         }
 
@@ -422,7 +507,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       );
       setStrictManifest(true);
 
-      setManifestMsg(`Imported ${imported} bag tags ✅ Strict Manifest ON`);
+      setManifestMsg(`Imported ${imported} bag tags ✅ Strict Manifest ON (10-digit only)`);
       setImporting(false);
       setTimeout(() => setManifestMsg(""), 2500);
     } catch (e) {
@@ -431,6 +516,117 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       setImporting(false);
     }
   };
+
+  // ✅ Save one scanned 10-digit bag tag into allowedBagTags
+  const saveScannedTagToManifest = async (raw) => {
+    setScanMsg("");
+    setScanErr("");
+
+    if (!canEdit) {
+      setScanErr("You don't have permission to scan/import manifest tags.");
+      return;
+    }
+
+    const cleaned = onlyDigits(cleanTagValue(raw));
+    if (!cleaned) return;
+
+    if (!isValidTag10(cleaned)) {
+      setScanErr("Invalid bag tag (must be EXACTLY 10 digits).");
+      return;
+    }
+
+    try {
+      setSavingScan(true);
+
+      // Auto RECEIVING if flight is OPEN
+      await ensureStatusReceiving();
+
+      const ref = doc(db, "flights", flightId, "allowedBagTags", cleaned);
+
+      // idempotent write
+      await setDoc(
+        ref,
+        {
+          tag: cleaned,
+          importedAt: serverTimestamp(),
+          importedBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+          source: "scan",
+        },
+        { merge: true }
+      );
+
+      // ensure strictManifest ON
+      await setDoc(
+        doc(db, "flights", flightId),
+        { strictManifest: true, strictManifestUpdatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      setStrictManifest(true);
+
+      setScanMsg(`Saved ✅  ${cleaned}`);
+      setScanInput("");
+      if (scanRef.current) scanRef.current.focus();
+    } catch (e) {
+      console.error(e);
+      setScanErr("Could not save scanned tag. Check rules/connection.");
+    } finally {
+      setSavingScan(false);
+    }
+  };
+
+  // ✅ Delete one tag from allowedBagTags (after import/scan)
+  const deleteAllowedTag = async (tag) => {
+    if (!canEdit) return;
+
+    const id = String(tag || "").trim();
+    if (!id) return;
+
+    const ok = window.confirm(`Delete this manifest tag?\n\n${id}\n\nThis cannot be undone.`);
+    if (!ok) return;
+
+    try {
+      setDeletingTag(id);
+      await deleteDoc(doc(db, "flights", flightId, "allowedBagTags", id));
+    } catch (e) {
+      console.error(e);
+      alert("Failed to delete tag. Check Firestore rules.");
+    } finally {
+      setDeletingTag("");
+    }
+  };
+
+  // Enter submit
+  const onScanKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveScannedTagToManifest(scanInput);
+    }
+  };
+
+  // ✅ Debounced auto-save (if scanner doesn't send Enter)
+  useEffect(() => {
+    if (!canEdit) return;
+    const raw = scanInput;
+    if (!raw) return;
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    debounceRef.current = setTimeout(() => {
+      const cleaned = onlyDigits(cleanTagValue(raw));
+      if (isValidTag10(cleaned)) {
+        saveScannedTagToManifest(cleaned);
+      }
+    }, 200);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanInput]);
 
   const title = isGateController ? "Gate Controller (Read Only)" : "Gate Controller";
 
@@ -460,14 +656,14 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         <p style={{ color: "#b91c1c" }}>Flight not found.</p>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14 }}>
-          <InfoCard label="Flight" value={flight.flightNumber || flight.id} />
+          <InfoCard label="Flight" value={flight.flightNumber || "-"} />
           <InfoCard label="Date" value={flight.flightDate || "-"} />
           <InfoCard label="Gate" value={flight.gate || "-"} />
           <InfoCard label="Aircraft" value={flight.aircraftType || "-"} />
         </div>
       )}
 
-      {/* ✅ Flight Status */}
+      {/* Flight Status */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -512,6 +708,128 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             Read-only access.
           </p>
         )}
+      </section>
+
+      {/* Scan Bag Tags (Build Manifest) */}
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Scan Bag Tags (Build Manifest)</h3>
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+              Scan bags one-by-one to build this flight manifest. Saves into <strong>allowedBagTags</strong>.
+              <br />
+              <strong>Only 10-digit numeric tags are accepted.</strong>
+            </p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Manifest tags saved</div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>{loadingAllowed ? "…" : allowedCount}</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "minmax(240px, 1fr) minmax(240px, 1fr)", gap: 12 }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+              Bag Tag (10 digits)
+            </label>
+            <input
+              ref={scanRef}
+              value={scanInput}
+              onChange={(e) => setScanInput(e.target.value)}
+              onKeyDown={onScanKeyDown}
+              disabled={!canEdit || savingScan}
+              placeholder={!canEdit ? "Read-only" : "Scan bag tag…"}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: 12,
+                border: "1px solid #d1d5db",
+                background: canEdit ? "white" : "#f3f4f6",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                fontSize: "0.95rem",
+              }}
+            />
+
+            <button
+              onClick={() => saveScannedTagToManifest(scanInput)}
+              disabled={!canEdit || savingScan}
+              style={{
+                width: "100%",
+                marginTop: 10,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #111827",
+                background: !canEdit ? "#9ca3af" : "#111827",
+                color: "white",
+                fontWeight: 900,
+                cursor: !canEdit ? "not-allowed" : "pointer",
+                opacity: savingScan ? 0.7 : 1,
+              }}
+            >
+              {savingScan ? "Saving…" : "Save Tag"}
+            </button>
+
+            <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
+              Tip: if your scanner does NOT send Enter, the system auto-saves after a short pause.
+            </p>
+
+            {scanMsg && <p style={{ marginTop: 8, color: "#16a34a", fontWeight: 800 }}>{scanMsg}</p>}
+            {scanErr && <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800 }}>{scanErr}</p>}
+          </div>
+
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "white", padding: 10, maxHeight: 260, overflow: "auto" }}>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
+              Recent manifest tags (click ❌ to delete)
+            </div>
+            {loadingAllowed ? (
+              <p style={{ color: "#6b7280" }}>Loading…</p>
+            ) : recentAllowed.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>No tags saved yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {recentAllowed.map((r) => {
+                  const tag = r.tag || r.id;
+                  const busy = deletingTag === tag;
+                  return (
+                    <span
+                      key={r.id}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "3px 8px",
+                        borderRadius: 999,
+                        border: "1px solid #e5e7eb",
+                        background: "#f9fafb",
+                        fontSize: "0.82rem",
+                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      }}
+                    >
+                      {tag}
+                      {canEdit && (
+                        <button
+                          onClick={() => deleteAllowedTag(tag)}
+                          disabled={busy}
+                          title="Delete tag"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            cursor: busy ? "not-allowed" : "pointer",
+                            fontWeight: 900,
+                            color: "#b91c1c",
+                            opacity: busy ? 0.6 : 1,
+                          }}
+                        >
+                          {busy ? "…" : "✕"}
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Gate Total */}
@@ -574,10 +892,11 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest</h3>
+            <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest (Import)</h3>
             <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
               Upload CSV/TXT/PDF or paste a list. System ignores names/PNR and imports only bag tag numbers.
-              If PDF is scanned, system uploads it for OCR and imports automatically.
+              <br />
+              <strong>Import reads ONLY numeric tags with exactly 10 digits.</strong>
             </p>
           </div>
 
@@ -607,12 +926,12 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
         <div style={{ marginTop: 12 }}>
           <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
-            Paste manifest text (names/PNR allowed — only numbers are used)
+            Paste manifest text (names/PNR allowed — only 10-digit numbers are used)
           </label>
           <textarea
             value={manifestText}
             onChange={(e) => setManifestText(e.target.value)}
-            placeholder={`Example:\nName 034498484 034578585\nPNR: XYZ123 03457474`}
+            placeholder={`Example:\nName 0123456789 9876543210\nPNR: XYZ123 0123456789`}
             disabled={!canEdit}
             rows={6}
             style={{
@@ -655,13 +974,20 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         {manifestTagsPreview.length > 0 && (
           <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
             <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-              Preview (first 30): <strong>{manifestTagsPreview.length}</strong> tags found
+              Preview (first 60): <strong>{manifestTagsPreview.length}</strong> tags found (10-digit only)
+              <span style={{ marginLeft: 8, color: "#6b7280" }}>
+                — click ❌ to remove before import
+              </span>
             </div>
+
             <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {manifestTagsPreview.slice(0, 30).map((t) => (
+              {manifestTagsPreview.slice(0, 60).map((t) => (
                 <span
                   key={t}
                   style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
                     padding: "3px 8px",
                     borderRadius: 999,
                     border: "1px solid #e5e7eb",
@@ -671,11 +997,26 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
                   }}
                 >
                   {t}
+                  <button
+                    onClick={() => removeFromPreview(t)}
+                    disabled={!canEdit}
+                    title="Remove from preview"
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      cursor: canEdit ? "pointer" : "not-allowed",
+                      fontWeight: 900,
+                      color: "#b91c1c",
+                    }}
+                  >
+                    ✕
+                  </button>
                 </span>
               ))}
-              {manifestTagsPreview.length > 30 && (
+
+              {manifestTagsPreview.length > 60 && (
                 <span style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-                  … +{manifestTagsPreview.length - 30} more
+                  … +{manifestTagsPreview.length - 60} more
                 </span>
               )}
             </div>
