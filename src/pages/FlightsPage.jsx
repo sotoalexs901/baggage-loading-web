@@ -1,4 +1,4 @@
-// src/pages/FlightsPage.jsx
+/// src/pages/FlightsPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   addDoc,
@@ -10,13 +10,11 @@ import {
   where,
   getDocs,
   limit,
-  doc,
-  setDoc,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, functions } from "../firebase"; // ✅ usa functions con región correcta
 
 // ✅ Cloud Functions (v9)
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
 
 function getTodayYYYYMMDD() {
   const d = new Date();
@@ -46,10 +44,10 @@ function normalizeStatus(s) {
 }
 
 const STATUS_COLORS = {
-  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
-  RECEIVING: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
-  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" }, // naranja
-  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" }, // verde
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },
+  RECEIVING: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },
 };
 
 function StatusPill({ status }) {
@@ -79,8 +77,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
   const today = useMemo(() => getTodayYYYYMMDD(), []);
   const [selectedDate, setSelectedDate] = useState(today);
 
-  // active = todo menos LOADED
-  // completed = solo LOADED
   const [statusFilter, setStatusFilter] = useState("active"); // "active" | "completed" | "all"
 
   const [flights, setFlights] = useState([]);
@@ -203,7 +199,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setShowCreate(false);
       setSaving(false);
 
-      // ✅ IMPORTANT: send full flight object
       onFlightSelected?.({
         id: docRef.id,
         flightNumber,
@@ -230,7 +225,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
     });
   };
 
-  // ✅ Reopen (LOADED -> LOADING) via Cloud Function (recommended)
+  // ✅ Reopen (LOADED -> LOADING) via Cloud Function
   const handleReopen = async (f) => {
     if (!allowManage) return;
 
@@ -245,7 +240,8 @@ export default function FlightsPage({ user, onFlightSelected }) {
     try {
       setReopeningId(f.id);
 
-      const fn = httpsCallable(getFunctions(), "reopenFlight");
+      // ✅ IMPORTANT: use functions from ../firebase (region fixed)
+      const fn = httpsCallable(functions, "reopenFlight");
       await fn({ flightId: f.id });
 
       setActionMsg(`✅ Flight reopened: ${f.flightNumber || f.id}`);
@@ -276,7 +272,8 @@ export default function FlightsPage({ user, onFlightSelected }) {
     try {
       setDeletingId(f.id);
 
-      const fn = httpsCallable(getFunctions(), "deleteFlightCascade");
+      // ✅ IMPORTANT: use functions from ../firebase (region fixed)
+      const fn = httpsCallable(functions, "deleteFlightCascade");
       await fn({ flightId: f.id });
 
       setActionMsg(`✅ Flight deleted: ${label}`);
@@ -293,15 +290,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
 
   return (
     <div style={{ background: "white", borderRadius: 12, padding: 16, border: "1px solid #e5e7eb" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "end",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ margin: 0 }}>Flights</h2>
           <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
@@ -328,12 +317,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 8,
-                  border: "1px solid #d1d5db",
-                  height: 34,
-                }}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", height: 34 }}
               >
                 <option value="active">Active</option>
                 <option value="completed">Completed</option>
@@ -412,18 +396,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
 
                 return (
                   <tr key={f.id}>
-                    <td style={td}>
-                      <strong>{f.flightNumber}</strong>
-                    </td>
+                    <td style={td}><strong>{f.flightNumber}</strong></td>
                     <td style={td}>{f.flightDate}</td>
                     <td style={td}>{f.gate || "-"}</td>
                     <td style={td}>{f.aircraftType || "-"}</td>
-                    <td style={td}>
-                      <StatusPill status={st} />
-                    </td>
+                    <td style={td}><StatusPill status={st} /></td>
 
                     <td style={{ ...td, textAlign: "right" }}>
-                      {/* Open/View */}
                       <button
                         onClick={() => openFlight(f)}
                         style={{
@@ -439,7 +418,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
                         {isCompleted ? "View" : "Open"}
                       </button>
 
-                      {/* Reopen (only LOADED + managers) */}
                       {allowManage && isCompleted && (
                         <button
                           onClick={() => handleReopen(f)}
@@ -460,7 +438,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
                         </button>
                       )}
 
-                      {/* Delete (managers) */}
                       {allowManage && (
                         <button
                           onClick={() => handleDelete(f)}
@@ -487,21 +464,17 @@ export default function FlightsPage({ user, onFlightSelected }) {
           </table>
 
           <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-            Tip: Completed flights (LOADED) remain accessible for Gate/Aircraft/Reports.
-            Managers can Reopen if needed.
+            Tip: Completed flights (LOADED) remain accessible for Gate/Aircraft/Reports. Managers can Reopen if needed.
           </p>
         </div>
       )}
 
-      {/* Create modal */}
       {showCreate && (
         <div style={overlay}>
           <div style={modal}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
               <h3 style={{ margin: 0 }}>Create Flight</h3>
-              <button onClick={closeCreate} style={xBtn} aria-label="Close">
-                ✕
-              </button>
+              <button onClick={closeCreate} style={xBtn} aria-label="Close">✕</button>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
@@ -553,9 +526,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
-              <button onClick={closeCreate} style={btnGhost}>
-                Cancel
-              </button>
+              <button onClick={closeCreate} style={btnGhost}>Cancel</button>
               <button onClick={handleCreate} disabled={saving} style={btnPrimary}>
                 {saving ? "Creating..." : "Create Flight"}
               </button>
