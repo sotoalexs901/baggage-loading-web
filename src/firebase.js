@@ -28,6 +28,6 @@ export const auth = getAuth(app);
 /**
  * ✅ IMPORTANT
  * Cloud Functions MUST match the region used in functions/index.js
- * We are using: us-east4
+ * If you used: functions.region("us-central1") then use "us-central1" here.
  */
-export const functions = getFunctions(app, "us-east4");
+export const functions = getFunctions(app, "us-central1");
