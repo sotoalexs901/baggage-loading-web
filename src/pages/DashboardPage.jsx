@@ -25,7 +25,6 @@ export default function DashboardPage({ user, onOpenFlight }) {
 
   return (
     <div className="dash-root">
-      {/* Top: welcome + quick info */}
       <section className="dash-header-card">
         <div>
           <p className="dash-greeting">Welcome back,</p>
@@ -47,7 +46,6 @@ export default function DashboardPage({ user, onOpenFlight }) {
         </div>
       </section>
 
-      {/* Middle: helper cards */}
       <section className="dash-grid">
         <div className="dash-card">
           <h3>Counter</h3>
@@ -89,7 +87,6 @@ export default function DashboardPage({ user, onOpenFlight }) {
         </div>
       </section>
 
-      {/* Flights table */}
       <section className="dash-section">
         <div className="dash-section-header">
           <h3>Today&apos;s flights</h3>
