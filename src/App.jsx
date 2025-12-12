@@ -3,9 +3,10 @@ import { useState } from "react";
 import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import FlightsPage from "./pages/FlightsPage.jsx";
-import GateControllerPage from "./pages/GateControllerPage.jsx"; // 👈 renombrado
+import GateControllerPage from "./pages/GateControllerPage.jsx";
 import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
+import ReportsPage from "./pages/ReportsPage.jsx"; // ✅ NUEVO
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -14,13 +15,12 @@ function normalizeRole(role) {
 export default function App() {
   const [user, setUser] = useState(null);
 
-  // Gate Controller asignado para el turno (seleccionado por supervisor/manager al login)
+  // Gate Controller asignado para el turno
   const [gateControllerOnDuty, setGateControllerOnDuty] = useState(null);
 
   const [currentView, setCurrentView] = useState("dashboard");
   const [selectedFlightId, setSelectedFlightId] = useState(null);
 
-  // ✅ Nuevo: Login puede mandar user + meta del turno (gateControllerOnDuty)
   const handleLogin = (userData, sessionMeta) => {
     setUser(userData);
     setGateControllerOnDuty(sessionMeta?.gateControllerUsername || null);
@@ -33,16 +33,18 @@ export default function App() {
 
   const role = normalizeRole(user.role);
   const isGateController = role === "gate_controller";
+
   const canCreateFlights = role === "station_manager" || role === "duty_manager";
   const canEditGateTotals =
     role === "station_manager" || role === "duty_manager" || role === "supervisor";
 
-  // Gate Controller: solo ver Gate Controller + Aircraft (y Dashboard)
+  // Gate Controller: solo Dashboard + Gate + Aircraft + Reports
   const canSeeDashboard = true;
   const canSeeFlights = !isGateController; // si quieres que gate_controller también pueda seleccionar vuelo, cámbialo a true
   const canSeeGate = true;
   const canSeeBagroom = !isGateController;
   const canSeeAircraft = true;
+  const canSeeReports = true; // ✅ NUEVO
 
   const handleLogout = () => {
     setUser(null);
@@ -54,7 +56,6 @@ export default function App() {
   const handleOpenFlightFromDashboard = (flightId, targetView) => {
     setSelectedFlightId(flightId);
 
-    // Por seguridad: si gate_controller intenta ir a flights/bagroom, lo bloqueamos
     if (isGateController && (targetView === "flights" || targetView === "bagroom")) {
       setCurrentView("gate");
       return;
@@ -78,10 +79,10 @@ export default function App() {
       return (
         <FlightsPage
           user={user}
-          canCreateFlights={canCreateFlights} // 👈 opcional si lo quieres usar dentro de FlightsPage
+          canCreateFlights={canCreateFlights}
           onFlightSelected={(flightId) => {
             setSelectedFlightId(flightId);
-            setCurrentView("gate"); // 👈 ahora va a Gate Controller
+            setCurrentView("gate");
           }}
         />
       );
@@ -108,6 +109,11 @@ export default function App() {
 
     if (currentView === "aircraft") {
       return <AircraftScanPage flightId={selectedFlightId} user={user} />;
+    }
+
+    // ✅ NUEVO: Reports
+    if (currentView === "reports") {
+      return <ReportsPage flightId={selectedFlightId} user={user} />;
     }
 
     return null;
@@ -146,6 +152,13 @@ export default function App() {
             {canSeeAircraft && (
               <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
                 Aircraft
+              </button>
+            )}
+
+            {/* ✅ Reports */}
+            {canSeeReports && (
+              <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
+                Reports
               </button>
             )}
           </nav>
