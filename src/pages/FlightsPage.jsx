@@ -65,9 +65,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
   const today = useMemo(() => getTodayYYYYMMDD(), []);
   const [selectedDate, setSelectedDate] = useState(today);
 
-  // ✅ NUEVO: filtro active/completed/all
-  // active = todo menos LOADED
-  // completed = solo LOADED
+  // ✅ filtro active/completed/all
   const [statusFilter, setStatusFilter] = useState("active"); // "active" | "completed" | "all"
 
   const [flights, setFlights] = useState([]);
@@ -88,7 +86,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
   useEffect(() => {
     setLoading(true);
 
-    // Cargamos por fecha, y filtramos en UI (más simple y evita queries compuestas con status)
     const q = query(
       collection(db, "flights"),
       where("flightDate", "==", selectedDate),
@@ -184,12 +181,31 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setShowCreate(false);
       setSaving(false);
 
-      onFlightSelected?.(docRef.id);
+      // ✅ IMPORTANTE: ahora mandamos el OBJETO del vuelo (no solo docRef.id)
+      onFlightSelected?.({
+        id: docRef.id,
+        flightNumber,
+        flightDate,
+        gate: gate || null,
+        aircraftType: aircraftType || null,
+        status: "OPEN",
+      });
     } catch (err) {
       console.error("Create flight error:", err);
       setFormError("Could not create flight. Check permissions/rules.");
       setSaving(false);
     }
+  };
+
+  const openFlight = (f) => {
+    onFlightSelected?.({
+      id: f.id,
+      flightNumber: f.flightNumber || null,
+      flightDate: f.flightDate || null,
+      gate: f.gate || null,
+      aircraftType: f.aircraftType || null,
+      status: f.status || "OPEN",
+    });
   };
 
   return (
@@ -215,7 +231,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
             </div>
           </div>
 
-          {/* ✅ NUEVO: status filter */}
           <div>
             <label style={{ fontSize: "0.85rem", color: "#374151" }}>Filter</label>
             <div>
@@ -292,7 +307,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
                       <button
-                        onClick={() => onFlightSelected?.(f.id)}
+                        onClick={() => openFlight(f)}
                         style={{
                           padding: "6px 12px",
                           borderRadius: 999,
@@ -317,7 +332,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
         </div>
       )}
 
-      {/* Create modal */}
       {showCreate && (
         <div style={overlay}>
           <div style={modal}>
