@@ -6,7 +6,7 @@ import FlightsPage from "./pages/FlightsPage.jsx";
 import GateControllerPage from "./pages/GateControllerPage.jsx";
 import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
-import ReportsPage from "./pages/ReportsPage.jsx"; // ✅ NUEVO
+import ReportsPage from "./pages/ReportsPage.jsx";
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -14,12 +14,12 @@ function normalizeRole(role) {
 
 export default function App() {
   const [user, setUser] = useState(null);
-
-  // Gate Controller asignado para el turno
   const [gateControllerOnDuty, setGateControllerOnDuty] = useState(null);
 
   const [currentView, setCurrentView] = useState("dashboard");
-  const [selectedFlightId, setSelectedFlightId] = useState(null);
+
+  // ✅ Nuevo: guardamos el vuelo completo (id + flightNumber + flightDate)
+  const [selectedFlight, setSelectedFlight] = useState(null);
 
   const handleLogin = (userData, sessionMeta) => {
     setUser(userData);
@@ -27,9 +27,7 @@ export default function App() {
     setCurrentView("dashboard");
   };
 
-  if (!user) {
-    return <LoginPage onLogin={handleLogin} />;
-  }
+  if (!user) return <LoginPage onLogin={handleLogin} />;
 
   const role = normalizeRole(user.role);
   const isGateController = role === "gate_controller";
@@ -38,23 +36,28 @@ export default function App() {
   const canEditGateTotals =
     role === "station_manager" || role === "duty_manager" || role === "supervisor";
 
-  // Gate Controller: solo Dashboard + Gate + Aircraft + Reports
   const canSeeDashboard = true;
-  const canSeeFlights = !isGateController; // si quieres que gate_controller también pueda seleccionar vuelo, cámbialo a true
+  const canSeeFlights = !isGateController;
   const canSeeGate = true;
   const canSeeBagroom = !isGateController;
   const canSeeAircraft = true;
-  const canSeeReports = true; // ✅ NUEVO
+  const canSeeReports = true;
 
   const handleLogout = () => {
     setUser(null);
     setGateControllerOnDuty(null);
-    setSelectedFlightId(null);
+    setSelectedFlight(null);
     setCurrentView("dashboard");
   };
 
-  const handleOpenFlightFromDashboard = (flightId, targetView) => {
-    setSelectedFlightId(flightId);
+  // ✅ Ahora recibimos el flight completo (o fallback si llega id)
+  const handleOpenFlightFromDashboard = (flightOrId, targetView) => {
+    if (typeof flightOrId === "string") {
+      // fallback por si algún lugar aún manda solo el id
+      setSelectedFlight({ id: flightOrId });
+    } else {
+      setSelectedFlight(flightOrId);
+    }
 
     if (isGateController && (targetView === "flights" || targetView === "bagroom")) {
       setCurrentView("gate");
@@ -63,6 +66,8 @@ export default function App() {
 
     setCurrentView(targetView);
   };
+
+  const selectedFlightId = selectedFlight?.id || null;
 
   const renderView = () => {
     if (currentView === "dashboard") {
@@ -80,17 +85,15 @@ export default function App() {
         <FlightsPage
           user={user}
           canCreateFlights={canCreateFlights}
-          onFlightSelected={(flightId) => {
-            setSelectedFlightId(flightId);
+          onFlightSelected={(flight) => {
+            setSelectedFlight(flight);
             setCurrentView("gate");
           }}
         />
       );
     }
 
-    if (!selectedFlightId) {
-      return <p>Please select a flight first.</p>;
-    }
+    if (!selectedFlightId) return <p>Please select a flight first.</p>;
 
     if (currentView === "gate") {
       return (
@@ -111,7 +114,6 @@ export default function App() {
       return <AircraftScanPage flightId={selectedFlightId} user={user} />;
     }
 
-    // ✅ NUEVO: Reports
     if (currentView === "reports") {
       return <ReportsPage flightId={selectedFlightId} user={user} />;
     }
@@ -155,7 +157,6 @@ export default function App() {
               </button>
             )}
 
-            {/* ✅ Reports */}
             {canSeeReports && (
               <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
                 Reports
@@ -181,9 +182,18 @@ export default function App() {
           </div>
         </div>
 
+        {/* ✅ Mostrar flightNumber en vez del docId */}
         {selectedFlightId && (
           <p style={{ marginTop: 8 }}>
-            <strong>Flight selected:</strong> {selectedFlightId}
+            <strong>Flight selected:</strong>{" "}
+            {selectedFlight?.flightNumber ? (
+              <>
+                {selectedFlight.flightNumber}
+                {selectedFlight.flightDate ? ` (${selectedFlight.flightDate})` : ""}
+              </>
+            ) : (
+              selectedFlightId
+            )}
           </p>
         )}
       </header>
