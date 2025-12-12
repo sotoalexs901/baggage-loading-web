@@ -9,6 +9,8 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import Modal from "../components/Modal.jsx";
+import { useModal } from "../components/useModal.js";
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -18,11 +20,15 @@ function cleanTagValue(v) {
   return String(v || "").trim();
 }
 
+function normalizeStatus(s) {
+  const v = String(s || "OPEN").trim().toUpperCase();
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+}
+
 export default function AircraftScanPage({ flightId, user }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
 
-  // who can complete loading
   const canCompleteLoading =
     role === "supervisor" || role === "duty_manager" || role === "station_manager";
 
@@ -50,6 +56,20 @@ export default function AircraftScanPage({ flightId, user }) {
   // Completion
   const [completing, setCompleting] = useState(false);
   const [completeMsg, setCompleteMsg] = useState("");
+
+  // Modal
+  const { modal, show, close } = useModal();
+
+  const popup = (title, message, tone = "info") => {
+    show({
+      title,
+      tone,
+      content: <div style={{ whiteSpace: "pre-wrap" }}>{message}</div>,
+      confirmText: "OK",
+      onConfirm: close,
+      onCancel: close,
+    });
+  };
 
   // Load flight
   useEffect(() => {
@@ -118,12 +138,36 @@ export default function AircraftScanPage({ flightId, user }) {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
-  const popup = (text) => alert(text);
-
-  const isLoadingCompleted = Boolean(flight?.aircraftLoadingCompleted);
+  const isLoadingCompleted = Boolean(flight?.aircraftLoadingCompleted) || normalizeStatus(flight?.status) === "LOADED";
 
   /**
-   * Cross-flight detection:
+   * ✅ Auto status: first aircraft scan sets LOADING (unless already LOADED)
+   */
+  const ensureStatusLoading = async () => {
+    if (!flight) return;
+    const current = normalizeStatus(flight.status);
+    if (current === "LOADED") return;
+
+    // If already LOADING, do nothing.
+    if (current === "LOADING") return;
+
+    await setDoc(
+      doc(db, "flights", flightId),
+      {
+        status: "LOADING",
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
+      },
+      { merge: true }
+    );
+  };
+
+  /**
+   * ✅ Cross-flight detection:
    * Global index: bagTags/{tag}
    */
   const validateAgainstOtherFlight = async (tag) => {
@@ -155,8 +199,8 @@ export default function AircraftScanPage({ flightId, user }) {
   };
 
   /**
-   * Strict manifest validation:
-   * Requires: flights/{flightId}/allowedBagTags/{tag}
+   * ✅ Strict manifest validation:
+   * Requires doc to exist: flights/{flightId}/allowedBagTags/{tag}
    */
   const validateAgainstManifest = async (tag) => {
     if (!strictManifest) return { ok: true };
@@ -205,7 +249,7 @@ export default function AircraftScanPage({ flightId, user }) {
     const existing = await getDoc(scanRef);
     if (existing.exists()) {
       const prev = existing.data();
-      popup(`⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}`);
+      popup("Duplicate scan", `⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}`, "warning");
       return false;
     }
 
@@ -226,9 +270,10 @@ export default function AircraftScanPage({ flightId, user }) {
   const handleScanSubmit = async () => {
     setMsg("");
     setErr("");
+    setCompleteMsg("");
 
     if (isLoadingCompleted) {
-      popup("⚠️ Loading is already completed for this flight. Scanning is locked.");
+      popup("Locked", "⚠️ Loading is already completed for this flight. Scanning is locked.", "warning");
       setTagInput("");
       return;
     }
@@ -246,14 +291,14 @@ export default function AircraftScanPage({ flightId, user }) {
 
       const m = await validateAgainstManifest(tag);
       if (!m.ok) {
-        popup(m.message);
+        popup("Not in manifest", m.message, "danger");
         setTagInput("");
         return;
       }
 
       const cross = await validateAgainstOtherFlight(tag);
       if (!cross.ok) {
-        popup(cross.message);
+        popup("Wrong flight/date", cross.message, "danger");
         setTagInput("");
         return;
       }
@@ -265,6 +310,9 @@ export default function AircraftScanPage({ flightId, user }) {
       }
 
       await indexTagToThisFlight(tag, zoneNum);
+
+      // ✅ Auto status
+      await ensureStatusLoading();
 
       setMsg(`Scanned ✅  Tag: ${tag}  (Zone ${zoneNum})`);
       setTagInput("");
@@ -283,12 +331,12 @@ export default function AircraftScanPage({ flightId, user }) {
     }
   };
 
-  // ✅ NEW: Loading Completed workflow
+  // ✅ Loading Completed (modal)
   const handleLoadingCompleted = async () => {
     setCompleteMsg("");
 
     if (!flight) {
-      popup("Flight not loaded yet.");
+      popup("Error", "Flight not loaded yet.", "danger");
       return;
     }
 
@@ -296,8 +344,9 @@ export default function AircraftScanPage({ flightId, user }) {
 
     if (typeof checkedTotal !== "number") {
       popup(
-        "⚠️ Gate checked bags total not entered.\n\n" +
-          "Gate Controller must enter total checked bags before completing loading."
+        "Gate total missing",
+        "⚠️ Gate checked bags total not entered.\n\nGate Controller must enter total checked bags before completing loading.",
+        "warning"
       );
       return;
     }
@@ -307,49 +356,69 @@ export default function AircraftScanPage({ flightId, user }) {
 
     if (missing > 0) {
       popup(
-        `❌ LOADING NOT COMPLETED\n\n` +
-          `Checked bags (Gate): ${checkedTotal}\n` +
-          `Loaded on aircraft: ${aircraftTotal}\n\n` +
-          `⚠️ Missing ${missing} bag(s).\n\n` +
-          `Contact Ramp / Bagroom before closing aircraft.`
+        "Missing bags",
+        `❌ LOADING NOT COMPLETED\n\nChecked bags (Gate): ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\n⚠️ Missing ${missing} bag(s).\n\nContact Ramp / Bagroom before closing aircraft.`,
+        "danger"
       );
       return;
     }
 
-    const ok = window.confirm(
-      `✅ ALL BAGS LOADED\n\n` +
-        `Checked bags: ${checkedTotal}\n` +
-        `Loaded on aircraft: ${aircraftTotal}\n\n` +
-        `Mark loading as COMPLETED?`
-    );
-    if (!ok) return;
+    show({
+      title: "All bags loaded",
+      tone: "success",
+      showCancel: true,
+      confirmText: "Mark Completed",
+      cancelText: "Not yet",
+      content: (
+        <div style={{ whiteSpace: "pre-wrap" }}>
+          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nDo you want to mark loading as COMPLETED?`}
+        </div>
+      ),
+      onCancel: close,
+      onConfirm: async () => {
+        close();
+        try {
+          setCompleting(true);
 
-    try {
-      setCompleting(true);
+          await setDoc(
+            doc(db, "flights", flightId),
+            {
+              aircraftLoadingCompleted: true,
+              aircraftLoadingCompletedAt: serverTimestamp(),
+              aircraftLoadedBags: aircraftTotal,
+              aircraftLoadingCompletedBy: {
+                userId: user?.id || null,
+                username: user?.username || null,
+                role: user?.role || null,
+              },
 
-      await setDoc(
-        doc(db, "flights", flightId),
-        {
-          aircraftLoadingCompleted: true,
-          aircraftLoadingCompletedAt: serverTimestamp(),
-          aircraftLoadedBags: aircraftTotal,
-          aircraftLoadingCompletedBy: {
-            userId: user?.id || null,
-            username: user?.username || null,
-            role: user?.role || null,
-          },
-        },
-        { merge: true }
-      );
+              // ✅ Final status
+              status: "LOADED",
+              statusUpdatedAt: serverTimestamp(),
+              statusUpdatedBy: {
+                userId: user?.id || null,
+                username: user?.username || null,
+                role: user?.role || null,
+              },
+            },
+            { merge: true }
+          );
 
-      setCompleteMsg("✅ Aircraft loading completed successfully.");
-    } catch (e) {
-      console.error(e);
-      popup("Failed to mark loading completed. Check connection/rules.");
-    } finally {
-      setCompleting(false);
-    }
+          setCompleteMsg("✅ Aircraft loading completed successfully.");
+        } catch (e) {
+          console.error(e);
+          popup("Error", "Failed to mark loading completed. Check connection/rules.", "danger");
+        } finally {
+          setCompleting(false);
+        }
+      },
+    });
   };
+
+  const missingNow =
+    typeof flight?.checkedBagsTotal === "number"
+      ? Math.max(0, flight.checkedBagsTotal - scans.length)
+      : null;
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
@@ -360,7 +429,7 @@ export default function AircraftScanPage({ flightId, user }) {
             Scan bags while loading by zone (1–4).
           </p>
           {isLoadingCompleted && (
-            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 800 }}>
+            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
               ✅ Loading Completed
             </p>
           )}
@@ -379,7 +448,7 @@ export default function AircraftScanPage({ flightId, user }) {
       <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-        {/* Left: controls */}
+        {/* Left */}
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
           <h3 style={{ margin: 0 }}>Scan</h3>
           <p style={{ margin: "6px 0 10px", color: "#6b7280", fontSize: "0.9rem" }}>
@@ -438,18 +507,18 @@ export default function AircraftScanPage({ flightId, user }) {
             Add Scan
           </button>
 
-          {/* Strict manifest indicator */}
           {strictManifest && (
-            <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.85rem", fontWeight: 800 }}>
+            <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.85rem", fontWeight: 900 }}>
               ⚠️ Strict Manifest ON
             </p>
           )}
 
           {msg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem" }}>{msg}</p>}
           {err && <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.9rem" }}>{err}</p>}
+          {completeMsg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>{completeMsg}</p>}
         </div>
 
-        {/* Right: summary/list */}
+        {/* Right */}
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12 }}>
             <div>
@@ -461,14 +530,13 @@ export default function AircraftScanPage({ flightId, user }) {
               {typeof flight?.checkedBagsTotal === "number" && !loadingScans && (
                 <p style={{ margin: "6px 0 0", fontSize: "0.9rem" }}>
                   Gate total: <strong>{flight.checkedBagsTotal}</strong> · Missing:{" "}
-                  <strong style={{ color: Math.max(0, flight.checkedBagsTotal - scans.length) === 0 ? "#16a34a" : "#b91c1c" }}>
-                    {Math.max(0, flight.checkedBagsTotal - scans.length)}
+                  <strong style={{ color: missingNow === 0 ? "#16a34a" : "#b91c1c" }}>
+                    {missingNow}
                   </strong>
                 </p>
               )}
             </div>
 
-            {/* ✅ Loading Completed button */}
             {canCompleteLoading && (
               <div style={{ textAlign: "right" }}>
                 <button
@@ -486,11 +554,6 @@ export default function AircraftScanPage({ flightId, user }) {
                 >
                   {isLoadingCompleted ? "Completed" : (completing ? "Checking…" : "Loading Completed")}
                 </button>
-                {completeMsg && (
-                  <p style={{ marginTop: 8, color: "#16a34a", fontWeight: 700, fontSize: "0.85rem" }}>
-                    {completeMsg}
-                  </p>
-                )}
               </div>
             )}
           </div>
@@ -529,6 +592,25 @@ export default function AircraftScanPage({ flightId, user }) {
           </p>
         </div>
       </div>
+
+      <Modal
+        open={modal.open}
+        title={modal.title}
+        tone={modal.tone}
+        confirmText={modal.confirmText}
+        cancelText={modal.cancelText}
+        showCancel={modal.showCancel}
+        onConfirm={() => {
+          if (typeof modal.onConfirm === "function") modal.onConfirm();
+          else close();
+        }}
+        onCancel={() => {
+          if (typeof modal.onCancel === "function") modal.onCancel();
+          else close();
+        }}
+      >
+        {modal.content}
+      </Modal>
     </div>
   );
 }
