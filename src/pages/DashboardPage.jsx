@@ -2,103 +2,161 @@
 import React from "react";
 
 export default function DashboardPage({ user, onOpenFlight }) {
-  // Más adelante esto vendrá de Firestore.
-  const dummyFlights = [
+  const flights = [
     {
       id: "FLIGHT_SY214_1",
       flightNumber: "SY214",
+      route: "TPA → MSP",
       date: "2025-01-15",
       gate: "E68",
       aircraftType: "B737-800",
+      status: "OPEN",
     },
     {
       id: "FLIGHT_SY300_1",
       flightNumber: "SY300",
+      route: "TPA → LAS",
       date: "2025-01-15",
       gate: "E70",
       aircraftType: "B737-800",
+      status: "OPEN",
     },
   ];
 
   return (
-    <div>
-      <section style={{ marginBottom: 24 }}>
-        <h2 style={{ marginBottom: 4 }}>Dashboard</h2>
-        <p style={{ margin: 0 }}>
-          Welcome, <strong>{user.username}</strong>{" "}
-          {user.role && <span style={{ fontSize: "0.9rem" }}>({user.role})</span>}
-        </p>
-        <p style={{ marginTop: 4, fontSize: "0.9rem", color: "#4b5563" }}>
-          Baggage Loading Control · TPA
-        </p>
+    <div className="dash-root">
+      {/* Top: welcome + quick info */}
+      <section className="dash-header-card">
+        <div>
+          <p className="dash-greeting">Welcome back,</p>
+          <h2 className="dash-title">{user.username}</h2>
+          {user.role && (
+            <span className="dash-role-pill">
+              {user.role.replace("_", " ")}
+            </span>
+          )}
+          <p className="dash-subtitle">
+            Select a flight to start working on Counter, Bagroom or Aircraft loading.
+          </p>
+        </div>
+
+        <div className="dash-summary-box">
+          <p className="dash-summary-label">Today&apos;s overview</p>
+          <p className="dash-summary-number">{flights.length}</p>
+          <p className="dash-summary-caption">active flights in TPA</p>
+        </div>
       </section>
 
-      <section>
-        <h3 style={{ marginBottom: 8 }}>Today's flights</h3>
-        <p style={{ fontSize: "0.9rem", color: "#4b5563", marginBottom: 8 }}>
-          Select a flight to start working in Counter, Bagroom or Aircraft.
-        </p>
+      {/* Middle: helper cards */}
+      <section className="dash-grid">
+        <div className="dash-card">
+          <h3>Counter</h3>
+          <p>
+            Enter the total number of checked bags per flight. This becomes the
+            reference for Bagroom and Aircraft.
+          </p>
+          <ul className="dash-list">
+            <li>Set checked bag count</li>
+            <li>View who entered the numbers</li>
+            <li>See current flight status</li>
+          </ul>
+        </div>
 
-        <table
-          style={{
-            width: "100%",
-            borderCollapse: "collapse",
-            fontSize: "0.9rem",
-          }}
-        >
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 6 }}>
-                Flight
-              </th>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 6 }}>
-                Date
-              </th>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 6 }}>
-                Gate
-              </th>
-              <th style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb", padding: 6 }}>
-                Aircraft
-              </th>
-              <th style={{ borderBottom: "1px solid #e5e7eb", padding: 6 }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {dummyFlights.map((f) => (
-              <tr key={f.id}>
-                <td style={{ padding: 6 }}>{f.flightNumber}</td>
-                <td style={{ padding: 6 }}>{f.date}</td>
-                <td style={{ padding: 6 }}>{f.gate}</td>
-                <td style={{ padding: 6 }}>{f.aircraftType}</td>
-                <td style={{ padding: 6 }}>
-                  <button
-                    style={{ marginRight: 4 }}
-                    onClick={() => onOpenFlight(f.id, "counter")}
-                  >
-                    Counter
-                  </button>
-                  <button
-                    style={{ marginRight: 4 }}
-                    onClick={() => onOpenFlight(f.id, "bagroom")}
-                  >
-                    Bagroom
-                  </button>
-                  <button onClick={() => onOpenFlight(f.id, "aircraft")}>
-                    Aircraft
-                  </button>
-                </td>
-              </tr>
-            ))}
+        <div className="dash-card">
+          <h3>Bagroom</h3>
+          <p>
+            Scan every bag received in Bagroom to make sure all checked bags
+            reach the aircraft.
+          </p>
+          <ul className="dash-list">
+            <li>Real-time bag count</li>
+            <li>Match against Counter total</li>
+            <li>Detect missing bags early</li>
+          </ul>
+        </div>
 
-            {dummyFlights.length === 0 && (
+        <div className="dash-card">
+          <h3>Aircraft</h3>
+          <p>
+            Scan bags as they are loaded in each aircraft zone to confirm final
+            loading before departure.
+          </p>
+          <ul className="dash-list">
+            <li>Track by zone (1–4)</li>
+            <li>Compare vs Counter total</li>
+            <li>“Loading completed” check</li>
+          </ul>
+        </div>
+      </section>
+
+      {/* Flights table */}
+      <section className="dash-section">
+        <div className="dash-section-header">
+          <h3>Today&apos;s flights</h3>
+          <p>Choose a flight and go directly to the area where you are working.</p>
+        </div>
+
+        <div className="dash-table-wrapper">
+          <table className="dash-table">
+            <thead>
               <tr>
-                <td colSpan={5} style={{ padding: 6, fontStyle: "italic" }}>
-                  No flights loaded yet.
-                </td>
+                <th>Flight</th>
+                <th>Route</th>
+                <th>Date</th>
+                <th>Gate</th>
+                <th>Aircraft</th>
+                <th>Status</th>
+                <th style={{ textAlign: "right" }}>Actions</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {flights.map((f) => (
+                <tr key={f.id}>
+                  <td>{f.flightNumber}</td>
+                  <td>{f.route}</td>
+                  <td>{f.date}</td>
+                  <td>{f.gate}</td>
+                  <td>{f.aircraftType}</td>
+                  <td>
+                    <span className="dash-status-pill dash-status-open">
+                      {f.status}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    <div className="dash-actions">
+                      <button
+                        className="btn-secondary"
+                        onClick={() => onOpenFlight(f.id, "counter")}
+                      >
+                        Counter
+                      </button>
+                      <button
+                        className="btn-secondary"
+                        onClick={() => onOpenFlight(f.id, "bagroom")}
+                      >
+                        Bagroom
+                      </button>
+                      <button
+                        className="btn-primary"
+                        onClick={() => onOpenFlight(f.id, "aircraft")}
+                      >
+                        Aircraft
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+
+              {flights.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: "center", fontStyle: "italic" }}>
+                    No flights loaded yet for today.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );
