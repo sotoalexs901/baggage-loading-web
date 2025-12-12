@@ -42,12 +42,18 @@ export default function ReportsPage({ flightId, user }) {
   const handleDelete = async (r) => {
     if (!canDelete) return;
 
+    // ✅ No permitimos borrar si no hay fileName (evita usar docId)
+    if (!r?.fileName) {
+      alert("This report is legacy (missing fileName) and cannot be deleted from the UI.");
+      return;
+    }
+
     const ok = window.confirm(
-      `Delete this report?\n\n${r.fileName || r.id}\n\nThis cannot be undone.`
+      `Delete this report?\n\n${r.fileName}\n\nThis cannot be undone.`
     );
     if (!ok) return;
 
-    const docId = r.fileName || r.id;
+    const docId = r.fileName;
 
     try {
       setDeletingId(docId);
@@ -99,16 +105,21 @@ export default function ReportsPage({ flightId, user }) {
                 <th style={{ ...th, textAlign: "right" }}>Delete</th>
               </tr>
             </thead>
+
             <tbody>
               {rows.map((r) => {
-                const id = r.fileName || r.id;
-                const busy = deletingId === id;
+                // ✅ NO mostramos r.id. Solo fileName (o marcador “legacy”)
+                const name = r.fileName || "(legacy report)";
+                const canDeleteThis = canDelete && Boolean(r.fileName);
+
+                const busy = deletingId === r.fileName;
 
                 return (
                   <tr key={r.id}>
                     <td style={td}>
-                      <strong>{id}</strong>
+                      <strong>{name}</strong>
                     </td>
+
                     <td style={td}>{r.createdBy?.username || "-"}</td>
 
                     <td style={{ ...td, textAlign: "right" }}>
@@ -124,15 +135,22 @@ export default function ReportsPage({ flightId, user }) {
                     <td style={{ ...td, textAlign: "right" }}>
                       <button
                         onClick={() => handleDelete(r)}
-                        disabled={!canDelete || busy}
+                        disabled={!canDeleteThis || busy}
+                        title={
+                          !canDelete
+                            ? "Station/Duty Manager only"
+                            : !r.fileName
+                              ? "Legacy report (no fileName) — cannot delete from UI"
+                              : "Delete report"
+                        }
                         style={{
                           padding: "6px 10px",
                           borderRadius: 10,
                           border: "1px solid #ef4444",
-                          background: !canDelete ? "#fecaca" : "#ef4444",
+                          background: !canDeleteThis ? "#fecaca" : "#ef4444",
                           color: "white",
                           fontWeight: 900,
-                          cursor: !canDelete ? "not-allowed" : "pointer",
+                          cursor: !canDeleteThis ? "not-allowed" : "pointer",
                           opacity: busy ? 0.7 : 1,
                         }}
                       >
