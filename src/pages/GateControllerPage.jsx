@@ -459,8 +459,16 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       ) : !flight ? (
         <p style={{ color: "#b91c1c" }}>Flight not found.</p>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14 }}>
-          <InfoCard label="Flight" value={flight.flightNumber || flight.id} />
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+            marginBottom: 14,
+          }}
+        >
+          {/* ✅ NO mostrar docId como fallback */}
+          <InfoCard label="Flight" value={flight.flightNumber || "-"} />
           <InfoCard label="Date" value={flight.flightDate || "-"} />
           <InfoCard label="Gate" value={flight.gate || "-"} />
           <InfoCard label="Aircraft" value={flight.aircraftType || "-"} />
