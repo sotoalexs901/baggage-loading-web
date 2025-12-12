@@ -12,8 +12,6 @@ import {
   limit,
 } from "firebase/firestore";
 import { db, functions } from "../firebase"; // ✅ usa functions con región correcta
-
-// ✅ Cloud Functions (v9)
 import { httpsCallable } from "firebase/functions";
 
 function getTodayYYYYMMDD() {
@@ -104,14 +102,14 @@ export default function FlightsPage({ user, onFlightSelected }) {
   useEffect(() => {
     setLoading(true);
 
-    const q = query(
+    const qRef = query(
       collection(db, "flights"),
       where("flightDate", "==", selectedDate),
       orderBy("createdAt", "desc")
     );
 
     const unsub = onSnapshot(
-      q,
+      qRef,
       (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -225,7 +223,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
     });
   };
 
-  // ✅ Reopen (LOADED -> LOADING) via Cloud Function
+  // ✅ Reopen (LOADED -> LOADING) via Cloud Function (REGION FIXED)
   const handleReopen = async (f) => {
     if (!allowManage) return;
 
@@ -248,15 +246,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setTimeout(() => setActionMsg(""), 2500);
     } catch (e) {
       console.error("reopenFlight failed:", e);
-      setActionErr(
-        e?.message || "Failed to reopen flight. Check permissions / Cloud Function deployment."
-      );
+      setActionErr(e?.message || "Failed to reopen flight. Check permissions / Cloud Function deployment.");
     } finally {
       setReopeningId("");
     }
   };
 
-  // ✅ Delete cascade via Cloud Function
+  // ✅ Delete cascade via Cloud Function (REGION FIXED)
   const handleDelete = async (f) => {
     if (!allowManage) return;
 
@@ -280,9 +276,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setTimeout(() => setActionMsg(""), 2500);
     } catch (e) {
       console.error("deleteFlightCascade failed:", e);
-      setActionErr(
-        e?.message || "Failed to delete flight. Check permissions / Cloud Function deployment."
-      );
+      setActionErr(e?.message || "Failed to delete flight. Check permissions / Cloud Function deployment.");
     } finally {
       setDeletingId("");
     }
