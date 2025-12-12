@@ -4,13 +4,18 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
 import Modal from "../components/Modal.jsx";
 import { useModal } from "../components/useModal.js";
+
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -23,6 +28,11 @@ function cleanTagValue(v) {
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
   return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+}
+
+function safeStr(v, fallback = "-") {
+  const s = String(v ?? "").trim();
+  return s ? s : fallback;
 }
 
 export default function AircraftScanPage({ flightId, user }) {
@@ -50,12 +60,19 @@ export default function AircraftScanPage({ flightId, user }) {
   const [scans, setScans] = useState([]);
   const [loadingScans, setLoadingScans] = useState(true);
 
+  // Bagroom total
+  const [bagroomTotal, setBagroomTotal] = useState(0);
+  const [loadingBagroomTotal, setLoadingBagroomTotal] = useState(true);
+
   // Strict manifest mode (read from flight.strictManifest)
   const [strictManifest, setStrictManifest] = useState(false);
 
   // Completion
   const [completing, setCompleting] = useState(false);
   const [completeMsg, setCompleteMsg] = useState("");
+
+  // Export
+  const [exporting, setExporting] = useState(false);
 
   // Modal
   const { modal, show, close } = useModal();
@@ -105,7 +122,7 @@ export default function AircraftScanPage({ flightId, user }) {
     return () => unsub();
   }, [flightId]);
 
-  // Live scans
+  // Live aircraft scans
   useEffect(() => {
     if (!flightId) return;
 
@@ -134,11 +151,35 @@ export default function AircraftScanPage({ flightId, user }) {
     return () => unsub();
   }, [flightId]);
 
+  // Live bagroom total
+  useEffect(() => {
+    if (!flightId) return;
+
+    setLoadingBagroomTotal(true);
+    const ref = collection(db, "flights", flightId, "bagroomScans");
+
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        setBagroomTotal(snap.size);
+        setLoadingBagroomTotal(false);
+      },
+      (e) => {
+        console.error("AircraftScanPage bagroom total error:", e);
+        setBagroomTotal(0);
+        setLoadingBagroomTotal(false);
+      }
+    );
+
+    return () => unsub();
+  }, [flightId]);
+
   useEffect(() => {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
-  const isLoadingCompleted = Boolean(flight?.aircraftLoadingCompleted) || normalizeStatus(flight?.status) === "LOADED";
+  const isLoadingCompleted =
+    Boolean(flight?.aircraftLoadingCompleted) || normalizeStatus(flight?.status) === "LOADED";
 
   /**
    * ✅ Auto status: first aircraft scan sets LOADING (unless already LOADED)
@@ -147,8 +188,6 @@ export default function AircraftScanPage({ flightId, user }) {
     if (!flight) return;
     const current = normalizeStatus(flight.status);
     if (current === "LOADED") return;
-
-    // If already LOADING, do nothing.
     if (current === "LOADING") return;
 
     await setDoc(
@@ -174,9 +213,7 @@ export default function AircraftScanPage({ flightId, user }) {
     const tagRef = doc(db, "bagTags", tag);
     const snap = await getDoc(tagRef);
 
-    if (!snap.exists()) {
-      return { ok: true, firstTime: true };
-    }
+    if (!snap.exists()) return { ok: true, firstTime: true };
 
     const existing = snap.data();
     if (existing.flightId && existing.flightId !== flightId) {
@@ -310,8 +347,6 @@ export default function AircraftScanPage({ flightId, user }) {
       }
 
       await indexTagToThisFlight(tag, zoneNum);
-
-      // ✅ Auto status
       await ensureStatusLoading();
 
       setMsg(`Scanned ✅  Tag: ${tag}  (Zone ${zoneNum})`);
@@ -331,7 +366,202 @@ export default function AircraftScanPage({ flightId, user }) {
     }
   };
 
-  // ✅ Loading Completed (modal)
+  const missingNow =
+    typeof flight?.checkedBagsTotal === "number"
+      ? Math.max(0, flight.checkedBagsTotal - scans.length)
+      : null;
+
+  // ----- PDF helpers -----
+  const computeZones = (rows) => {
+    const z = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    for (const r of rows) {
+      const zn = Number(r.zone);
+      if (zn >= 1 && zn <= 4) z[zn] += 1;
+    }
+    return z;
+  };
+
+  const buildPdf = ({ flightDoc, aircraftRows, bagroomCount }) => {
+    const pdf = new jsPDF();
+
+    const flightNumber = safeStr(flightDoc?.flightNumber, flightId);
+    const flightDate = safeStr(flightDoc?.flightDate, "-");
+    const gate = safeStr(flightDoc?.gate, "-");
+    const aircraftType = safeStr(flightDoc?.aircraftType, "-");
+    const status = safeStr(flightDoc?.status, "OPEN");
+
+    const gateController = safeStr(flightDoc?.gateControllerOnDuty, "-");
+
+    const supervisorOnDuty =
+      safeStr(flightDoc?.statusUpdatedBy?.username, "") ||
+      safeStr(flightDoc?.gateTotalUpdatedBy?.username, "") ||
+      "-";
+
+    const rampSupervisor = safeStr(user?.username, "-");
+
+    const gateTotal =
+      typeof flightDoc?.checkedBagsTotal === "number" ? flightDoc.checkedBagsTotal : null;
+
+    const aircraftTotal = aircraftRows.length;
+    const zones = computeZones(aircraftRows);
+
+    const missing =
+      gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
+
+    pdf.setFontSize(14);
+    pdf.text("Baggage Loading Control System (BLCS)", 14, 16);
+
+    pdf.setFontSize(11);
+    pdf.text(`Flight: ${flightNumber}`, 14, 26);
+    pdf.text(`Date: ${flightDate}`, 14, 32);
+    pdf.text(`Gate: ${gate}`, 14, 38);
+    pdf.text(`Aircraft: ${aircraftType}`, 14, 44);
+    pdf.text(`Status: ${status}`, 14, 50);
+
+    pdf.text(`Supervisor on Duty: ${supervisorOnDuty}`, 110, 26);
+    pdf.text(`Gate Controller on Duty: ${gateController}`, 110, 32);
+    pdf.text(`Ramp Supervisor: ${rampSupervisor}`, 110, 38);
+
+    autoTable(pdf, {
+      startY: 58,
+      head: [["Metric", "Value"]],
+      body: [
+        ["Gate checked total", gateTotal === null ? "—" : String(gateTotal)],
+        ["Bagroom scanned", String(bagroomCount)],
+        ["Aircraft scanned", String(aircraftTotal)],
+        ["Zone 1", String(zones[1])],
+        ["Zone 2", String(zones[2])],
+        ["Zone 3", String(zones[3])],
+        ["Zone 4", String(zones[4])],
+        ["Missing to load (vs Gate total)", missing],
+      ],
+      styles: { fontSize: 10 },
+      headStyles: { fillColor: [240, 240, 240] },
+    });
+
+    // Bingo sheet
+    const tags = aircraftRows
+      .slice()
+      .sort((a, b) => String(a.tag).localeCompare(String(b.tag)))
+      .map((r) => [String(r.tag), `Z${r.zone ?? "-"}`, r.scannedBy?.username || "-"]);
+
+    autoTable(pdf, {
+      startY: pdf.lastAutoTable.finalY + 8,
+      head: [["Bag Tag", "Zone", "Scanned By"]],
+      body: tags,
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [240, 240, 240] },
+    });
+
+    pdf.setFontSize(9);
+    pdf.text(`Generated: ${new Date().toLocaleString()}`, 14, pdf.lastAutoTable.finalY + 10);
+
+    return pdf;
+  };
+
+  const uploadPdfToStorage = async (pdfDoc) => {
+    const flightNumber = safeStr(flight?.flightNumber, flightId);
+    const flightDate = safeStr(flight?.flightDate, "unknown-date");
+    const stamp = new Date().toISOString().replaceAll(":", "-").slice(0, 19);
+
+    const fileName = `BLCS_${flightNumber}_${flightDate}_${stamp}.pdf`;
+    const path = `flights/${flightId}/reports/${fileName}`;
+
+    const r = sRef(storage, path);
+    const blob = pdfDoc.output("blob");
+
+    await uploadBytes(r, blob, {
+      contentType: "application/pdf",
+      customMetadata: {
+        flightId: String(flightId),
+        flightNumber: String(flightNumber),
+        flightDate: String(flightDate),
+        generatedBy: String(user?.username || ""),
+      },
+    });
+
+    const url = await getDownloadURL(r);
+    return { path, url, fileName };
+  };
+
+  const exportReportPdf = async ({ alsoMarkLoaded = false } = {}) => {
+    if (!flight) {
+      popup("Error", "Flight not loaded yet.", "danger");
+      return;
+    }
+
+    try {
+      setExporting(true);
+      setErr("");
+      setMsg("");
+      setCompleteMsg("");
+
+      // Siempre usamos los scans actuales del state (ya vienen en vivo),
+      // pero si quieres “snapshot exacto” del server:
+      // const snap = await getDocs(collection(db, "flights", flightId, "aircraftScans"));
+      // const aircraftRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const aircraftRows = scans;
+
+      const pdfDoc = buildPdf({
+        flightDoc: flight,
+        aircraftRows,
+        bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
+      });
+
+      // 1) Descargar
+      const downloadName = `BLCS_${safeStr(flight.flightNumber, flightId)}_${safeStr(
+        flight.flightDate,
+        "date"
+      )}.pdf`;
+      pdfDoc.save(downloadName);
+
+      // 2) Subir a storage + guardar en Firestore
+      const uploaded = await uploadPdfToStorage(pdfDoc);
+
+      await setDoc(
+        doc(db, "flights", flightId, "reports", uploaded.fileName),
+        {
+          createdAt: serverTimestamp(),
+          createdBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+          fileName: uploaded.fileName,
+          storagePath: uploaded.path,
+          downloadUrl: uploaded.url,
+          snapshot: {
+            gateTotal: typeof flight?.checkedBagsTotal === "number" ? flight.checkedBagsTotal : null,
+            bagroomTotal: loadingBagroomTotal ? null : bagroomTotal,
+            aircraftTotal: aircraftRows.length,
+          },
+        },
+        { merge: true }
+      );
+
+      // 3) Si quieren marcar LOADED también desde aquí
+      if (alsoMarkLoaded) {
+        await setDoc(
+          doc(db, "flights", flightId),
+          {
+            status: "LOADED",
+            aircraftLoadingCompleted: true,
+            aircraftLoadingCompletedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+
+      setMsg("✅ PDF exported and saved to flight reports.");
+    } catch (e) {
+      console.error(e);
+      setErr("Failed to export PDF. Check Storage rules/connection.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // ✅ Loading Completed (modal) + generates PDF + saves report
   const handleLoadingCompleted = async () => {
     setCompleteMsg("");
 
@@ -371,7 +601,7 @@ export default function AircraftScanPage({ flightId, user }) {
       cancelText: "Not yet",
       content: (
         <div style={{ whiteSpace: "pre-wrap" }}>
-          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nDo you want to mark loading as COMPLETED?`}
+          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nDo you want to mark loading as COMPLETED and generate the report PDF?`}
         </div>
       ),
       onCancel: close,
@@ -392,6 +622,9 @@ export default function AircraftScanPage({ flightId, user }) {
                 role: user?.role || null,
               },
 
+              // ✅ Ramp supervisor name (easy reference)
+              rampSupervisorOnDuty: user?.username || null,
+
               // ✅ Final status
               status: "LOADED",
               statusUpdatedAt: serverTimestamp(),
@@ -404,21 +637,19 @@ export default function AircraftScanPage({ flightId, user }) {
             { merge: true }
           );
 
-          setCompleteMsg("✅ Aircraft loading completed successfully.");
+          // ✅ Export PDF automatically
+          await exportReportPdf();
+
+          setCompleteMsg("✅ Aircraft loading completed successfully. Report saved.");
         } catch (e) {
           console.error(e);
-          popup("Error", "Failed to mark loading completed. Check connection/rules.", "danger");
+          popup("Error", "Failed to mark loading completed / export PDF. Check connection/rules.", "danger");
         } finally {
           setCompleting(false);
         }
       },
     });
   };
-
-  const missingNow =
-    typeof flight?.checkedBagsTotal === "number"
-      ? Math.max(0, flight.checkedBagsTotal - scans.length)
-      : null;
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
@@ -507,6 +738,26 @@ export default function AircraftScanPage({ flightId, user }) {
             Add Scan
           </button>
 
+          {/* ✅ Export PDF anytime (also after completed) */}
+          <button
+            onClick={() => exportReportPdf()}
+            disabled={exporting || !flight || loadingScans}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #111827",
+              background: "#111827",
+              color: "white",
+              fontWeight: 900,
+              cursor: (exporting || !flight || loadingScans) ? "not-allowed" : "pointer",
+              opacity: (exporting || !flight || loadingScans) ? 0.7 : 1,
+            }}
+          >
+            {exporting ? "Exporting…" : "Export PDF Report"}
+          </button>
+
           {strictManifest && (
             <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.85rem", fontWeight: 900 }}>
               ⚠️ Strict Manifest ON
@@ -525,6 +776,10 @@ export default function AircraftScanPage({ flightId, user }) {
               <h3 style={{ margin: 0 }}>Aircraft scans</h3>
               <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
                 Total scanned: <strong>{loadingScans ? "…" : scans.length}</strong>
+              </p>
+
+              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+                Bagroom scanned: <strong>{loadingBagroomTotal ? "…" : bagroomTotal}</strong>
               </p>
 
               {typeof flight?.checkedBagsTotal === "number" && !loadingScans && (
