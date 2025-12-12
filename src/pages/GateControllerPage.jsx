@@ -9,7 +9,14 @@ import {
   setDoc,
   writeBatch,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, storage } from "../firebase";
+
+// ✅ PDF text reading (local) + Storage upload (OCR fallback)
+import * as pdfjsLib from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
+import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -24,17 +31,17 @@ function toIntSafe(v) {
 // === Flight status helpers ===
 const STATUS_COLORS = {
   OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
+  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" }, // azul suave
   LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" }, // naranja
   LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" }, // verde
 };
 
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
-  return v === "OPEN" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
 }
 
 // Extrae SOLO números (bag tags) e ignora todo lo demás
-// Por defecto: toma secuencias de 6 a 12 dígitos (ajustable)
 function extractBagTagsFromText(text, { minLen = 6, maxLen = 12 } = {}) {
   const src = String(text || "");
   const matches = src.match(/\d+/g) || [];
@@ -42,7 +49,6 @@ function extractBagTagsFromText(text, { minLen = 6, maxLen = 12 } = {}) {
     .map((s) => s.trim())
     .filter((s) => s.length >= minLen && s.length <= maxLen);
 
-  // Deduplicate manteniendo orden
   const seen = new Set();
   const unique = [];
   for (const t of tags) {
@@ -63,6 +69,40 @@ async function readFileAsText(file) {
   });
 }
 
+// ✅ Read PDF as text (works only if PDF has selectable text)
+async function readPdfAsText(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  let fullText = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const strings = content.items.map((it) => it.str);
+    fullText += strings.join(" ") + "\n";
+  }
+  return fullText;
+}
+
+// ✅ Upload PDF to Storage for OCR (Cloud Function onFinalize)
+async function uploadPdfForOcr({ file, flightId, user }) {
+  const safeName = String(file.name || "manifest.pdf").replaceAll(" ", "_");
+  const path = `flights/${flightId}/manifests/${Date.now()}_${safeName}`;
+  const r = storageRef(storage, path);
+
+  await uploadBytes(r, file, {
+    contentType: "application/pdf",
+    customMetadata: {
+      flightId: String(flightId),
+      uploadedBy: String(user?.username || ""),
+      role: String(user?.role || ""),
+    },
+  });
+
+  const url = await getDownloadURL(r);
+  return { path, url };
+}
+
 export default function GateControllerPage({ flightId, user, gateControllerOnDuty, canEdit }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
@@ -76,7 +116,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
 
-  // aircraft scans summary (subcolección aircraftScans)
+  // aircraft scans summary
   const [aircraftTotal, setAircraftTotal] = useState(0);
   const [zones, setZones] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
   const [aircraftLoading, setAircraftLoading] = useState(true);
@@ -88,7 +128,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
   const [manifestErr, setManifestErr] = useState("");
   const [importing, setImporting] = useState(false);
 
-  // Strict manifest toggle (se guarda en el doc del vuelo)
+  // Strict manifest toggle
   const [strictManifest, setStrictManifest] = useState(false);
 
   // Load flight doc
@@ -279,23 +319,48 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     setManifestTagsPreview(tags);
 
     if (tags.length === 0) {
-      setManifestErr("No bag tag numbers found. Paste/upload manifest again.");
+      setManifestErr("No bag tag numbers found. If this is a scanned PDF, use OCR upload.");
       return;
     }
 
     setManifestMsg(`Preview: found ${tags.length} bag tags (names/PNR ignored).`);
   };
 
+  // ✅ handles CSV/TXT OR PDF; for scanned PDF triggers OCR upload
   const handleFilePick = async (file) => {
     setManifestMsg("");
     setManifestErr("");
+
     try {
-      const text = await readFileAsText(file);
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
+      let text = "";
+
+      if (isPdf) {
+        setManifestMsg("Reading PDF (local)...");
+        text = await readPdfAsText(file);
+      } else {
+        setManifestMsg("Reading file...");
+        text = await readFileAsText(file);
+      }
+
       setManifestText(text);
       previewFromText(text);
+
+      const found = extractBagTagsFromText(text).length;
+
+      // Fallback to OCR for scanned PDFs
+      if (isPdf && found === 0) {
+        setManifestMsg("No tags found locally. Uploading PDF for OCR...");
+        const up = await uploadPdfForOcr({ file, flightId, user });
+
+        setManifestMsg(
+          `PDF uploaded for OCR ✅\n\nPath: ${up.path}\n\nCloud OCR will import tags automatically (refresh in a few seconds).`
+        );
+      }
     } catch (e) {
       console.error(e);
-      setManifestErr("Could not read file. Please try CSV/TXT.");
+      setManifestErr("Could not read file. If PDF is scanned, OCR upload is required.");
     }
   };
 
@@ -310,7 +375,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
     const tags = manifestTagsPreview;
     if (!tags || tags.length === 0) {
-      setManifestErr("Nothing to import. Click Preview first.");
+      setManifestErr("Nothing to import. Click Preview first (or upload PDF for OCR).");
       return;
     }
 
@@ -408,7 +473,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           <div>
             <h3 style={{ margin: 0 }}>Flight Status</h3>
             <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-              Open → Loading → Loaded
+              Open → Receiving → Loading → Loaded
             </p>
           </div>
 
@@ -423,32 +488,21 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               letterSpacing: "0.04em",
             }}
           >
-            {flightStatus}
+            {flightStatus === "RECEIVING" ? "RECEIVING BAGS" : flightStatus}
           </span>
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button
-            disabled={!canEdit}
-            onClick={() => updateFlightStatus("OPEN")}
-            style={btnStatus(canEdit)}
-          >
+          <button disabled={!canEdit} onClick={() => updateFlightStatus("OPEN")} style={btnStatus(canEdit)}>
             Open
           </button>
-
-          <button
-            disabled={!canEdit}
-            onClick={() => updateFlightStatus("LOADING")}
-            style={btnStatus(canEdit)}
-          >
+          <button disabled={!canEdit} onClick={() => updateFlightStatus("RECEIVING")} style={btnStatus(canEdit)}>
+            Receiving
+          </button>
+          <button disabled={!canEdit} onClick={() => updateFlightStatus("LOADING")} style={btnStatus(canEdit)}>
             Loading
           </button>
-
-          <button
-            disabled={!canEdit}
-            onClick={() => updateFlightStatus("LOADED")}
-            style={btnStatus(canEdit)}
-          >
+          <button disabled={!canEdit} onClick={() => updateFlightStatus("LOADED")} style={btnStatus(canEdit)}>
             Loaded
           </button>
         </div>
@@ -522,7 +576,8 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           <div>
             <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest</h3>
             <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-              Upload or paste a list. System ignores names/PNR and imports only bag tag numbers.
+              Upload CSV/TXT/PDF or paste a list. System ignores names/PNR and imports only bag tag numbers.
+              If PDF is scanned, system uploads it for OCR and imports automatically.
             </p>
           </div>
 
@@ -537,7 +592,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <input
             type="file"
-            accept=".csv,.txt,text/csv,text/plain"
+            accept=".csv,.txt,.pdf,text/csv,text/plain,application/pdf"
             disabled={!canEdit}
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -545,11 +600,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             }}
           />
 
-          <button
-            disabled={!canEdit}
-            onClick={() => updateStrictManifest(!strictManifest)}
-            style={btnStatus(canEdit)}
-          >
+          <button disabled={!canEdit} onClick={() => updateStrictManifest(!strictManifest)} style={btnStatus(canEdit)}>
             Toggle Strict Manifest
           </button>
         </div>
@@ -577,11 +628,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button
-            onClick={() => previewFromText(manifestText)}
-            disabled={!canEdit}
-            style={btnStatus(canEdit)}
-          >
+          <button onClick={() => previewFromText(manifestText)} disabled={!canEdit} style={btnStatus(canEdit)}>
             Preview Tags
           </button>
 
@@ -602,8 +649,8 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           </button>
         </div>
 
-        {manifestMsg && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a" }}>{manifestMsg}</p>}
-        {manifestErr && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c" }}>{manifestErr}</p>}
+        {manifestMsg && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a", whiteSpace: "pre-wrap" }}>{manifestMsg}</p>}
+        {manifestErr && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c", whiteSpace: "pre-wrap" }}>{manifestErr}</p>}
 
         {manifestTagsPreview.length > 0 && (
           <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
