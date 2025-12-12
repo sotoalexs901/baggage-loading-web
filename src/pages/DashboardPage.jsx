@@ -15,6 +15,43 @@ function getTodayYYYYMMDD() {
   return `${y}-${m}-${day}`;
 }
 
+// ✅ Status helpers (OPEN / RECEIVING / LOADING / LOADED)
+const STATUS_COLORS = {
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },      // amarillo
+  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" }, // azul suave
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },   // naranja
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },    // verde
+};
+
+function normalizeStatus(s) {
+  const v = String(s || "OPEN").trim().toUpperCase();
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+}
+
+function StatusPill({ status }) {
+  const st = normalizeStatus(status);
+  const c = STATUS_COLORS[st] || STATUS_COLORS.OPEN;
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "6px 12px",
+        borderRadius: 999,
+        border: `1px solid ${c.border}`,
+        background: c.bg,
+        color: c.text,
+        fontWeight: 900,
+        letterSpacing: "0.04em",
+        fontSize: "0.75rem",
+      }}
+    >
+      {st === "RECEIVING" ? "RECEIVING BAGS" : st}
+    </span>
+  );
+}
+
 export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
@@ -127,7 +164,10 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
 
       {/* Flights table */}
       <section className="dash-section">
-        <div className="dash-section-header" style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div
+          className="dash-section-header"
+          style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}
+        >
           <div>
             <h3>Flights</h3>
             <p>Choose a flight and go directly to your work area.</p>
@@ -180,33 +220,22 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
                     <td>{f.gate || "-"}</td>
                     <td>{f.aircraftType || "-"}</td>
                     <td>
-                      <span className="dash-status-pill dash-status-open">
-                        {f.status || "OPEN"}
-                      </span>
+                      <StatusPill status={f.status} />
                     </td>
 
                     <td style={{ textAlign: "right" }}>
                       <div className="dash-actions">
-                        <button
-                          className="btn-secondary"
-                          onClick={() => onOpenFlight(f.id, "gate")}
-                        >
+                        <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "gate")}>
                           Gate
                         </button>
 
                         {!isGateController && (
-                          <button
-                            className="btn-secondary"
-                            onClick={() => onOpenFlight(f.id, "bagroom")}
-                          >
+                          <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "bagroom")}>
                             Bagroom
                           </button>
                         )}
 
-                        <button
-                          className="btn-primary"
-                          onClick={() => onOpenFlight(f.id, "aircraft")}
-                        >
+                        <button className="btn-primary" onClick={() => onOpenFlight(f.id, "aircraft")}>
                           Aircraft
                         </button>
                       </div>
