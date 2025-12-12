@@ -1,126 +1,77 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
-const vision = require("@google-cloud/vision");
-
 admin.initializeApp();
 
 const db = admin.firestore();
-const client = new vision.ImageAnnotatorClient();
+const bucket = admin.storage().bucket();
 
-// Extrae SOLO números (bag tags) e ignora todo lo demás
-function extractBagTagsFromText(text, { minLen = 6, maxLen = 12 } = {}) {
-  const src = String(text || "");
-  const matches = src.match(/\d+/g) || [];
-  const tags = matches
-    .map((s) => s.trim())
-    .filter((s) => s.length >= minLen && s.length <= maxLen);
-
-  const seen = new Set();
-  const unique = [];
-  for (const t of tags) {
-    if (!seen.has(t)) {
-      seen.add(t);
-      unique.push(t);
-    }
-  }
-  return unique;
+function normalizeRole(role) {
+  return String(role || "").trim().toLowerCase();
 }
 
-exports.ocrManifestPdf = functions.storage.object().onFinalize(async (object) => {
-  try {
-    const filePath = object.name || "";
-    const contentType = object.contentType || "";
+async function deleteCollection(path, batchSize = 400) {
+  const colRef = db.collection(path);
+  while (true) {
+    const snap = await colRef.limit(batchSize).get();
+    if (snap.empty) break;
 
-    // Solo PDFs en /manifests/
-    if (!filePath.includes("/manifests/")) return null;
-    if (contentType !== "application/pdf" && !filePath.toLowerCase().endsWith(".pdf")) return null;
-
-    const meta = object.metadata || {};
-    const flightId = meta.flightId;
-
-    if (!flightId) {
-      console.log("No flightId in metadata. Skipping OCR.");
-      return null;
-    }
-
-    const gcsUri = `gs://${object.bucket}/${filePath}`;
-
-    // OCR (si el PDF es escaneado, esto es lo que lo lee)
-    const [result] = await client.documentTextDetection(gcsUri);
-
-    const fullText =
-      result?.fullTextAnnotation?.text ||
-      result?.textAnnotations?.[0]?.description ||
-      "";
-
-    const tags = extractBagTagsFromText(fullText, { minLen: 6, maxLen: 12 });
-    console.log(`OCR tags found: ${tags.length}`);
-
-    if (tags.length === 0) {
-      await db.doc(`flights/${flightId}`).set(
-        {
-          ocrLastRunAt: admin.firestore.FieldValue.serverTimestamp(),
-          ocrLastResult: "NO_TAGS_FOUND",
-          ocrLastFile: filePath,
-        },
-        { merge: true }
-      );
-      return null;
-    }
-
-    // Importar a flights/{flightId}/allowedBagTags/{tag}
-    const batchSize = 450;
-    for (let i = 0; i < tags.length; i += batchSize) {
-      const chunk = tags.slice(i, i + batchSize);
-      const batch = db.batch();
-
-      chunk.forEach((tag) => {
-        const ref = db.doc(`flights/${flightId}/allowedBagTags/${tag}`);
-        batch.set(ref, {
-          tag,
-          importedAt: admin.firestore.FieldValue.serverTimestamp(),
-          importedBy: { via: "OCR", filePath },
-        });
-      });
-
-      await batch.commit();
-    }
-
-    // Activar Strict Manifest
-    await db.doc(`flights/${flightId}`).set(
-      {
-        strictManifest: true,
-        strictManifestUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        manifestImportedAt: admin.firestore.FieldValue.serverTimestamp(),
-        manifestImportedBy: { via: "OCR", filePath },
-        ocrLastRunAt: admin.firestore.FieldValue.serverTimestamp(),
-        ocrLastResult: "IMPORTED",
-        ocrLastFile: filePath,
-        ocrTagCount: tags.length,
-      },
-      { merge: true }
-    );
-
-    return null;
-  } catch (e) {
-    console.error("OCR function error:", e);
-
-    // (opcional) guardar error en el vuelo si tienes flightId en metadata
-    try {
-      const meta = object.metadata || {};
-      const flightId = meta.flightId;
-      if (flightId) {
-        await db.doc(`flights/${flightId}`).set(
-          {
-            ocrLastRunAt: admin.firestore.FieldValue.serverTimestamp(),
-            ocrLastResult: "ERROR",
-            ocrLastError: String(e?.message || e),
-          },
-          { merge: true }
-        );
-      }
-    } catch (_) {}
-
-    return null;
+    const batch = db.batch();
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
   }
+}
+
+async function deleteStoragePrefix(prefix) {
+  // Borra todos los archivos que empiecen con ese prefijo
+  await bucket.deleteFiles({ prefix });
+}
+
+exports.deleteFlightCascade = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required.");
+
+  const flightId = String(data?.flightId || "").trim();
+  if (!flightId) throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+
+  // asumiendo que guardas role en custom claims O en users/{uid}
+  // OPCIÓN A: custom claims (ideal)
+  const tokenRole = normalizeRole(context.auth.token.role);
+
+  // OPCIÓN B: leer users/{uid} si no usas claims
+  let role = tokenRole;
+  if (!role) {
+    const u = await db.collection("users").doc(context.auth.uid).get();
+    role = normalizeRole(u.data()?.role);
+  }
+
+  const canDelete = role === "station_manager" || role === "duty_manager";
+  if (!canDelete) {
+    throw new functions.https.HttpsError("permission-denied", "Only Station/Duty Manager can delete flights.");
+  }
+
+  // 1) borrar subcolecciones
+  await deleteCollection(`flights/${flightId}/aircraftScans`);
+  await deleteCollection(`flights/${flightId}/bagroomScans`);
+  await deleteCollection(`flights/${flightId}/allowedBagTags`);
+  await deleteCollection(`flights/${flightId}/reports`);
+
+  // 2) borrar storage (reports + manifests)
+  await deleteStoragePrefix(`flights/${flightId}/reports/`);
+  await deleteStoragePrefix(`flights/${flightId}/manifests/`);
+
+  // 3) borrar flight doc
+  await db.collection("flights").doc(flightId).delete();
+
+  // 4) opcional: limpiar índice global bagTags
+  // Si tienes muchos, esto puede crecer; pero funciona por batches.
+  const tagsQ = await db.collection("bagTags").where("flightId", "==", flightId).limit(400).get();
+  while (!tagsQ.empty) {
+    const batch = db.batch();
+    tagsQ.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+
+    const next = await db.collection("bagTags").where("flightId", "==", flightId).limit(400).get();
+    if (next.empty) break;
+  }
+
+  return { ok: true };
 });
