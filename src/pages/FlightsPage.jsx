@@ -26,9 +26,49 @@ function canCreateFlights(roleRaw) {
   return role === "station_manager" || role === "duty_manager" || role === "duty_managers";
 }
 
+function normalizeStatus(s) {
+  const v = String(s || "OPEN").trim().toUpperCase();
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+}
+
+const STATUS_COLORS = {
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },      // amarillo
+  RECEIVING: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },   // naranja
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },    // verde
+};
+
+function StatusPill({ status }) {
+  const st = normalizeStatus(status);
+  const c = STATUS_COLORS[st] || STATUS_COLORS.OPEN;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "4px 10px",
+        borderRadius: 999,
+        border: `1px solid ${c.border}`,
+        background: c.bg,
+        color: c.text,
+        fontWeight: 900,
+        fontSize: "0.75rem",
+        letterSpacing: "0.04em",
+      }}
+    >
+      {st}
+    </span>
+  );
+}
+
 export default function FlightsPage({ user, onFlightSelected }) {
   const today = useMemo(() => getTodayYYYYMMDD(), []);
   const [selectedDate, setSelectedDate] = useState(today);
+
+  // ✅ NUEVO: filtro active/completed/all
+  // active = todo menos LOADED
+  // completed = solo LOADED
+  const [statusFilter, setStatusFilter] = useState("active"); // "active" | "completed" | "all"
 
   const [flights, setFlights] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -48,6 +88,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
   useEffect(() => {
     setLoading(true);
 
+    // Cargamos por fecha, y filtramos en UI (más simple y evita queries compuestas con status)
     const q = query(
       collection(db, "flights"),
       where("flightDate", "==", selectedDate),
@@ -58,7 +99,15 @@ export default function FlightsPage({ user, onFlightSelected }) {
       q,
       (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setFlights(rows);
+
+        const filtered =
+          statusFilter === "all"
+            ? rows
+            : statusFilter === "completed"
+              ? rows.filter((r) => normalizeStatus(r.status) === "LOADED")
+              : rows.filter((r) => normalizeStatus(r.status) !== "LOADED");
+
+        setFlights(filtered);
         setLoading(false);
       },
       (err) => {
@@ -69,7 +118,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
     );
 
     return () => unsub();
-  }, [selectedDate]);
+  }, [selectedDate, statusFilter]);
 
   const openCreate = () => {
     setFormError("");
@@ -100,8 +149,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
       return;
     }
 
-    // Evitar duplicados (best-effort)
-    // Busca si ya existe un doc con mismo flightNumber + flightDate
     try {
       setSaving(true);
 
@@ -137,7 +184,6 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setShowCreate(false);
       setSaving(false);
 
-      // opcional: al crear, selecciona el vuelo y manda al Counter
       onFlightSelected?.(docRef.id);
     } catch (err) {
       console.error("Create flight error:", err);
@@ -152,7 +198,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
         <div>
           <h2 style={{ margin: 0 }}>Flights</h2>
           <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-            Select a date, then choose a flight.
+            Select a date, filter, then choose a flight.
           </p>
         </div>
 
@@ -169,16 +215,32 @@ export default function FlightsPage({ user, onFlightSelected }) {
             </div>
           </div>
 
+          {/* ✅ NUEVO: status filter */}
+          <div>
+            <label style={{ fontSize: "0.85rem", color: "#374151" }}>Filter</label>
+            <div>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", height: 34 }}
+              >
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+          </div>
+
           {allowCreate ? (
             <button
               onClick={openCreate}
               style={{
                 padding: "8px 12px",
                 borderRadius: 10,
-                border: "1px solid #1d4ed8",
-                background: "#2563eb",
+                border: "1px solid #111827",
+                background: "#111827",
                 color: "white",
-                fontWeight: 600,
+                fontWeight: 700,
                 cursor: "pointer",
                 height: 38,
                 marginTop: 18,
@@ -199,7 +261,9 @@ export default function FlightsPage({ user, onFlightSelected }) {
       {loading ? (
         <p style={{ color: "#6b7280" }}>Loading flights...</p>
       ) : flights.length === 0 ? (
-        <p style={{ color: "#6b7280" }}>No flights found for {selectedDate}.</p>
+        <p style={{ color: "#6b7280" }}>
+          No flights found for {selectedDate} ({statusFilter}).
+        </p>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.92rem" }}>
@@ -214,31 +278,42 @@ export default function FlightsPage({ user, onFlightSelected }) {
               </tr>
             </thead>
             <tbody>
-              {flights.map((f) => (
-                <tr key={f.id}>
-                  <td style={td}><strong>{f.flightNumber}</strong></td>
-                  <td style={td}>{f.flightDate}</td>
-                  <td style={td}>{f.gate || "-"}</td>
-                  <td style={td}>{f.aircraftType || "-"}</td>
-                  <td style={td}>{f.status || "OPEN"}</td>
-                  <td style={{ ...td, textAlign: "right" }}>
-                    <button
-                      onClick={() => onFlightSelected?.(f.id)}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 999,
-                        border: "1px solid #d1d5db",
-                        background: "white",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {flights.map((f) => {
+                const st = normalizeStatus(f.status);
+                const isCompleted = st === "LOADED";
+                return (
+                  <tr key={f.id}>
+                    <td style={td}><strong>{f.flightNumber}</strong></td>
+                    <td style={td}>{f.flightDate}</td>
+                    <td style={td}>{f.gate || "-"}</td>
+                    <td style={td}>{f.aircraftType || "-"}</td>
+                    <td style={td}>
+                      <StatusPill status={st} />
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      <button
+                        onClick={() => onFlightSelected?.(f.id)}
+                        style={{
+                          padding: "6px 12px",
+                          borderRadius: 999,
+                          border: "1px solid #d1d5db",
+                          background: "white",
+                          cursor: "pointer",
+                          fontWeight: 800,
+                        }}
+                      >
+                        {isCompleted ? "View" : "Open"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+
+          <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
+            Tip: Completed flights (LOADED) remain accessible for Gate/Aircraft/Reports without affecting new flights.
+          </p>
         </div>
       )}
 
@@ -252,7 +327,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-              <div style={{ gridColumn: "1 / span 1" }}>
+              <div>
                 <label style={label}>Flight Number</label>
                 <input
                   value={form.flightNumber}
@@ -262,7 +337,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
                 />
               </div>
 
-              <div style={{ gridColumn: "2 / span 1" }}>
+              <div>
                 <label style={label}>Date</label>
                 <input
                   type="date"
@@ -272,7 +347,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
                 />
               </div>
 
-              <div style={{ gridColumn: "1 / span 1" }}>
+              <div>
                 <label style={label}>Gate</label>
                 <input
                   value={form.gate}
@@ -282,7 +357,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
                 />
               </div>
 
-              <div style={{ gridColumn: "2 / span 1" }}>
+              <div>
                 <label style={label}>Aircraft Type</label>
                 <input
                   value={form.aircraftType}
@@ -358,10 +433,10 @@ const input = { width: "100%", padding: "8px 10px", borderRadius: 10, border: "1
 const btnPrimary = {
   padding: "8px 12px",
   borderRadius: 10,
-  border: "1px solid #1d4ed8",
-  background: "#2563eb",
+  border: "1px solid #111827",
+  background: "#111827",
   color: "white",
-  fontWeight: 600,
+  fontWeight: 700,
   cursor: "pointer",
 };
 
@@ -381,4 +456,3 @@ const xBtn = {
   height: 34,
   cursor: "pointer",
 };
-
