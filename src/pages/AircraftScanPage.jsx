@@ -4,7 +4,6 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -217,9 +216,10 @@ export default function AircraftScanPage({ flightId, user }) {
 
     const existing = snap.data();
     if (existing.flightId && existing.flightId !== flightId) {
-      const currentFlightNumber = flight?.flightNumber || flightId;
+      // ✅ NO usar flightId como fallback visual
+      const currentFlightNumber = flight?.flightNumber || "UNKNOWN";
       const currentDate = flight?.flightDate || "(no date)";
-      const otherFlightNumber = existing.flightNumber || existing.flightId;
+      const otherFlightNumber = existing.flightNumber || "UNKNOWN";
       const otherDate = existing.flightDate || "(no date)";
 
       return {
@@ -246,7 +246,8 @@ export default function AircraftScanPage({ flightId, user }) {
     const allowSnap = await getDoc(allowRef);
 
     if (!allowSnap.exists()) {
-      const currentFlightNumber = flight?.flightNumber || flightId;
+      // ✅ NO usar flightId como fallback visual
+      const currentFlightNumber = flight?.flightNumber || "UNKNOWN";
       const currentDate = flight?.flightDate || "(no date)";
 
       return {
@@ -384,7 +385,8 @@ export default function AircraftScanPage({ flightId, user }) {
   const buildPdf = ({ flightDoc, aircraftRows, bagroomCount }) => {
     const pdf = new jsPDF();
 
-    const flightNumber = safeStr(flightDoc?.flightNumber, flightId);
+    // ✅ NO usar flightId como fallback visible
+    const flightNumber = safeStr(flightDoc?.flightNumber, "UNKNOWN");
     const flightDate = safeStr(flightDoc?.flightDate, "-");
     const gate = safeStr(flightDoc?.gate, "-");
     const aircraftType = safeStr(flightDoc?.aircraftType, "-");
@@ -405,8 +407,7 @@ export default function AircraftScanPage({ flightId, user }) {
     const aircraftTotal = aircraftRows.length;
     const zones = computeZones(aircraftRows);
 
-    const missing =
-      gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
+    const missing = gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
 
     pdf.setFontSize(14);
     pdf.text("Baggage Loading Control System (BLCS)", 14, 16);
@@ -439,7 +440,6 @@ export default function AircraftScanPage({ flightId, user }) {
       headStyles: { fillColor: [240, 240, 240] },
     });
 
-    // Bingo sheet
     const tags = aircraftRows
       .slice()
       .sort((a, b) => String(a.tag).localeCompare(String(b.tag)))
@@ -460,7 +460,8 @@ export default function AircraftScanPage({ flightId, user }) {
   };
 
   const uploadPdfToStorage = async (pdfDoc) => {
-    const flightNumber = safeStr(flight?.flightNumber, flightId);
+    // ✅ NO usar flightId como fallback en nombre/metadata
+    const flightNumber = safeStr(flight?.flightNumber, "UNKNOWN");
     const flightDate = safeStr(flight?.flightDate, "unknown-date");
     const stamp = new Date().toISOString().replaceAll(":", "-").slice(0, 19);
 
@@ -496,10 +497,6 @@ export default function AircraftScanPage({ flightId, user }) {
       setMsg("");
       setCompleteMsg("");
 
-      // Siempre usamos los scans actuales del state (ya vienen en vivo),
-      // pero si quieres “snapshot exacto” del server:
-      // const snap = await getDocs(collection(db, "flights", flightId, "aircraftScans"));
-      // const aircraftRows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const aircraftRows = scans;
 
       const pdfDoc = buildPdf({
@@ -508,14 +505,13 @@ export default function AircraftScanPage({ flightId, user }) {
         bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
       });
 
-      // 1) Descargar
-      const downloadName = `BLCS_${safeStr(flight.flightNumber, flightId)}_${safeStr(
+      // ✅ NO usar flightId como fallback en download name
+      const downloadName = `BLCS_${safeStr(flight.flightNumber, "UNKNOWN")}_${safeStr(
         flight.flightDate,
         "date"
       )}.pdf`;
       pdfDoc.save(downloadName);
 
-      // 2) Subir a storage + guardar en Firestore
       const uploaded = await uploadPdfToStorage(pdfDoc);
 
       await setDoc(
@@ -539,7 +535,6 @@ export default function AircraftScanPage({ flightId, user }) {
         { merge: true }
       );
 
-      // 3) Si quieren marcar LOADED también desde aquí
       if (alsoMarkLoaded) {
         await setDoc(
           doc(db, "flights", flightId),
@@ -561,7 +556,6 @@ export default function AircraftScanPage({ flightId, user }) {
     }
   };
 
-  // ✅ Loading Completed (modal) + generates PDF + saves report
   const handleLoadingCompleted = async () => {
     setCompleteMsg("");
 
@@ -622,10 +616,8 @@ export default function AircraftScanPage({ flightId, user }) {
                 role: user?.role || null,
               },
 
-              // ✅ Ramp supervisor name (easy reference)
               rampSupervisorOnDuty: user?.username || null,
 
-              // ✅ Final status
               status: "LOADED",
               statusUpdatedAt: serverTimestamp(),
               statusUpdatedBy: {
@@ -637,7 +629,6 @@ export default function AircraftScanPage({ flightId, user }) {
             { merge: true }
           );
 
-          // ✅ Export PDF automatically
           await exportReportPdf();
 
           setCompleteMsg("✅ Aircraft loading completed successfully. Report saved.");
@@ -668,7 +659,7 @@ export default function AircraftScanPage({ flightId, user }) {
 
         <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
           <div>
-            Flight: <strong>{flightLoading ? "…" : (flight?.flightNumber || flightId)}</strong>
+            Flight: <strong>{flightLoading ? "…" : (flight?.flightNumber || "-")}</strong>
           </div>
           <div style={{ color: "#6b7280" }}>
             Date: <strong>{flightLoading ? "…" : (flight?.flightDate || "-")}</strong>
@@ -738,7 +729,6 @@ export default function AircraftScanPage({ flightId, user }) {
             Add Scan
           </button>
 
-          {/* ✅ Export PDF anytime (also after completed) */}
           <button
             onClick={() => exportReportPdf()}
             disabled={exporting || !flight || loadingScans}
@@ -751,8 +741,8 @@ export default function AircraftScanPage({ flightId, user }) {
               background: "#111827",
               color: "white",
               fontWeight: 900,
-              cursor: (exporting || !flight || loadingScans) ? "not-allowed" : "pointer",
-              opacity: (exporting || !flight || loadingScans) ? 0.7 : 1,
+              cursor: exporting || !flight || loadingScans ? "not-allowed" : "pointer",
+              opacity: exporting || !flight || loadingScans ? 0.7 : 1,
             }}
           >
             {exporting ? "Exporting…" : "Export PDF Report"}
@@ -766,7 +756,11 @@ export default function AircraftScanPage({ flightId, user }) {
 
           {msg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem" }}>{msg}</p>}
           {err && <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.9rem" }}>{err}</p>}
-          {completeMsg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>{completeMsg}</p>}
+          {completeMsg && (
+            <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>
+              {completeMsg}
+            </p>
+          )}
         </div>
 
         {/* Right */}
@@ -785,9 +779,7 @@ export default function AircraftScanPage({ flightId, user }) {
               {typeof flight?.checkedBagsTotal === "number" && !loadingScans && (
                 <p style={{ margin: "6px 0 0", fontSize: "0.9rem" }}>
                   Gate total: <strong>{flight.checkedBagsTotal}</strong> · Missing:{" "}
-                  <strong style={{ color: missingNow === 0 ? "#16a34a" : "#b91c1c" }}>
-                    {missingNow}
-                  </strong>
+                  <strong style={{ color: missingNow === 0 ? "#16a34a" : "#b91c1c" }}>{missingNow}</strong>
                 </p>
               )}
             </div>
@@ -801,13 +793,13 @@ export default function AircraftScanPage({ flightId, user }) {
                     padding: "10px 12px",
                     borderRadius: 12,
                     border: "none",
-                    background: (completing || isLoadingCompleted) ? "#86efac" : "#16a34a",
+                    background: completing || isLoadingCompleted ? "#86efac" : "#16a34a",
                     color: "white",
                     fontWeight: 900,
-                    cursor: (completing || isLoadingCompleted) ? "not-allowed" : "pointer",
+                    cursor: completing || isLoadingCompleted ? "not-allowed" : "pointer",
                   }}
                 >
-                  {isLoadingCompleted ? "Completed" : (completing ? "Checking…" : "Loading Completed")}
+                  {isLoadingCompleted ? "Completed" : completing ? "Checking…" : "Loading Completed"}
                 </button>
               </div>
             )}
@@ -830,11 +822,11 @@ export default function AircraftScanPage({ flightId, user }) {
                 <tbody>
                   {scans.map((s) => (
                     <tr key={s.id}>
-                      <td style={td}><strong>{s.tag}</strong></td>
-                      <td style={td}>{s.zone ?? "-"}</td>
-                      <td style={{ ...td, textAlign: "right", color: "#6b7280" }}>
-                        {s.scannedBy?.username || "-"}
+                      <td style={td}>
+                        <strong>{s.tag}</strong>
                       </td>
+                      <td style={td}>{s.zone ?? "-"}</td>
+                      <td style={{ ...td, textAlign: "right", color: "#6b7280" }}>{s.scannedBy?.username || "-"}</td>
                     </tr>
                   ))}
                 </tbody>
