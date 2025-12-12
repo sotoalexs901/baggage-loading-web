@@ -1,13 +1,16 @@
 // src/pages/GateControllerPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   doc,
   getDocs,
+  getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
   writeBatch,
+  query,
+  orderBy,
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 
@@ -103,6 +106,18 @@ async function uploadPdfForOcr({ file, flightId, user }) {
   return { path, url };
 }
 
+// ---- scan helpers ----
+function cleanTagValue(v) {
+  return String(v || "").trim();
+}
+function onlyDigits(s) {
+  return String(s || "").replace(/\D+/g, "");
+}
+function isValidTag(tag, { minLen = 6, maxLen = 12 } = {}) {
+  const t = onlyDigits(tag);
+  return t.length >= minLen && t.length <= maxLen;
+}
+
 export default function GateControllerPage({ flightId, user, gateControllerOnDuty, canEdit }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
@@ -130,6 +145,21 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
   // Strict manifest toggle
   const [strictManifest, setStrictManifest] = useState(false);
+
+  // ✅ NEW: Scan-to-build manifest
+  const [scanInput, setScanInput] = useState("");
+  const scanRef = useRef(null);
+  const [scanMsg, setScanMsg] = useState("");
+  const [scanErr, setScanErr] = useState("");
+  const [savingScan, setSavingScan] = useState(false);
+
+  // ✅ NEW: live manifest count + recent list
+  const [allowedCount, setAllowedCount] = useState(0);
+  const [recentAllowed, setRecentAllowed] = useState([]);
+  const [loadingAllowed, setLoadingAllowed] = useState(true);
+
+  // Debounce timer (for scanners that don't send Enter)
+  const debounceRef = useRef(null);
 
   // Load flight doc
   useEffect(() => {
@@ -166,6 +196,33 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         console.error("GateControllerPage flight onSnapshot error:", err);
         setFlight(null);
         setFlightLoading(false);
+      }
+    );
+
+    return () => unsub();
+  }, [flightId]);
+
+  // ✅ Live allowedBagTags count + recent
+  useEffect(() => {
+    if (!flightId) return;
+
+    setLoadingAllowed(true);
+    const colRef = collection(db, "flights", flightId, "allowedBagTags");
+    const qy = query(colRef, orderBy("importedAt", "desc"));
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        setAllowedCount(snap.size);
+        const rows = snap.docs.slice(0, 30).map((d) => ({ id: d.id, ...d.data() }));
+        setRecentAllowed(rows);
+        setLoadingAllowed(false);
+      },
+      (e) => {
+        console.error("allowedBagTags snapshot error:", e);
+        setAllowedCount(0);
+        setRecentAllowed([]);
+        setLoadingAllowed(false);
       }
     );
 
@@ -212,6 +269,27 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
   // === Status info ===
   const flightStatus = normalizeStatus(flight?.status);
   const statusStyle = STATUS_COLORS[flightStatus] || STATUS_COLORS.OPEN;
+
+  // ✅ Auto set to RECEIVING when Gate starts scanning tags (only from OPEN)
+  const ensureStatusReceiving = async () => {
+    if (!flightId || !flight) return;
+    const st = normalizeStatus(flight.status);
+    if (st !== "OPEN") return;
+
+    await setDoc(
+      doc(db, "flights", flightId),
+      {
+        status: "RECEIVING",
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
+      },
+      { merge: true }
+    );
+  };
 
   const updateFlightStatus = async (nextStatus) => {
     setManifestMsg("");
@@ -399,6 +477,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               username: user?.username || null,
               role: user?.role || null,
             },
+            source: "import",
           });
         }
 
@@ -432,6 +511,104 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
   };
 
+  // ✅ NEW: Save one scanned bag tag into allowedBagTags
+  const saveScannedTagToManifest = async (raw) => {
+    setScanMsg("");
+    setScanErr("");
+
+    if (!canEdit) {
+      setScanErr("You don't have permission to scan/import manifest tags.");
+      return;
+    }
+
+    const cleaned = onlyDigits(cleanTagValue(raw));
+    if (!cleaned) return;
+
+    if (!isValidTag(cleaned)) {
+      setScanErr("Invalid bag tag (must be 6–12 digits).");
+      return;
+    }
+
+    try {
+      setSavingScan(true);
+
+      // Auto RECEIVING if flight is OPEN
+      await ensureStatusReceiving();
+
+      const ref = doc(db, "flights", flightId, "allowedBagTags", cleaned);
+
+      // prevent extra reads; just write (idempotent)
+      await setDoc(
+        ref,
+        {
+          tag: cleaned,
+          importedAt: serverTimestamp(),
+          importedBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+          source: "scan",
+        },
+        { merge: true }
+      );
+
+      // Optional: if you want Strict Manifest ON automatically when scanning builds manifest
+      await setDoc(
+        doc(db, "flights", flightId),
+        {
+          strictManifest: true,
+          strictManifestUpdatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setStrictManifest(true);
+
+      setScanMsg(`Saved ✅  ${cleaned}`);
+      setScanInput("");
+      if (scanRef.current) scanRef.current.focus();
+    } catch (e) {
+      console.error(e);
+      setScanErr("Could not save scanned tag. Check rules/connection.");
+    } finally {
+      setSavingScan(false);
+    }
+  };
+
+  // Enter submit
+  const onScanKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      saveScannedTagToManifest(scanInput);
+    }
+  };
+
+  // ✅ Debounced auto-save (if scanner doesn't send Enter)
+  useEffect(() => {
+    if (!canEdit) return;
+    const raw = scanInput;
+
+    // if empty -> nothing
+    if (!raw) return;
+
+    // reset timer
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    // if user/scanner stopped typing for 200ms -> save automatically
+    debounceRef.current = setTimeout(() => {
+      const cleaned = onlyDigits(cleanTagValue(raw));
+      // Only auto-submit if looks like a complete numeric tag
+      if (isValidTag(cleaned)) {
+        saveScannedTagToManifest(cleaned);
+      }
+    }, 200);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanInput]);
+
   const title = isGateController ? "Gate Controller (Read Only)" : "Gate Controller";
 
   return (
@@ -460,7 +637,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         <p style={{ color: "#b91c1c" }}>Flight not found.</p>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 14 }}>
-          <InfoCard label="Flight" value={flight.flightNumber || flight.id} />
+          <InfoCard label="Flight" value={flight.flightNumber || "-"} />
           <InfoCard label="Date" value={flight.flightDate || "-"} />
           <InfoCard label="Gate" value={flight.gate || "-"} />
           <InfoCard label="Aircraft" value={flight.aircraftType || "-"} />
@@ -512,6 +689,102 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             Read-only access.
           </p>
         )}
+      </section>
+
+      {/* ✅ NEW: Scan manifest tags like Bagroom */}
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Scan Bag Tags (Build Manifest)</h3>
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+              Scan bags one-by-one to build this flight manifest. Saves into <strong>allowedBagTags</strong>.
+            </p>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Manifest tags saved</div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>{loadingAllowed ? "…" : allowedCount}</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "minmax(240px, 1fr) minmax(240px, 1fr)", gap: 12 }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+              Bag Tag
+            </label>
+            <input
+              ref={scanRef}
+              value={scanInput}
+              onChange={(e) => setScanInput(e.target.value)}
+              onKeyDown={onScanKeyDown}
+              disabled={!canEdit || savingScan}
+              placeholder={!canEdit ? "Read-only" : "Scan bag tag…"}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: 12,
+                border: "1px solid #d1d5db",
+                background: canEdit ? "white" : "#f3f4f6",
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                fontSize: "0.95rem",
+              }}
+            />
+
+            <button
+              onClick={() => saveScannedTagToManifest(scanInput)}
+              disabled={!canEdit || savingScan}
+              style={{
+                width: "100%",
+                marginTop: 10,
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #111827",
+                background: !canEdit ? "#9ca3af" : "#111827",
+                color: "white",
+                fontWeight: 900,
+                cursor: !canEdit ? "not-allowed" : "pointer",
+                opacity: savingScan ? 0.7 : 1,
+              }}
+            >
+              {savingScan ? "Saving…" : "Save Tag"}
+            </button>
+
+            <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
+              Tip: if your scanner does NOT send Enter, the system auto-saves after a short pause.
+            </p>
+
+            {scanMsg && <p style={{ marginTop: 8, color: "#16a34a", fontWeight: 800 }}>{scanMsg}</p>}
+            {scanErr && <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800 }}>{scanErr}</p>}
+          </div>
+
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "white", padding: 10, maxHeight: 240, overflow: "auto" }}>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
+              Recent tags (last 30)
+            </div>
+            {loadingAllowed ? (
+              <p style={{ color: "#6b7280" }}>Loading…</p>
+            ) : recentAllowed.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>No tags saved yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {recentAllowed.map((r) => (
+                  <span
+                    key={r.id}
+                    style={{
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      border: "1px solid #e5e7eb",
+                      background: "#f9fafb",
+                      fontSize: "0.82rem",
+                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                    }}
+                  >
+                    {r.tag || r.id}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Gate Total */}
@@ -574,7 +847,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest</h3>
+            <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest (Import)</h3>
             <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
               Upload CSV/TXT/PDF or paste a list. System ignores names/PNR and imports only bag tag numbers.
               If PDF is scanned, system uploads it for OCR and imports automatically.
