@@ -1,16 +1,53 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+
 admin.initializeApp();
 
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
 
+/* =========================
+   Helpers
+========================= */
+
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
 }
 
+/**
+ * Valida que el usuario sea Station Manager o Duty Manager
+ * Soporta:
+ *  - Custom Claims (context.auth.token.role)
+ *  - users/{uid}.role (fallback)
+ */
+async function requireManager(context) {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Login required.");
+  }
+
+  let role = normalizeRole(context.auth.token?.role);
+
+  if (!role) {
+    const uSnap = await db.collection("users").doc(context.auth.uid).get();
+    role = normalizeRole(uSnap.data()?.role);
+  }
+
+  if (role !== "station_manager" && role !== "duty_manager") {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Only Station Manager or Duty Manager allowed."
+    );
+  }
+
+  return role;
+}
+
+/**
+ * Borra una colección completa en batches
+ */
 async function deleteCollection(path, batchSize = 400) {
   const colRef = db.collection(path);
+
   while (true) {
     const snap = await colRef.limit(batchSize).get();
     if (snap.empty) break;
@@ -21,87 +58,95 @@ async function deleteCollection(path, batchSize = 400) {
   }
 }
 
+/**
+ * Borra archivos de Storage por prefijo
+ */
 async function deleteStoragePrefix(prefix) {
-  // Borra todos los archivos que empiecen con ese prefijo
-  await bucket.deleteFiles({ prefix });
+  try {
+    await bucket.deleteFiles({ prefix });
+  } catch (e) {
+    // best-effort: no bloquea si no hay archivos
+    console.warn(`Storage cleanup skipped for ${prefix}`);
+  }
 }
 
+/* =========================
+   DELETE FLIGHT (CASCADE)
+========================= */
+
 exports.deleteFlightCascade = functions.https.onCall(async (data, context) => {
-  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required.");
+  await requireManager(context);
 
   const flightId = String(data?.flightId || "").trim();
-  if (!flightId) throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
-
-  // asumiendo que guardas role en custom claims O en users/{uid}
-  // OPCIÓN A: custom claims (ideal)
-  const tokenRole = normalizeRole(context.auth.token.role);
-
-  // OPCIÓN B: leer users/{uid} si no usas claims
-  let role = tokenRole;
-  if (!role) {
-    const u = await db.collection("users").doc(context.auth.uid).get();
-    role = normalizeRole(u.data()?.role);
+  if (!flightId) {
+    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
   }
 
-  const canDelete = role === "station_manager" || role === "duty_manager";
-  if (!canDelete) {
-    throw new functions.https.HttpsError("permission-denied", "Only Station/Duty Manager can delete flights.");
+  const flightRef = db.collection("flights").doc(flightId);
+  const flightSnap = await flightRef.get();
+
+  if (!flightSnap.exists) {
+    throw new functions.https.HttpsError("not-found", "Flight not found.");
   }
 
-  // 1) borrar subcolecciones
+  // 1) Delete subcollections
   await deleteCollection(`flights/${flightId}/aircraftScans`);
   await deleteCollection(`flights/${flightId}/bagroomScans`);
   await deleteCollection(`flights/${flightId}/allowedBagTags`);
   await deleteCollection(`flights/${flightId}/reports`);
 
-  // 2) borrar storage (reports + manifests)
+  // 2) Delete Storage files
   await deleteStoragePrefix(`flights/${flightId}/reports/`);
   await deleteStoragePrefix(`flights/${flightId}/manifests/`);
 
-  // 3) borrar flight doc
-  await db.collection("flights").doc(flightId).delete();
+  // 3) Delete global bagTags index
+  while (true) {
+    const snap = await db
+      .collection("bagTags")
+      .where("flightId", "==", flightId)
+      .limit(400)
+      .get();
 
-  // 4) opcional: limpiar índice global bagTags
-  // Si tienes muchos, esto puede crecer; pero funciona por batches.
-  const tagsQ = await db.collection("bagTags").where("flightId", "==", flightId).limit(400).get();
-  while (!tagsQ.empty) {
+    if (snap.empty) break;
+
     const batch = db.batch();
-    tagsQ.docs.forEach((d) => batch.delete(d.ref));
+    snap.docs.forEach((d) => batch.delete(d.ref));
     await batch.commit();
-
-    const next = await db.collection("bagTags").where("flightId", "==", flightId).limit(400).get();
-    if (next.empty) break;
   }
+
+  // 4) Delete flight document
+  await flightRef.delete();
 
   return { ok: true };
 });
-const functions = require("firebase-functions");
-const admin = require("firebase-admin");
-admin.initializeApp();
 
-function requireManager(context) {
-  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required.");
-  const role = String(context.auth.token.role || "").toLowerCase();
-  if (role !== "duty_manager" && role !== "station_manager") {
-    throw new functions.https.HttpsError("permission-denied", "Managers only.");
-  }
-  return role;
-}
+/* =========================
+   REOPEN FLIGHT
+========================= */
 
 exports.reopenFlight = functions.https.onCall(async (data, context) => {
-  requireManager(context);
+  await requireManager(context);
 
   const flightId = String(data?.flightId || "").trim();
-  if (!flightId) throw new functions.https.HttpsError("invalid-argument", "flightId required.");
+  if (!flightId) {
+    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+  }
 
-  const ref = admin.firestore().doc(`flights/${flightId}`);
+  const ref = db.collection("flights").doc(flightId);
   const snap = await ref.get();
-  if (!snap.exists) throw new functions.https.HttpsError("not-found", "Flight not found.");
+
+  if (!snap.exists) {
+    throw new functions.https.HttpsError("not-found", "Flight not found.");
+  }
 
   const flight = snap.data() || {};
   const status = String(flight.status || "OPEN").toUpperCase();
+
   if (status !== "LOADED") {
-    throw new functions.https.HttpsError("failed-precondition", "Only LOADED flights can be reopened.");
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "Only LOADED flights can be reopened."
+    );
   }
 
   await ref.set(
