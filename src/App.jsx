@@ -18,7 +18,7 @@ export default function App() {
 
   const [currentView, setCurrentView] = useState("dashboard");
 
-  // ✅ Nuevo: guardamos el vuelo completo (id + flightNumber + flightDate)
+  // ✅ Guardamos el vuelo completo (id + flightNumber + flightDate + etc.)
   const [selectedFlight, setSelectedFlight] = useState(null);
 
   const handleLogin = (userData, sessionMeta) => {
@@ -53,7 +53,6 @@ export default function App() {
   // ✅ Ahora recibimos el flight completo (o fallback si llega id)
   const handleOpenFlightFromDashboard = (flightOrId, targetView) => {
     if (typeof flightOrId === "string") {
-      // fallback por si algún lugar aún manda solo el id
       setSelectedFlight({ id: flightOrId });
     } else {
       setSelectedFlight(flightOrId);
