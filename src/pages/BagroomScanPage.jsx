@@ -17,13 +17,18 @@ function normalizeRole(role) {
 }
 
 function cleanTagValue(v) {
-  return String(v || "").trim();
+  // quita saltos de linea que a veces manda el scanner
+  return String(v || "").replace(/[\r\n]+/g, "").trim();
 }
 
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
   return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
 }
+
+// ✅ Ajusta esto si tus tags son siempre 6–12 como en manifest
+const MIN_TAG_LEN = 6;
+const AUTO_SUBMIT_IDLE_MS = 90;
 
 export default function BagroomScanPage({ flightId, user }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
@@ -42,6 +47,10 @@ export default function BagroomScanPage({ flightId, user }) {
   const [loadingScans, setLoadingScans] = useState(true);
 
   const [strictManifest, setStrictManifest] = useState(false);
+
+  // ✅ Auto-submit control
+  const autoTimerRef = useRef(null);
+  const isSubmittingRef = useRef(false);
 
   // Modal
   const { modal, show, close } = useModal();
@@ -125,6 +134,13 @@ export default function BagroomScanPage({ flightId, user }) {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
+  // limpiar timer al desmontar
+  useEffect(() => {
+    return () => {
+      if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+    };
+  }, []);
+
   const isLoadingCompleted =
     Boolean(flight?.aircraftLoadingCompleted) || normalizeStatus(flight?.status) === "LOADED";
 
@@ -136,10 +152,7 @@ export default function BagroomScanPage({ flightId, user }) {
     if (!flight) return;
 
     const current = normalizeStatus(flight.status);
-
     if (current === "LOADING" || current === "LOADED") return;
-
-    // If already RECEIVING do nothing
     if (current === "RECEIVING") return;
 
     await setDoc(
@@ -238,20 +251,31 @@ export default function BagroomScanPage({ flightId, user }) {
     return true;
   };
 
-  const handleScanSubmit = async () => {
+  const handleScanSubmit = async (forcedTag) => {
+    if (isSubmittingRef.current) return;
+
     setMsg("");
     setErr("");
 
     if (isLoadingCompleted) {
-      popup("Locked", "⚠️ Aircraft loading is already completed for this flight. Bagroom scanning is locked.", "warning");
+      popup(
+        "Locked",
+        "⚠️ Aircraft loading is already completed for this flight. Bagroom scanning is locked.",
+        "warning"
+      );
       setTagInput("");
       return;
     }
 
-    const tag = cleanTagValue(tagInput);
+    const tag = cleanTagValue(forcedTag ?? tagInput);
     if (!tag) return;
 
+    // ✅ minimo: evita dispararse con 1–2 chars si alguien teclea manual
+    if (tag.length < MIN_TAG_LEN) return;
+
     try {
+      isSubmittingRef.current = true;
+
       if (!flight) {
         setErr("Flight not loaded.");
         return;
@@ -278,8 +302,6 @@ export default function BagroomScanPage({ flightId, user }) {
       }
 
       await indexTag(tag);
-
-      // ✅ Auto status RECEIVING
       await ensureStatusReceiving();
 
       setMsg(`Scanned ✅  ${tag}`);
@@ -289,11 +311,37 @@ export default function BagroomScanPage({ flightId, user }) {
     } catch (e) {
       console.error(e);
       setErr("Scan failed. Check connection.");
+    } finally {
+      isSubmittingRef.current = false;
     }
   };
 
+  // ✅ Auto-submit cuando el scanner termina (idle)
+  const scheduleAutoSubmit = (nextValue) => {
+    if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+
+    const cleaned = cleanTagValue(nextValue);
+
+    // Si el scanner manda \n o \r, normalmente ya terminó → submit inmediato
+    if (/[\r\n]/.test(String(nextValue || "")) && cleaned.length >= MIN_TAG_LEN) {
+      handleScanSubmit(cleaned);
+      return;
+    }
+
+    autoTimerRef.current = setTimeout(() => {
+      if (cleaned.length >= MIN_TAG_LEN) handleScanSubmit(cleaned);
+    }, AUTO_SUBMIT_IDLE_MS);
+  };
+
+  const handleChange = (e) => {
+    const v = e.target.value;
+    setTagInput(v);
+    if (!isLoadingCompleted) scheduleAutoSubmit(v);
+  };
+
+  // soporte para Enter / Tab si el scanner los manda
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
       handleScanSubmit();
     }
@@ -334,7 +382,7 @@ export default function BagroomScanPage({ flightId, user }) {
           <input
             ref={inputRef}
             value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
             disabled={isLoadingCompleted}
             placeholder={isLoadingCompleted ? "Loading completed (locked)" : "Scan bag tag…"}
@@ -347,8 +395,9 @@ export default function BagroomScanPage({ flightId, user }) {
             }}
           />
 
+          {/* ✅ Deja el botón por si alguien quiere hacerlo manual, pero ya no es necesario */}
           <button
-            onClick={handleScanSubmit}
+            onClick={() => handleScanSubmit()}
             disabled={isLoadingCompleted}
             style={{
               width: "100%",
@@ -408,6 +457,12 @@ export default function BagroomScanPage({ flightId, user }) {
               </table>
             )}
           </div>
+
+          {!isGateController && (
+            <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
+              Tip: ahora guarda automático al terminar el scan (no necesitas ENTER).
+            </p>
+          )}
         </div>
       </div>
 
@@ -445,4 +500,5 @@ const th = {
 const td = {
   padding: "10px 8px",
   borderBottom: "1px solid #f3f4f6",
+  color: "#111827",
 };
