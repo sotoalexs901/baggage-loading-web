@@ -9,6 +9,8 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import Modal from "../components/Modal.jsx";
+import { useModal } from "../components/useModal.js";
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -16,6 +18,11 @@ function normalizeRole(role) {
 
 function cleanTagValue(v) {
   return String(v || "").trim();
+}
+
+function normalizeStatus(s) {
+  const v = String(s || "OPEN").trim().toUpperCase();
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
 }
 
 export default function BagroomScanPage({ flightId, user }) {
@@ -35,6 +42,20 @@ export default function BagroomScanPage({ flightId, user }) {
   const [loadingScans, setLoadingScans] = useState(true);
 
   const [strictManifest, setStrictManifest] = useState(false);
+
+  // Modal
+  const { modal, show, close } = useModal();
+
+  const popup = (title, message, tone = "info") => {
+    show({
+      title,
+      tone,
+      content: <div style={{ whiteSpace: "pre-wrap" }}>{message}</div>,
+      confirmText: "OK",
+      onConfirm: close,
+      onCancel: close,
+    });
+  };
 
   // Load flight
   useEffect(() => {
@@ -104,8 +125,36 @@ export default function BagroomScanPage({ flightId, user }) {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
-  const popup = (text) => {
-    alert(text);
+  const isLoadingCompleted =
+    Boolean(flight?.aircraftLoadingCompleted) || normalizeStatus(flight?.status) === "LOADED";
+
+  /**
+   * ✅ Auto status: first bagroom scan sets RECEIVING
+   * Only if status is OPEN/RECEIVING (won’t override LOADING/LOADED)
+   */
+  const ensureStatusReceiving = async () => {
+    if (!flight) return;
+
+    const current = normalizeStatus(flight.status);
+
+    if (current === "LOADING" || current === "LOADED") return;
+
+    // If already RECEIVING do nothing
+    if (current === "RECEIVING") return;
+
+    await setDoc(
+      doc(db, "flights", flightId),
+      {
+        status: "RECEIVING",
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
+      },
+      { merge: true }
+    );
   };
 
   // Manifest validation
@@ -142,7 +191,8 @@ export default function BagroomScanPage({ flightId, user }) {
         message:
           `❌ Bag tag belongs to another flight/date.\n\n` +
           `Current flight: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
-          `Registered flight: ${existing.flightNumber || existing.flightId} (${existing.flightDate || "-"})`,
+          `Registered flight: ${existing.flightNumber || existing.flightId} (${existing.flightDate || "-"})\n\n` +
+          `Do NOT accept this bag for this flight.`,
       };
     }
 
@@ -171,7 +221,7 @@ export default function BagroomScanPage({ flightId, user }) {
     const existing = await getDoc(ref);
 
     if (existing.exists()) {
-      popup("⚠️ Bag already scanned in Bagroom.");
+      popup("Duplicate scan", "⚠️ Bag already scanned in Bagroom.", "warning");
       return false;
     }
 
@@ -192,6 +242,12 @@ export default function BagroomScanPage({ flightId, user }) {
     setMsg("");
     setErr("");
 
+    if (isLoadingCompleted) {
+      popup("Locked", "⚠️ Aircraft loading is already completed for this flight. Bagroom scanning is locked.", "warning");
+      setTagInput("");
+      return;
+    }
+
     const tag = cleanTagValue(tagInput);
     if (!tag) return;
 
@@ -203,14 +259,14 @@ export default function BagroomScanPage({ flightId, user }) {
 
       const m = await validateAgainstManifest(tag);
       if (!m.ok) {
-        popup(m.message);
+        popup("Not in manifest", m.message, "danger");
         setTagInput("");
         return;
       }
 
       const cross = await validateAgainstOtherFlight(tag);
       if (!cross.ok) {
-        popup(cross.message);
+        popup("Wrong flight/date", cross.message, "danger");
         setTagInput("");
         return;
       }
@@ -222,6 +278,9 @@ export default function BagroomScanPage({ flightId, user }) {
       }
 
       await indexTag(tag);
+
+      // ✅ Auto status RECEIVING
+      await ensureStatusReceiving();
 
       setMsg(`Scanned ✅  ${tag}`);
       setTagInput("");
@@ -248,6 +307,11 @@ export default function BagroomScanPage({ flightId, user }) {
           <p style={{ marginTop: 6, color: "#6b7280", fontSize: "0.9rem" }}>
             Scan all bags received in Bagroom.
           </p>
+          {isLoadingCompleted && (
+            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
+              ✅ Loading Completed (Locked)
+            </p>
+          )}
         </div>
 
         <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
@@ -272,33 +336,37 @@ export default function BagroomScanPage({ flightId, user }) {
             value={tagInput}
             onChange={(e) => setTagInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Scan bag tag…"
+            disabled={isLoadingCompleted}
+            placeholder={isLoadingCompleted ? "Loading completed (locked)" : "Scan bag tag…"}
             style={{
               width: "100%",
               padding: "12px",
               borderRadius: 12,
               border: "1px solid #d1d5db",
+              background: isLoadingCompleted ? "#f3f4f6" : "white",
             }}
           />
 
           <button
             onClick={handleScanSubmit}
+            disabled={isLoadingCompleted}
             style={{
               width: "100%",
               marginTop: 10,
               padding: "10px",
               borderRadius: 12,
               border: "1px solid #1d4ed8",
-              background: "#2563eb",
+              background: isLoadingCompleted ? "#93c5fd" : "#2563eb",
               color: "white",
               fontWeight: 800,
+              cursor: isLoadingCompleted ? "not-allowed" : "pointer",
             }}
           >
             Add Scan
           </button>
 
           {strictManifest && (
-            <p style={{ marginTop: 8, fontSize: "0.8rem", color: "#b91c1c" }}>
+            <p style={{ marginTop: 8, fontSize: "0.8rem", color: "#b91c1c", fontWeight: 900 }}>
               ⚠️ Strict Manifest ON
             </p>
           )}
@@ -342,6 +410,25 @@ export default function BagroomScanPage({ flightId, user }) {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={modal.open}
+        title={modal.title}
+        tone={modal.tone}
+        confirmText={modal.confirmText}
+        cancelText={modal.cancelText}
+        showCancel={modal.showCancel}
+        onConfirm={() => {
+          if (typeof modal.onConfirm === "function") modal.onConfirm();
+          else close();
+        }}
+        onCancel={() => {
+          if (typeof modal.onCancel === "function") modal.onCancel();
+          else close();
+        }}
+      >
+        {modal.content}
+      </Modal>
     </div>
   );
 }
