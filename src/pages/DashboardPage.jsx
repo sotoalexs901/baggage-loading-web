@@ -17,15 +17,15 @@ function getTodayYYYYMMDD() {
 
 // ✅ Status helpers (OPEN / RECEIVING / LOADING / LOADED)
 const STATUS_COLORS = {
-  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },      // amarillo
-  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" }, // azul suave
-  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },   // naranja
-  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },    // verde
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },
+  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" },
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },
 };
 
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
-  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+  return ["OPEN", "RECEIVING", "LOADING", "LOADED"].includes(v) ? v : "OPEN";
 }
 
 function StatusPill({ status }) {
@@ -62,7 +62,6 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
   const [flights, setFlights] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Carga de vuelos reales por fecha
   useEffect(() => {
     setLoading(true);
 
@@ -88,6 +87,19 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
 
     return () => unsub();
   }, [selectedDate]);
+
+  const openFlight = (flight, targetView) => {
+    onOpenFlight(
+      {
+        id: flight.id,
+        flightNumber: flight.flightNumber || null,
+        flightDate: flight.flightDate || null,
+        gate: flight.gate || null,
+        aircraftType: flight.aircraftType || null,
+      },
+      targetView
+    );
+  };
 
   return (
     <div className="dash-root">
@@ -120,7 +132,6 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
         </div>
       </section>
 
-      {/* Helper cards */}
       <section className="dash-grid">
         <div className="dash-card">
           <h3>Gate Controller</h3>
@@ -128,11 +139,6 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
             Enter or verify the total checked bags for the flight. This becomes the
             reference count for Bagroom and Aircraft loading.
           </p>
-          <ul className="dash-list">
-            <li>Checked bags total</li>
-            <li>Who entered the number</li>
-            <li>Operational reference</li>
-          </ul>
         </div>
 
         {!isGateController && (
@@ -141,48 +147,31 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
             <p>
               Scan every bag received in Bagroom to ensure all checked bags reach the aircraft.
             </p>
-            <ul className="dash-list">
-              <li>Real-time bag count</li>
-              <li>Match vs Gate total</li>
-              <li>Detect missing bags early</li>
-            </ul>
           </div>
         )}
 
         <div className="dash-card">
           <h3>Aircraft</h3>
           <p>
-            Scan bags as they are loaded by zone (1–4). System checks missing bags before “completed”.
+            Scan bags as they are loaded by zone (1–4). System checks missing bags before completion.
           </p>
-          <ul className="dash-list">
-            <li>Track by zone (1–4)</li>
-            <li>Compare vs Gate total</li>
-            <li>Final loading verification</li>
-          </ul>
         </div>
       </section>
 
-      {/* Flights table */}
       <section className="dash-section">
-        <div
-          className="dash-section-header"
-          style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}
-        >
+        <div className="dash-section-header">
           <div>
             <h3>Flights</h3>
             <p>Choose a flight and go directly to your work area.</p>
           </div>
 
           <div>
-            <label style={{ fontSize: "0.85rem", color: "#374151" }}>Date</label>
-            <div>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 10, border: "1px solid #d1d5db" }}
-              />
-            </div>
+            <label>Date</label>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+            />
           </div>
         </div>
 
@@ -202,13 +191,11 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 14, color: "#6b7280" }}>
-                    Loading flights...
-                  </td>
+                  <td colSpan={6} style={{ textAlign: "center" }}>Loading flights…</td>
                 </tr>
               ) : flights.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 14, fontStyle: "italic", color: "#6b7280" }}>
+                  <td colSpan={6} style={{ textAlign: "center" }}>
                     No flights found for {selectedDate}.
                   </td>
                 </tr>
@@ -219,26 +206,13 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
                     <td>{f.flightDate || "-"}</td>
                     <td>{f.gate || "-"}</td>
                     <td>{f.aircraftType || "-"}</td>
-                    <td>
-                      <StatusPill status={f.status} />
-                    </td>
-
+                    <td><StatusPill status={f.status} /></td>
                     <td style={{ textAlign: "right" }}>
-                      <div className="dash-actions">
-                        <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "gate")}>
-                          Gate
-                        </button>
-
-                        {!isGateController && (
-                          <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "bagroom")}>
-                            Bagroom
-                          </button>
-                        )}
-
-                        <button className="btn-primary" onClick={() => onOpenFlight(f.id, "aircraft")}>
-                          Aircraft
-                        </button>
-                      </div>
+                      <button onClick={() => openFlight(f, "gate")}>Gate</button>
+                      {!isGateController && (
+                        <button onClick={() => openFlight(f, "bagroom")}>Bagroom</button>
+                      )}
+                      <button onClick={() => openFlight(f, "aircraft")}>Aircraft</button>
                     </td>
                   </tr>
                 ))
