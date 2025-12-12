@@ -5,9 +5,6 @@ import { getStorage } from "firebase/storage";
 import { getAuth } from "firebase/auth";
 import { getFunctions } from "firebase/functions";
 
-/**
- * Firebase config (Vite envs)
- */
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -17,17 +14,11 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Initialize app
 const app = initializeApp(firebaseConfig);
 
-// Core services
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const auth = getAuth(app);
 
-/**
- * ✅ IMPORTANT
- * Cloud Functions MUST match the region used in functions/index.js
- * If you used: functions.region("us-central1") then use "us-central1" here.
- */
-export const functions = getFunctions(app, "us-central1");
+// ✅ MUST match functions/index.js region
+export const functions = getFunctions(app, "us-east1");
