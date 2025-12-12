@@ -1,3 +1,4 @@
+// functions/index.js
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 
@@ -5,6 +6,9 @@ admin.initializeApp();
 
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
+
+// ✅ IMPORTANT: Match App Hosting / frontend region
+const region = functions.region("us-east4");
 
 /* =========================
    Helpers
@@ -97,23 +101,22 @@ async function deleteBagTagsIndexForFlight(flightId, batchSize = 400) {
    DELETE FLIGHT (CASCADE)
 ========================= */
 
-exports.deleteFlightCascade = functions
-  .region("us-central1")
-  .https.onCall(async (data, context) => {
-    await requireManager(context);
+exports.deleteFlightCascade = region.https.onCall(async (data, context) => {
+  await requireManager(context);
 
-    const flightId = String(data?.flightId || "").trim();
-    if (!flightId) {
-      throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
-    }
+  const flightId = String(data?.flightId || "").trim();
+  if (!flightId) {
+    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+  }
 
-    const flightRef = db.collection("flights").doc(flightId);
-    const flightSnap = await flightRef.get();
+  const flightRef = db.collection("flights").doc(flightId);
+  const flightSnap = await flightRef.get();
 
-    if (!flightSnap.exists) {
-      throw new functions.https.HttpsError("not-found", "Flight not found.");
-    }
+  if (!flightSnap.exists) {
+    throw new functions.https.HttpsError("not-found", "Flight not found.");
+  }
 
+  try {
     // 1) Delete subcollections
     await deleteCollection(`flights/${flightId}/aircraftScans`);
     await deleteCollection(`flights/${flightId}/bagroomScans`);
@@ -131,39 +134,45 @@ exports.deleteFlightCascade = functions
     await flightRef.delete();
 
     return { ok: true };
-  });
+  } catch (e) {
+    console.error("[deleteFlightCascade] failed:", e);
+    throw new functions.https.HttpsError(
+      "internal",
+      "Delete cascade failed. Check logs and permissions."
+    );
+  }
+});
 
 /* =========================
    REOPEN FLIGHT
 ========================= */
 
-exports.reopenFlight = functions
-  .region("us-central1")
-  .https.onCall(async (data, context) => {
-    await requireManager(context);
+exports.reopenFlight = region.https.onCall(async (data, context) => {
+  await requireManager(context);
 
-    const flightId = String(data?.flightId || "").trim();
-    if (!flightId) {
-      throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
-    }
+  const flightId = String(data?.flightId || "").trim();
+  if (!flightId) {
+    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+  }
 
-    const ref = db.collection("flights").doc(flightId);
-    const snap = await ref.get();
+  const ref = db.collection("flights").doc(flightId);
+  const snap = await ref.get();
 
-    if (!snap.exists) {
-      throw new functions.https.HttpsError("not-found", "Flight not found.");
-    }
+  if (!snap.exists) {
+    throw new functions.https.HttpsError("not-found", "Flight not found.");
+  }
 
-    const flight = snap.data() || {};
-    const status = String(flight.status || "OPEN").trim().toUpperCase();
+  const flight = snap.data() || {};
+  const status = String(flight.status || "OPEN").trim().toUpperCase();
 
-    if (status !== "LOADED") {
-      throw new functions.https.HttpsError(
-        "failed-precondition",
-        "Only LOADED flights can be reopened."
-      );
-    }
+  if (status !== "LOADED") {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "Only LOADED flights can be reopened."
+    );
+  }
 
+  try {
     await ref.set(
       {
         // Reabrimos a LOADING (para permitir seguir escaneando en aircraft)
@@ -187,4 +196,11 @@ exports.reopenFlight = functions
     );
 
     return { ok: true };
-  });
+  } catch (e) {
+    console.error("[reopenFlight] failed:", e);
+    throw new functions.https.HttpsError(
+      "internal",
+      "Reopen failed. Check logs and permissions."
+    );
+  }
+});
