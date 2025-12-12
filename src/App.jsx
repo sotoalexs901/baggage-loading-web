@@ -3,43 +3,85 @@ import { useState } from "react";
 import LoginPage from "./pages/LoginPage.jsx";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import FlightsPage from "./pages/FlightsPage.jsx";
-import CounterPage from "./pages/CounterPage.jsx";
+import GateControllerPage from "./pages/GateControllerPage.jsx"; // 👈 renombrado
 import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
+
+function normalizeRole(role) {
+  return String(role || "").trim().toLowerCase();
+}
 
 export default function App() {
   const [user, setUser] = useState(null);
 
-  const [currentView, setCurrentView] = useState("dashboard"); // 👈 ahora empieza en dashboard
+  // Gate Controller asignado para el turno (seleccionado por supervisor/manager al login)
+  const [gateControllerOnDuty, setGateControllerOnDuty] = useState(null);
+
+  const [currentView, setCurrentView] = useState("dashboard");
   const [selectedFlightId, setSelectedFlightId] = useState(null);
 
+  // ✅ Nuevo: Login puede mandar user + meta del turno (gateControllerOnDuty)
+  const handleLogin = (userData, sessionMeta) => {
+    setUser(userData);
+    setGateControllerOnDuty(sessionMeta?.gateControllerUsername || null);
+    setCurrentView("dashboard");
+  };
+
   if (!user) {
-    // Mientras no haya user, mostramos solo Login
-    return <LoginPage onLogin={setUser} />;
+    return <LoginPage onLogin={handleLogin} />;
   }
+
+  const role = normalizeRole(user.role);
+  const isGateController = role === "gate_controller";
+  const canCreateFlights = role === "station_manager" || role === "duty_manager";
+  const canEditGateTotals =
+    role === "station_manager" || role === "duty_manager" || role === "supervisor";
+
+  // Gate Controller: solo ver Gate Controller + Aircraft (y Dashboard)
+  const canSeeDashboard = true;
+  const canSeeFlights = !isGateController; // si quieres que gate_controller también pueda seleccionar vuelo, cámbialo a true
+  const canSeeGate = true;
+  const canSeeBagroom = !isGateController;
+  const canSeeAircraft = true;
 
   const handleLogout = () => {
     setUser(null);
+    setGateControllerOnDuty(null);
     setSelectedFlightId(null);
     setCurrentView("dashboard");
   };
 
   const handleOpenFlightFromDashboard = (flightId, targetView) => {
     setSelectedFlightId(flightId);
+
+    // Por seguridad: si gate_controller intenta ir a flights/bagroom, lo bloqueamos
+    if (isGateController && (targetView === "flights" || targetView === "bagroom")) {
+      setCurrentView("gate");
+      return;
+    }
+
     setCurrentView(targetView);
   };
 
   const renderView = () => {
     if (currentView === "dashboard") {
-      return <DashboardPage user={user} onOpenFlight={handleOpenFlightFromDashboard} />;
+      return (
+        <DashboardPage
+          user={user}
+          onOpenFlight={handleOpenFlightFromDashboard}
+          gateControllerOnDuty={gateControllerOnDuty}
+        />
+      );
     }
 
     if (currentView === "flights") {
       return (
         <FlightsPage
+          user={user}
+          canCreateFlights={canCreateFlights} // 👈 opcional si lo quieres usar dentro de FlightsPage
           onFlightSelected={(flightId) => {
             setSelectedFlightId(flightId);
-            setCurrentView("counter");
+            setCurrentView("gate"); // 👈 ahora va a Gate Controller
           }}
         />
       );
@@ -49,8 +91,15 @@ export default function App() {
       return <p>Please select a flight first.</p>;
     }
 
-    if (currentView === "counter") {
-      return <CounterPage flightId={selectedFlightId} user={user} />;
+    if (currentView === "gate") {
+      return (
+        <GateControllerPage
+          flightId={selectedFlightId}
+          user={user}
+          gateControllerOnDuty={gateControllerOnDuty}
+          canEdit={canEditGateTotals}
+        />
+      );
     }
 
     if (currentView === "bagroom") {
@@ -65,7 +114,7 @@ export default function App() {
   };
 
   return (
-    <div className="app-container" style={{ maxWidth: 960, margin: "0 auto", padding: 16 }}>
+    <div className="app-container" style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <header className="app-header" style={{ marginBottom: 16 }}>
         <h1>Baggage Loading Control System</h1>
 
@@ -74,21 +123,31 @@ export default function App() {
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            gap: 8,
+            gap: 12,
+            flexWrap: "wrap",
           }}
         >
           <nav className="nav-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>
-            <button onClick={() => setCurrentView("flights")}>Flights</button>
-            <button onClick={() => setCurrentView("counter")} disabled={!selectedFlightId}>
-              Counter
-            </button>
-            <button onClick={() => setCurrentView("bagroom")} disabled={!selectedFlightId}>
-              Bagroom
-            </button>
-            <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
-              Aircraft
-            </button>
+            {canSeeDashboard && <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>}
+            {canSeeFlights && <button onClick={() => setCurrentView("flights")}>Flights</button>}
+
+            {canSeeGate && (
+              <button onClick={() => setCurrentView("gate")} disabled={!selectedFlightId}>
+                Gate Controller
+              </button>
+            )}
+
+            {canSeeBagroom && (
+              <button onClick={() => setCurrentView("bagroom")} disabled={!selectedFlightId}>
+                Bagroom
+              </button>
+            )}
+
+            {canSeeAircraft && (
+              <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
+                Aircraft
+              </button>
+            )}
           </nav>
 
           <div style={{ textAlign: "right" }}>
@@ -96,7 +155,14 @@ export default function App() {
               Logged in as <strong>{user.username}</strong>
               {user.role && <> ({user.role})</>}
             </div>
-            <button onClick={handleLogout} style={{ marginTop: 4 }}>
+
+            {gateControllerOnDuty && !isGateController && (
+              <div style={{ fontSize: "0.85rem", marginTop: 2 }}>
+                Gate Controller: <strong>{gateControllerOnDuty}</strong>
+              </div>
+            )}
+
+            <button onClick={handleLogout} style={{ marginTop: 6 }}>
               Logout
             </button>
           </div>
