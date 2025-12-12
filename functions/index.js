@@ -75,3 +75,53 @@ exports.deleteFlightCascade = functions.https.onCall(async (data, context) => {
 
   return { ok: true };
 });
+const functions = require("firebase-functions");
+const admin = require("firebase-admin");
+admin.initializeApp();
+
+function requireManager(context) {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Login required.");
+  const role = String(context.auth.token.role || "").toLowerCase();
+  if (role !== "duty_manager" && role !== "station_manager") {
+    throw new functions.https.HttpsError("permission-denied", "Managers only.");
+  }
+  return role;
+}
+
+exports.reopenFlight = functions.https.onCall(async (data, context) => {
+  requireManager(context);
+
+  const flightId = String(data?.flightId || "").trim();
+  if (!flightId) throw new functions.https.HttpsError("invalid-argument", "flightId required.");
+
+  const ref = admin.firestore().doc(`flights/${flightId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new functions.https.HttpsError("not-found", "Flight not found.");
+
+  const flight = snap.data() || {};
+  const status = String(flight.status || "OPEN").toUpperCase();
+  if (status !== "LOADED") {
+    throw new functions.https.HttpsError("failed-precondition", "Only LOADED flights can be reopened.");
+  }
+
+  await ref.set(
+    {
+      status: "LOADING",
+      aircraftLoadingCompleted: false,
+      aircraftLoadingCompletedAt: null,
+      aircraftLoadingCompletedBy: null,
+      aircraftLoadedBags: null,
+
+      reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
+      reopenedBy: {
+        uid: context.auth.uid,
+        name: context.auth.token.name || null,
+        username: context.auth.token.username || null,
+        role: context.auth.token.role || null,
+      },
+    },
+    { merge: true }
+  );
+
+  return { ok: true };
+});
