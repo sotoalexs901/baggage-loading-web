@@ -1,18 +1,31 @@
 // src/pages/ReportsPage.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "../firebase";
 
-export default function ReportsPage({ flightId }) {
+export default function ReportsPage({ flightId, flight }) {
+  // ✅ soporta: flightId="abc"  O  flightId={flightObject}  O  flight={flightObject}
+  const resolvedFlightId = useMemo(() => {
+    if (typeof flightId === "string") return flightId;
+    if (flightId && typeof flightId === "object" && typeof flightId.id === "string") return flightId.id;
+    if (flight && typeof flight === "object" && typeof flight.id === "string") return flight.id;
+    return "";
+  }, [flightId, flight]);
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!flightId) return;
+    if (!resolvedFlightId) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
+
     const q = query(
-      collection(db, "flights", flightId, "reports"),
+      collection(db, "flights", resolvedFlightId, "reports"),
       orderBy("createdAt", "desc")
     );
 
@@ -31,7 +44,7 @@ export default function ReportsPage({ flightId }) {
     );
 
     return () => unsub();
-  }, [flightId]);
+  }, [resolvedFlightId]);
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
@@ -40,45 +53,51 @@ export default function ReportsPage({ flightId }) {
         PDFs exported from Aircraft “Loading Completed” will appear here.
       </p>
 
-      <div style={{ marginTop: 12 }}>
-        {loading ? (
-          <p style={{ color: "#6b7280" }}>Loading…</p>
-        ) : rows.length === 0 ? (
-          <p style={{ color: "#6b7280" }}>No reports saved yet for this flight.</p>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ background: "#f9fafb" }}>
-                <th style={th}>File</th>
-                <th style={th}>Created By</th>
-                <th style={{ ...th, textAlign: "right" }}>Download</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id}>
-                  <td style={td}><strong>{r.fileName || r.id}</strong></td>
-                  <td style={td}>{r.createdBy?.username || "-"}</td>
-                  <td style={{ ...td, textAlign: "right" }}>
-                    {r.downloadUrl ? (
-                      <a
-                        href={r.downloadUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ fontWeight: 800 }}
-                      >
-                        Open PDF
-                      </a>
-                    ) : (
-                      <span style={{ color: "#6b7280" }}>—</span>
-                    )}
-                  </td>
+      {!resolvedFlightId ? (
+        <p style={{ color: "#b91c1c", marginTop: 12, fontWeight: 800 }}>
+          No flight selected.
+        </p>
+      ) : (
+        <div style={{ marginTop: 12 }}>
+          {loading ? (
+            <p style={{ color: "#6b7280" }}>Loading…</p>
+          ) : rows.length === 0 ? (
+            <p style={{ color: "#6b7280" }}>No reports saved yet for this flight.</p>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#f9fafb" }}>
+                  <th style={th}>File</th>
+                  <th style={th}>Created By</th>
+                  <th style={{ ...th, textAlign: "right" }}>Download</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td style={td}><strong>{r.fileName || r.id}</strong></td>
+                    <td style={td}>{r.createdBy?.username || "-"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      {r.downloadUrl ? (
+                        <a
+                          href={r.downloadUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ fontWeight: 800 }}
+                        >
+                          Open PDF
+                        </a>
+                      ) : (
+                        <span style={{ color: "#6b7280" }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
     </div>
   );
 }
