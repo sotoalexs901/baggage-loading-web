@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   collection,
   doc,
-  getDoc,
   getDocs,
   onSnapshot,
   serverTimestamp,
@@ -20,6 +19,18 @@ function toIntSafe(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return null;
   return Math.max(0, Math.trunc(n));
+}
+
+// === Flight status helpers ===
+const STATUS_COLORS = {
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" }, // naranja
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" }, // verde
+};
+
+function normalizeStatus(s) {
+  const v = String(s || "OPEN").trim().toUpperCase();
+  return v === "OPEN" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
 }
 
 // Extrae SOLO números (bag tags) e ignora todo lo demás
@@ -158,6 +169,42 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
   const checkedBagsTotal = typeof flight?.checkedBagsTotal === "number" ? flight.checkedBagsTotal : null;
   const missing = checkedBagsTotal === null ? null : Math.max(0, checkedBagsTotal - aircraftTotal);
 
+  // === Status info ===
+  const flightStatus = normalizeStatus(flight?.status);
+  const statusStyle = STATUS_COLORS[flightStatus] || STATUS_COLORS.OPEN;
+
+  const updateFlightStatus = async (nextStatus) => {
+    setManifestMsg("");
+    setManifestErr("");
+
+    if (!canEdit) {
+      setManifestErr("You don't have permission to change flight status.");
+      return;
+    }
+
+    try {
+      await setDoc(
+        doc(db, "flights", flightId),
+        {
+          status: nextStatus,
+          statusUpdatedAt: serverTimestamp(),
+          statusUpdatedBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+        },
+        { merge: true }
+      );
+
+      setManifestMsg(`Status updated to ${nextStatus} ✅`);
+      setTimeout(() => setManifestMsg(""), 2000);
+    } catch (e) {
+      console.error(e);
+      setManifestErr("Could not update status. Check Firestore rules.");
+    }
+  };
+
   const saveTotal = async () => {
     setSaveMsg("");
 
@@ -270,8 +317,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     try {
       setImporting(true);
 
-      // Escribimos en flights/{flightId}/allowedBagTags/{tag}
-      // en batches de 450 para ir seguros
       const chunkSize = 450;
       let imported = 0;
 
@@ -289,7 +334,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               username: user?.username || null,
               role: user?.role || null,
             },
-            // 👇 intencionalmente NO guardamos nombre/PNR para evitar confusión
           });
         }
 
@@ -297,7 +341,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         imported += chunk.length;
       }
 
-      // Activamos Strict Manifest automáticamente (recomendado)
       await setDoc(
         doc(db, "flights", flightId),
         {
@@ -359,6 +402,64 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         </div>
       )}
 
+      {/* ✅ Flight Status */}
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Flight Status</h3>
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+              Open → Loading → Loaded
+            </p>
+          </div>
+
+          <span
+            style={{
+              padding: "6px 12px",
+              borderRadius: 999,
+              border: `1px solid ${statusStyle.border}`,
+              background: statusStyle.bg,
+              color: statusStyle.text,
+              fontWeight: 900,
+              letterSpacing: "0.04em",
+            }}
+          >
+            {flightStatus}
+          </span>
+        </div>
+
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            disabled={!canEdit}
+            onClick={() => updateFlightStatus("OPEN")}
+            style={btnStatus(canEdit)}
+          >
+            Open
+          </button>
+
+          <button
+            disabled={!canEdit}
+            onClick={() => updateFlightStatus("LOADING")}
+            style={btnStatus(canEdit)}
+          >
+            Loading
+          </button>
+
+          <button
+            disabled={!canEdit}
+            onClick={() => updateFlightStatus("LOADED")}
+            style={btnStatus(canEdit)}
+          >
+            Loaded
+          </button>
+        </div>
+
+        {!canEdit && (
+          <p style={{ marginTop: 10, fontSize: "0.85rem", color: "#6b7280" }}>
+            Read-only access.
+          </p>
+        )}
+      </section>
+
       {/* Gate Total */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb", marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -370,7 +471,9 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           </div>
 
           <div style={{ minWidth: 260 }}>
-            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>Total</label>
+            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+              Total
+            </label>
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 type="number"
@@ -409,21 +512,8 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
                 {saveMsg}
               </p>
             )}
-
-            {!canEdit && (
-              <p style={{ margin: "8px 0 0", fontSize: "0.8rem", color: "#6b7280" }}>
-                Read-only access.
-              </p>
-            )}
           </div>
         </div>
-
-        {flight?.gateTotalUpdatedBy?.username && (
-          <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.85rem" }}>
-            Last updated by <strong>{flight.gateTotalUpdatedBy.username}</strong>{" "}
-            {flight.gateTotalUpdatedBy.role ? `(${flight.gateTotalUpdatedBy.role})` : ""}.
-          </p>
-        )}
       </section>
 
       {/* Manifest Import */}
@@ -458,13 +548,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           <button
             disabled={!canEdit}
             onClick={() => updateStrictManifest(!strictManifest)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: canEdit ? "white" : "#f3f4f6",
-              cursor: canEdit ? "pointer" : "not-allowed",
-            }}
+            style={btnStatus(canEdit)}
           >
             Toggle Strict Manifest
           </button>
@@ -477,7 +561,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           <textarea
             value={manifestText}
             onChange={(e) => setManifestText(e.target.value)}
-            placeholder={`Example:\nAlexis Napoles 034498484 034578585\nPNR: XYZ123 03457474`}
+            placeholder={`Example:\nName 034498484 034578585\nPNR: XYZ123 03457474`}
             disabled={!canEdit}
             rows={6}
             style={{
@@ -496,13 +580,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           <button
             onClick={() => previewFromText(manifestText)}
             disabled={!canEdit}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: "white",
-              cursor: canEdit ? "pointer" : "not-allowed",
-            }}
+            style={btnStatus(canEdit)}
           >
             Preview Tags
           </button>
@@ -524,12 +602,8 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           </button>
         </div>
 
-        {manifestMsg && (
-          <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a" }}>{manifestMsg}</p>
-        )}
-        {manifestErr && (
-          <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c" }}>{manifestErr}</p>
-        )}
+        {manifestMsg && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a" }}>{manifestMsg}</p>}
+        {manifestErr && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c" }}>{manifestErr}</p>}
 
         {manifestTagsPreview.length > 0 && (
           <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
@@ -559,12 +633,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               )}
             </div>
           </div>
-        )}
-
-        {!canEdit && (
-          <p style={{ marginTop: 10, fontSize: "0.85rem", color: "#6b7280" }}>
-            Gate Controller has read-only access to manifests.
-          </p>
         )}
       </section>
 
@@ -602,15 +670,24 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             ) : missing === 0 ? (
               <span style={{ color: "#16a34a", fontWeight: 700 }}>All bags accounted for ✅</span>
             ) : (
-              <span style={{ color: "#b91c1c", fontWeight: 800 }}>
-                Missing: {missing}
-              </span>
+              <span style={{ color: "#b91c1c", fontWeight: 800 }}>Missing: {missing}</span>
             )}
           </div>
         </div>
       </section>
     </div>
   );
+}
+
+function btnStatus(canEdit) {
+  return {
+    padding: "8px 12px",
+    borderRadius: 12,
+    border: "1px solid #d1d5db",
+    background: canEdit ? "white" : "#f3f4f6",
+    cursor: canEdit ? "pointer" : "not-allowed",
+    fontWeight: 700,
+  };
 }
 
 function InfoCard({ label, value }) {
