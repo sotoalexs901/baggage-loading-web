@@ -32,10 +32,10 @@ function normalizeStatus(s) {
 }
 
 const STATUS_COLORS = {
-  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },      // amarillo
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
   RECEIVING: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
-  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },   // naranja
-  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },    // verde
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" }, // naranja
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" }, // verde
 };
 
 function StatusPill({ status }) {
@@ -101,8 +101,8 @@ export default function FlightsPage({ user, onFlightSelected }) {
           statusFilter === "all"
             ? rows
             : statusFilter === "completed"
-              ? rows.filter((r) => normalizeStatus(r.status) === "LOADED")
-              : rows.filter((r) => normalizeStatus(r.status) !== "LOADED");
+            ? rows.filter((r) => normalizeStatus(r.status) === "LOADED")
+            : rows.filter((r) => normalizeStatus(r.status) !== "LOADED");
 
         setFlights(filtered);
         setLoading(false);
