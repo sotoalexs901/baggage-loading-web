@@ -48,11 +48,6 @@ export default function App() {
   const canSeeAircraft = true;
   const canSeeReports = true; // ✅ NUEVO
   const canSeeAdminUsers = isStationManager;
-  {canSeeAdminUsers && (
-  <button onClick={() => setCurrentView("adminUsers")}>
-    Admin Users
-  </button>
-)}
 
   const handleLogout = () => {
     setUser(null);
@@ -121,14 +116,18 @@ export default function App() {
       return <AircraftScanPage flightId={selectedFlightId} user={user} />;
     }
 
-    // ✅ NUEVO: Reports
-    if (currentView === "reports") {
-      return <ReportsPage flightId={selectedFlightId} user={user} />;
-    }
+    {/* ✅ Reports */}
+{canSeeReports && (
+  <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
+    Reports
+  </button>
+)}
 
-    return null;
-  };
-
+{canSeeAdminUsers && (
+  <button onClick={() => setCurrentView("adminUsers")}>
+    Admin Users
+  </button>
+)}
   return (
     <div className="app-container" style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <header className="app-header" style={{ marginBottom: 16 }}>
