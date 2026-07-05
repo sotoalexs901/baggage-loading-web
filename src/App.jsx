@@ -48,6 +48,11 @@ export default function App() {
   const canSeeAircraft = true;
   const canSeeReports = true; // ✅ NUEVO
   const canSeeAdminUsers = isStationManager;
+  {canSeeAdminUsers && (
+  <button onClick={() => setCurrentView("adminUsers")}>
+    Admin Users
+  </button>
+)}
 
   const handleLogout = () => {
     setUser(null);
