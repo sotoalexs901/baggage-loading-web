@@ -6,7 +6,7 @@ import FlightsPage from "./pages/FlightsPage.jsx";
 import GateControllerPage from "./pages/GateControllerPage.jsx";
 import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
-import ReportsPage from "./pages/ReportsPage.jsx"; // ✅ NUEVO
+import ReportsPage from "./pages/ReportsPage.jsx";
 import AdminUsersPage from "./pages/AdminUsersPage.jsx";
 
 function normalizeRole(role) {
@@ -15,10 +15,7 @@ function normalizeRole(role) {
 
 export default function App() {
   const [user, setUser] = useState(null);
-
-  // Gate Controller asignado para el turno
   const [gateControllerOnDuty, setGateControllerOnDuty] = useState(null);
-
   const [currentView, setCurrentView] = useState("dashboard");
   const [selectedFlightId, setSelectedFlightId] = useState(null);
 
@@ -33,6 +30,7 @@ export default function App() {
   }
 
   const role = normalizeRole(user.role);
+
   const isGateController = role === "gate_controller";
   const isStationManager = role === "station_manager";
 
@@ -40,13 +38,12 @@ export default function App() {
   const canEditGateTotals =
     role === "station_manager" || role === "duty_manager" || role === "supervisor";
 
-  // Gate Controller: solo Dashboard + Gate + Aircraft + Reports
   const canSeeDashboard = true;
-  const canSeeFlights = !isGateController; // si quieres que gate_controller también pueda seleccionar vuelo, cámbialo a true
+  const canSeeFlights = !isGateController;
   const canSeeGate = true;
   const canSeeBagroom = !isGateController;
   const canSeeAircraft = true;
-  const canSeeReports = true; // ✅ NUEVO
+  const canSeeReports = true;
   const canSeeAdminUsers = isStationManager;
 
   const handleLogout = () => {
@@ -84,14 +81,15 @@ export default function App() {
           user={user}
           canCreateFlights={canCreateFlights}
           onFlightSelected={(flightId) => {
-  setSelectedFlightId(flightId);
-}}
+            setSelectedFlightId(flightId);
+          }}
         />
       );
     }
+
     if (currentView === "adminUsers") {
-  return <AdminUsersPage user={user} />;
-}
+      return <AdminUsersPage user={user} />;
+    }
 
     if (!selectedFlightId) {
       return <p>Please select a flight first.</p>;
@@ -116,18 +114,13 @@ export default function App() {
       return <AircraftScanPage flightId={selectedFlightId} user={user} />;
     }
 
-    {/* ✅ Reports */}
-{canSeeReports && (
-  <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
-    Reports
-  </button>
-)}
+    if (currentView === "reports") {
+      return <ReportsPage flightId={selectedFlightId} user={user} />;
+    }
 
-{canSeeAdminUsers && (
-  <button onClick={() => setCurrentView("adminUsers")}>
-    Admin Users
-  </button>
-)}
+    return null;
+  };
+
   return (
     <div className="app-container" style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <header className="app-header" style={{ marginBottom: 16 }}>
@@ -143,8 +136,13 @@ export default function App() {
           }}
         >
           <nav className="nav-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {canSeeDashboard && <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>}
-            {canSeeFlights && <button onClick={() => setCurrentView("flights")}>Flights</button>}
+            {canSeeDashboard && (
+              <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>
+            )}
+
+            {canSeeFlights && (
+              <button onClick={() => setCurrentView("flights")}>Flights</button>
+            )}
 
             {canSeeGate && (
               <button onClick={() => setCurrentView("gate")} disabled={!selectedFlightId}>
@@ -164,11 +162,14 @@ export default function App() {
               </button>
             )}
 
-            {/* ✅ Reports */}
             {canSeeReports && (
               <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
                 Reports
               </button>
+            )}
+
+            {canSeeAdminUsers && (
+              <button onClick={() => setCurrentView("adminUsers")}>Admin Users</button>
             )}
           </nav>
 
