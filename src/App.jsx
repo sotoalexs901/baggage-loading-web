@@ -7,6 +7,7 @@ import GateControllerPage from "./pages/GateControllerPage.jsx";
 import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
 import ReportsPage from "./pages/ReportsPage.jsx"; // ✅ NUEVO
+import AdminUsersPage from "./pages/AdminUsersPage.jsx";
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -33,6 +34,7 @@ export default function App() {
 
   const role = normalizeRole(user.role);
   const isGateController = role === "gate_controller";
+  const isStationManager = role === "station_manager";
 
   const canCreateFlights = role === "station_manager" || role === "duty_manager";
   const canEditGateTotals =
@@ -45,6 +47,7 @@ export default function App() {
   const canSeeBagroom = !isGateController;
   const canSeeAircraft = true;
   const canSeeReports = true; // ✅ NUEVO
+  const canSeeAdminUsers = isStationManager;
 
   const handleLogout = () => {
     setUser(null);
@@ -81,12 +84,14 @@ export default function App() {
           user={user}
           canCreateFlights={canCreateFlights}
           onFlightSelected={(flightId) => {
-            setSelectedFlightId(flightId);
-            setCurrentView("gate");
-          }}
+  setSelectedFlightId(flightId);
+}}
         />
       );
     }
+    if (currentView === "adminUsers") {
+  return <AdminUsersPage user={user} />;
+}
 
     if (!selectedFlightId) {
       return <p>Please select a flight first.</p>;
