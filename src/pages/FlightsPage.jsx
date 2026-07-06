@@ -10,6 +10,8 @@ import {
   where,
   getDocs,
   limit,
+  deleteDoc,
+  doc,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "../firebase";
@@ -290,13 +292,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
     try {
       setDeletingId(f.id);
 
-      const fn = httpsCallable(functions, "deleteFlightCascade");
-
-      await fn({
-        flightId: f.id,
-        userRole: user?.role,
-        username: user?.username,
-      });
+     await deleteDoc(doc(db, "flights", f.id));
 
       setActionMsg(`✅ Flight deleted: ${label}`);
       setTimeout(() => setActionMsg(""), 2500);
