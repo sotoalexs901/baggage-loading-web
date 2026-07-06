@@ -7,7 +7,7 @@ admin.initializeApp();
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
 
-// ✅ IMPORTANT: Match App Hosting / frontend region
+// Match frontend region
 const region = functions.region("us-east4");
 
 /* =========================
@@ -18,41 +18,26 @@ function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
 }
 
-/**
- * Valida que el usuario sea Station Manager o Duty Manager
- * Soporta:
- *  - Custom Claims (context.auth.token.role)
- *  - users/{uid}.role (fallback)
- */
-async function requireManager(context) {
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Login required.");
-  }
+async function requireManager(data) {
+  const role = normalizeRole(data?.userRole);
 
-  // 1) claims
-  let role = normalizeRole(context.auth.token?.role);
+  const can =
+    role === "station_manager" ||
+    role === "duty_manager" ||
+    role === "duty_managers" ||
+    role === "supervisor" ||
+    role === "gate_controller";
 
-  // 2) fallback users/{uid}
-  if (!role) {
-    const uSnap = await db.collection("users").doc(context.auth.uid).get();
-    role = normalizeRole(uSnap.data()?.role);
-  }
-
-  const can = role === "station_manager" || role === "duty_manager";
   if (!can) {
     throw new functions.https.HttpsError(
       "permission-denied",
-      "Only Station Manager or Duty Manager allowed."
+      "You do not have permission to perform this action."
     );
   }
 
   return role;
 }
 
-/**
- * Borra una colección completa en batches.
- * (Para subcolecciones con IDs = bagtag, funciona perfecto.)
- */
 async function deleteCollection(path, batchSize = 400) {
   const colRef = db.collection(path);
 
@@ -66,21 +51,14 @@ async function deleteCollection(path, batchSize = 400) {
   }
 }
 
-/**
- * Borra archivos de Storage por prefijo (best-effort)
- */
 async function deleteStoragePrefix(prefix) {
   try {
     await bucket.deleteFiles({ prefix });
   } catch (e) {
-    // No rompe si no hay archivos o si ya fueron borrados.
     console.warn(`[deleteStoragePrefix] skipped for "${prefix}":`, e?.message || e);
   }
 }
 
-/**
- * Borra el índice global bagTags para un flightId (en batches).
- */
 async function deleteBagTagsIndexForFlight(flightId, batchSize = 400) {
   while (true) {
     const snap = await db
@@ -98,13 +76,14 @@ async function deleteBagTagsIndexForFlight(flightId, batchSize = 400) {
 }
 
 /* =========================
-   DELETE FLIGHT (CASCADE)
+   DELETE FLIGHT CASCADE
 ========================= */
 
 exports.deleteFlightCascade = region.https.onCall(async (data, context) => {
-  await requireManager(context);
+  await requireManager(data);
 
   const flightId = String(data?.flightId || "").trim();
+
   if (!flightId) {
     throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
   }
@@ -117,28 +96,28 @@ exports.deleteFlightCascade = region.https.onCall(async (data, context) => {
   }
 
   try {
-    // 1) Delete subcollections
     await deleteCollection(`flights/${flightId}/aircraftScans`);
     await deleteCollection(`flights/${flightId}/bagroomScans`);
     await deleteCollection(`flights/${flightId}/allowedBagTags`);
     await deleteCollection(`flights/${flightId}/reports`);
 
-    // 2) Delete Storage files (reports + manifests)
     await deleteStoragePrefix(`flights/${flightId}/reports/`);
     await deleteStoragePrefix(`flights/${flightId}/manifests/`);
 
-    // 3) Delete global bagTags index
     await deleteBagTagsIndexForFlight(flightId);
 
-    // 4) Delete flight document
     await flightRef.delete();
 
-    return { ok: true };
+    return {
+      ok: true,
+      deletedFlightId: flightId,
+    };
   } catch (e) {
     console.error("[deleteFlightCascade] failed:", e);
+
     throw new functions.https.HttpsError(
       "internal",
-      "Delete cascade failed. Check logs and permissions."
+      e?.message || "Delete cascade failed."
     );
   }
 });
@@ -148,9 +127,10 @@ exports.deleteFlightCascade = region.https.onCall(async (data, context) => {
 ========================= */
 
 exports.reopenFlight = region.https.onCall(async (data, context) => {
-  await requireManager(context);
+  await requireManager(data);
 
   const flightId = String(data?.flightId || "").trim();
+
   if (!flightId) {
     throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
   }
@@ -175,10 +155,8 @@ exports.reopenFlight = region.https.onCall(async (data, context) => {
   try {
     await ref.set(
       {
-        // Reabrimos a LOADING (para permitir seguir escaneando en aircraft)
         status: "LOADING",
 
-        // Unlock
         aircraftLoadingCompleted: false,
         aircraftLoadingCompletedAt: null,
         aircraftLoadingCompletedBy: null,
@@ -186,21 +164,23 @@ exports.reopenFlight = region.https.onCall(async (data, context) => {
 
         reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
         reopenedBy: {
-          uid: context.auth.uid,
-          name: context.auth.token?.name || null,
-          username: context.auth.token?.username || null,
-          role: context.auth.token?.role || null,
+          username: data?.username || null,
+          role: data?.userRole || null,
         },
       },
       { merge: true }
     );
 
-    return { ok: true };
+    return {
+      ok: true,
+      reopenedFlightId: flightId,
+    };
   } catch (e) {
     console.error("[reopenFlight] failed:", e);
+
     throw new functions.https.HttpsError(
       "internal",
-      "Reopen failed. Check logs and permissions."
+      e?.message || "Reopen failed."
     );
   }
 });
