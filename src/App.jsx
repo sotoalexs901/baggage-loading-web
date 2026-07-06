@@ -31,17 +31,24 @@ export default function App() {
 
   const role = normalizeRole(user.role);
 
-  const isGateController = role === "gate_controller";
   const isStationManager = role === "station_manager";
 
-  const canCreateFlights = role === "station_manager" || role === "duty_manager";
+  const canCreateFlights =
+    role === "station_manager" ||
+    role === "duty_manager" ||
+    role === "supervisor" ||
+    role === "gate_controller";
+
   const canEditGateTotals =
-    role === "station_manager" || role === "duty_manager" || role === "supervisor";
+    role === "station_manager" ||
+    role === "duty_manager" ||
+    role === "supervisor" ||
+    role === "gate_controller";
 
   const canSeeDashboard = true;
-  const canSeeFlights = !isGateController;
+  const canSeeFlights = true;
   const canSeeGate = true;
-  const canSeeBagroom = !isGateController;
+  const canSeeBagroom = true;
   const canSeeAircraft = true;
   const canSeeReports = true;
   const canSeeAdminUsers = isStationManager;
@@ -55,12 +62,6 @@ export default function App() {
 
   const handleOpenFlightFromDashboard = (flightId, targetView) => {
     setSelectedFlightId(flightId);
-
-    if (isGateController && (targetView === "flights" || targetView === "bagroom")) {
-      setCurrentView("gate");
-      return;
-    }
-
     setCurrentView(targetView);
   };
 
@@ -179,7 +180,7 @@ export default function App() {
               {user.role && <> ({user.role})</>}
             </div>
 
-            {gateControllerOnDuty && !isGateController && (
+            {gateControllerOnDuty && role !== "gate_controller" && (
               <div style={{ fontSize: "0.85rem", marginTop: 2 }}>
                 Gate Controller: <strong>{gateControllerOnDuty}</strong>
               </div>
