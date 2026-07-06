@@ -256,7 +256,12 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setReopeningId(f.id);
 
       const fn = httpsCallable(functions, "reopenFlight");
-      await fn({ flightId: f.id });
+
+      await fn({
+        flightId: f.id,
+        userRole: user?.role,
+        username: user?.username,
+      });
 
       setActionMsg(`✅ Flight reopened: ${f.flightNumber || f.id}`);
       setTimeout(() => setActionMsg(""), 2500);
@@ -286,7 +291,12 @@ export default function FlightsPage({ user, onFlightSelected }) {
       setDeletingId(f.id);
 
       const fn = httpsCallable(functions, "deleteFlightCascade");
-      await fn({ flightId: f.id });
+
+      await fn({
+        flightId: f.id,
+        userRole: user?.role,
+        username: user?.username,
+      });
 
       setActionMsg(`✅ Flight deleted: ${label}`);
       setTimeout(() => setActionMsg(""), 2500);
@@ -299,35 +309,89 @@ export default function FlightsPage({ user, onFlightSelected }) {
     }
   };
     return (
-    <div style={{ background: "white", borderRadius: 12, padding: 16, border: "1px solid #e5e7eb" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+    <div
+      style={{
+        background: "white",
+        borderRadius: 12,
+        padding: 16,
+        border: "1px solid #e5e7eb",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "end",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
           <h2 style={{ margin: 0 }}>Flights</h2>
-          <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+
+          <p
+            style={{
+              margin: "6px 0 0",
+              color: "#6b7280",
+              fontSize: "0.9rem",
+            }}
+          >
             Select a date, filter, then choose a flight.
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <div>
-            <label style={{ fontSize: "0.85rem", color: "#374151" }}>Date</label>
+            <label
+              style={{
+                fontSize: "0.85rem",
+                color: "#374151",
+              }}
+            >
+              Date
+            </label>
+
             <div>
               <input
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                }}
               />
             </div>
           </div>
 
           <div>
-            <label style={{ fontSize: "0.85rem", color: "#374151" }}>Filter</label>
+            <label
+              style={{
+                fontSize: "0.85rem",
+                color: "#374151",
+              }}
+            >
+              Filter
+            </label>
+
             <div>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #d1d5db", height: 34 }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #d1d5db",
+                  height: 34,
+                }}
               >
                 <option value="active">Active</option>
                 <option value="completed">Completed</option>
@@ -354,7 +418,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
               + Create Flight
             </button>
           ) : (
-            <div style={{ marginTop: 18, color: "#6b7280", fontSize: "0.85rem" }}>
+            <div
+              style={{
+                marginTop: 18,
+                color: "#6b7280",
+                fontSize: "0.85rem",
+              }}
+            >
               Create Flight: managers only
             </div>
           )}
@@ -393,7 +463,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
         </div>
       )}
 
-      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid #e5e7eb",
+          margin: "14px 0",
+        }}
+      />
 
       {loading ? (
         <p style={{ color: "#6b7280" }}>Loading flights...</p>
@@ -403,7 +479,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
         </p>
       ) : (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.92rem" }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "0.92rem",
+            }}
+          >
             <thead>
               <tr style={{ background: "#f9fafb" }}>
                 <th style={th}>Flight</th>
@@ -419,6 +501,7 @@ export default function FlightsPage({ user, onFlightSelected }) {
               {flights.map((f) => {
                 const st = normalizeStatus(f.status);
                 const isCompleted = st === "LOADED";
+
                 const busyDelete = deletingId === f.id;
                 const busyReopen = reopeningId === f.id;
 
@@ -429,7 +512,9 @@ export default function FlightsPage({ user, onFlightSelected }) {
                     </td>
 
                     <td style={td}>{f.flightDate}</td>
+
                     <td style={td}>{f.gate || "-"}</td>
+
                     <td style={td}>{f.aircraftType || "-"}</td>
 
                     <td style={td}>
@@ -462,10 +547,14 @@ export default function FlightsPage({ user, onFlightSelected }) {
                             border: "1px solid #16a34a",
                             background: "#16a34a",
                             color: "white",
-                            cursor: busyReopen || busyDelete ? "not-allowed" : "pointer",
+                            cursor:
+                              busyReopen || busyDelete
+                                ? "not-allowed"
+                                : "pointer",
                             fontWeight: 900,
                             marginRight: 8,
-                            opacity: busyReopen || busyDelete ? 0.7 : 1,
+                            opacity:
+                              busyReopen || busyDelete ? 0.7 : 1,
                           }}
                         >
                           {busyReopen ? "Reopening..." : "Reopen"}
@@ -482,9 +571,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
                             border: "1px solid #ef4444",
                             background: "#ef4444",
                             color: "white",
-                            cursor: busyDelete || busyReopen ? "not-allowed" : "pointer",
+                            cursor:
+                              busyDelete || busyReopen
+                                ? "not-allowed"
+                                : "pointer",
                             fontWeight: 900,
-                            opacity: busyDelete || busyReopen ? 0.7 : 1,
+                            opacity:
+                              busyDelete || busyReopen ? 0.7 : 1,
                           }}
                         >
                           {busyDelete ? "Deleting..." : "Delete"}
@@ -497,28 +590,51 @@ export default function FlightsPage({ user, onFlightSelected }) {
             </tbody>
           </table>
 
-          <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-            Tip: Completed flights (LOADED) remain accessible for Gate/Aircraft/Reports.
-            Managers can Reopen if needed.
+          <p
+            style={{
+              marginTop: 10,
+              color: "#6b7280",
+              fontSize: "0.8rem",
+            }}
+          >
+            Tip: Completed flights (LOADED) remain accessible for
+            Gate/Aircraft/Reports. Managers can Reopen if needed.
           </p>
         </div>
       )}
             {showCreate && (
         <div style={overlay}>
           <div style={modal}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+              }}
+            >
               <h3 style={{ margin: 0 }}>Create Flight</h3>
+
               <button onClick={closeCreate} style={xBtn} aria-label="Close">
                 ✕
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 12,
+                marginTop: 12,
+              }}
+            >
               <div>
                 <label style={label}>Flight Number</label>
                 <input
                   value={form.flightNumber}
-                  onChange={(e) => setForm((p) => ({ ...p, flightNumber: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, flightNumber: e.target.value }))
+                  }
                   placeholder="e.g. SY214"
                   style={input}
                 />
@@ -529,7 +645,9 @@ export default function FlightsPage({ user, onFlightSelected }) {
                 <input
                   type="date"
                   value={form.flightDate}
-                  onChange={(e) => setForm((p) => ({ ...p, flightDate: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, flightDate: e.target.value }))
+                  }
                   style={input}
                 />
               </div>
@@ -538,7 +656,9 @@ export default function FlightsPage({ user, onFlightSelected }) {
                 <label style={label}>Gate</label>
                 <input
                   value={form.gate}
-                  onChange={(e) => setForm((p) => ({ ...p, gate: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, gate: e.target.value }))
+                  }
                   placeholder="e.g. E68"
                   style={input}
                 />
@@ -548,7 +668,9 @@ export default function FlightsPage({ user, onFlightSelected }) {
                 <label style={label}>Aircraft Type</label>
                 <input
                   value={form.aircraftType}
-                  onChange={(e) => setForm((p) => ({ ...p, aircraftType: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, aircraftType: e.target.value }))
+                  }
                   placeholder="e.g. B737-800"
                   style={input}
                 />
@@ -556,12 +678,26 @@ export default function FlightsPage({ user, onFlightSelected }) {
             </div>
 
             {formError && (
-              <p style={{ color: "#b91c1c", marginTop: 10, marginBottom: 0, fontSize: "0.9rem" }}>
+              <p
+                style={{
+                  color: "#b91c1c",
+                  marginTop: 10,
+                  marginBottom: 0,
+                  fontSize: "0.9rem",
+                }}
+              >
                 {formError}
               </p>
             )}
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+                marginTop: 16,
+              }}
+            >
               <button onClick={closeCreate} style={btnGhost}>
                 Cancel
               </button>
@@ -571,7 +707,13 @@ export default function FlightsPage({ user, onFlightSelected }) {
               </button>
             </div>
 
-            <p style={{ marginTop: 12, color: "#6b7280", fontSize: "0.8rem" }}>
+            <p
+              style={{
+                marginTop: 12,
+                color: "#6b7280",
+                fontSize: "0.8rem",
+              }}
+            >
               Created by: {user?.username} ({user?.role})
             </p>
           </div>
