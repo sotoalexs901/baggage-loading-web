@@ -14,7 +14,6 @@ import {
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 
-// ✅ PDF text reading (local) + Storage upload (OCR fallback)
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
@@ -31,32 +30,34 @@ function toIntSafe(v) {
   return Math.max(0, Math.trunc(n));
 }
 
-// === Flight status helpers ===
 const STATUS_COLORS = {
-  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" }, // amarillo
-  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" }, // azul suave
-  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" }, // naranja
-  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" }, // verde
+  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },
+  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" },
+  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },
+  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },
 };
 
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
-  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED"
+    ? v
+    : "OPEN";
 }
 
-// ---- tag helpers ----
 function cleanTagValue(v) {
   return String(v || "").trim();
 }
+
 function onlyDigits(s) {
   return String(s || "").replace(/\D+/g, "");
 }
+
 function isValidTag10(tag) {
   const t = onlyDigits(tag);
   return t.length === 10;
 }
 
-// ✅ Extract ONLY numeric bag tags of EXACT LENGTH = 10
 function extractBagTagsFromText(text, { exactLen = 10 } = {}) {
   const src = String(text || "");
   const matches = src.match(/\d+/g) || [];
@@ -64,40 +65,43 @@ function extractBagTagsFromText(text, { exactLen = 10 } = {}) {
 
   const seen = new Set();
   const unique = [];
+
   for (const t of tags) {
     if (!seen.has(t)) {
       seen.add(t);
       unique.push(t);
     }
   }
+
   return unique;
 }
 
 async function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+
     reader.onerror = () => reject(new Error("File read error"));
     reader.onload = () => resolve(String(reader.result || ""));
     reader.readAsText(file);
   });
 }
 
-// ✅ Read PDF as text (works only if PDF has selectable text)
 async function readPdfAsText(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
   let fullText = "";
+
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const strings = content.items.map((it) => it.str);
     fullText += strings.join(" ") + "\n";
   }
+
   return fullText;
 }
 
-// ✅ Upload PDF to Storage for OCR (Cloud Function onFinalize)
 async function uploadPdfForOcr({ file, flightId, user }) {
   const safeName = String(file.name || "manifest.pdf").replaceAll(" ", "_");
   const path = `flights/${flightId}/manifests/${Date.now()}_${safeName}`;
@@ -113,54 +117,54 @@ async function uploadPdfForOcr({ file, flightId, user }) {
   });
 
   const url = await getDownloadURL(r);
+
   return { path, url };
 }
 
-export default function GateControllerPage({ flightId, user, gateControllerOnDuty, canEdit }) {
+export default function GateControllerPage({
+  flightId,
+  user,
+  gateControllerOnDuty,
+  canEdit,
+}) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
 
-  // vuelo
   const [flight, setFlight] = useState(null);
   const [flightLoading, setFlightLoading] = useState(true);
 
-  // gate totals
   const [checkedTotalInput, setCheckedTotalInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
 
-  // aircraft scans summary
   const [aircraftTotal, setAircraftTotal] = useState(0);
   const [zones, setZones] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
   const [aircraftLoading, setAircraftLoading] = useState(true);
 
-  // Manifest upload
   const [manifestText, setManifestText] = useState("");
   const [manifestTagsPreview, setManifestTagsPreview] = useState([]);
   const [manifestMsg, setManifestMsg] = useState("");
   const [manifestErr, setManifestErr] = useState("");
   const [importing, setImporting] = useState(false);
 
-  // Strict manifest toggle
   const [strictManifest, setStrictManifest] = useState(false);
 
-  // ✅ Scan-to-build manifest
   const [scanInput, setScanInput] = useState("");
   const scanRef = useRef(null);
   const [scanMsg, setScanMsg] = useState("");
   const [scanErr, setScanErr] = useState("");
   const [savingScan, setSavingScan] = useState(false);
 
-  // ✅ live manifest count + recent list
   const [allowedCount, setAllowedCount] = useState(0);
   const [recentAllowed, setRecentAllowed] = useState([]);
   const [loadingAllowed, setLoadingAllowed] = useState(true);
   const [deletingTag, setDeletingTag] = useState("");
 
-  // Debounce timer (for scanners that don't send Enter)
+  const [loadedAircraftTags, setLoadedAircraftTags] = useState([]);
+  const [activeManifestTab, setActiveManifestTab] = useState("recent");
+
   const debounceRef = useRef(null);
 
-  // Load flight doc
   useEffect(() => {
     if (!flightId) return;
 
@@ -201,11 +205,11 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     return () => unsub();
   }, [flightId]);
 
-  // ✅ Live allowedBagTags count + recent
   useEffect(() => {
     if (!flightId) return;
 
     setLoadingAllowed(true);
+
     const colRef = collection(db, "flights", flightId, "allowedBagTags");
     const qy = query(colRef, orderBy("importedAt", "desc"));
 
@@ -213,7 +217,12 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       qy,
       (snap) => {
         setAllowedCount(snap.size);
-        const rows = snap.docs.slice(0, 60).map((d) => ({ id: d.id, ...d.data() }));
+
+        const rows = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
         setRecentAllowed(rows);
         setLoadingAllowed(false);
       },
@@ -227,34 +236,53 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
     return () => unsub();
   }, [flightId]);
-
-  // Load aircraft scan summary
-  useEffect(() => {
+    useEffect(() => {
     if (!flightId) return;
 
     const run = async () => {
       try {
         setAircraftLoading(true);
+
         const scansRef = collection(db, "flights", flightId, "aircraftScans");
         const snap = await getDocs(scansRef);
 
         let total = 0;
         const z = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        const loadedTags = [];
 
         snap.forEach((d) => {
           const data = d.data();
+
           total += 1;
+
           const zone = Number(data.zone);
-          if (zone >= 1 && zone <= 4) z[zone] += 1;
+          if (zone >= 1 && zone <= 4) {
+            z[zone] += 1;
+          }
+
+          const tag = onlyDigits(
+            data.bagTag ||
+              data.tag ||
+              data.bagTagNumber ||
+              data.barcode ||
+              d.id
+          );
+
+          if (isValidTag10(tag)) {
+            loadedTags.push(tag);
+          }
         });
 
         setAircraftTotal(total);
         setZones(z);
+        setLoadedAircraftTags(loadedTags);
         setAircraftLoading(false);
       } catch (err) {
         console.error("GateControllerPage aircraft summary error:", err);
+
         setAircraftTotal(0);
         setZones({ 1: 0, 2: 0, 3: 0, 4: 0 });
+        setLoadedAircraftTags([]);
         setAircraftLoading(false);
       }
     };
@@ -262,16 +290,33 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     run();
   }, [flightId]);
 
-  const checkedBagsTotal = typeof flight?.checkedBagsTotal === "number" ? flight.checkedBagsTotal : null;
-  const missing = checkedBagsTotal === null ? null : Math.max(0, checkedBagsTotal - aircraftTotal);
+  const checkedBagsTotal =
+    typeof flight?.checkedBagsTotal === "number" ? flight.checkedBagsTotal : null;
 
-  // === Status info ===
+  const missing =
+    checkedBagsTotal === null ? null : Math.max(0, checkedBagsTotal - aircraftTotal);
+
   const flightStatus = normalizeStatus(flight?.status);
   const statusStyle = STATUS_COLORS[flightStatus] || STATUS_COLORS.OPEN;
 
-  // ✅ Auto set to RECEIVING when Gate starts scanning tags (only from OPEN)
+  const loadedTagSet = useMemo(() => {
+    return new Set(
+      loadedAircraftTags
+        .map((t) => onlyDigits(t))
+        .filter((t) => isValidTag10(t))
+    );
+  }, [loadedAircraftTags]);
+
+  const missingManifestTags = useMemo(() => {
+    return recentAllowed
+      .map((r) => onlyDigits(r.tag || r.id))
+      .filter((t) => isValidTag10(t))
+      .filter((tag) => !loadedTagSet.has(tag));
+  }, [recentAllowed, loadedTagSet]);
+
   const ensureStatusReceiving = async () => {
     if (!flightId || !flight) return;
+
     const st = normalizeStatus(flight.status);
     if (st !== "OPEN") return;
 
@@ -326,6 +371,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     setSaveMsg("");
 
     const value = toIntSafe(checkedTotalInput);
+
     if (value === null) {
       setSaveMsg("Please enter a valid number.");
       return;
@@ -356,6 +402,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
       setSaveMsg("Saved ✅");
       setSaving(false);
+
       setTimeout(() => setSaveMsg(""), 2000);
     } catch (err) {
       console.error("Save gate total error:", err);
@@ -376,11 +423,16 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     try {
       await setDoc(
         doc(db, "flights", flightId),
-        { strictManifest: Boolean(nextValue), strictManifestUpdatedAt: serverTimestamp() },
+        {
+          strictManifest: Boolean(nextValue),
+          strictManifestUpdatedAt: serverTimestamp(),
+        },
         { merge: true }
       );
+
       setStrictManifest(Boolean(nextValue));
       setManifestMsg(`Strict Manifest set to ${nextValue ? "ON" : "OFF"} ✅`);
+
       setTimeout(() => setManifestMsg(""), 2000);
     } catch (e) {
       console.error(e);
@@ -388,7 +440,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
   };
 
-  // ✅ Preview ONLY 10-digit tags
   const previewFromText = (text) => {
     setManifestMsg("");
     setManifestErr("");
@@ -397,7 +448,9 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     setManifestTagsPreview(tags);
 
     if (tags.length === 0) {
-      setManifestErr("No 10-digit bag tag numbers found. If this is a scanned PDF, use OCR upload.");
+      setManifestErr(
+        "No 10-digit bag tag numbers found. If this is a scanned PDF, use OCR upload."
+      );
       return;
     }
 
@@ -408,15 +461,17 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     setManifestTagsPreview((prev) => prev.filter((t) => t !== tag));
   };
 
-  // ✅ handles CSV/TXT OR PDF; for scanned PDF triggers OCR upload
   const handleFilePick = async (file) => {
     setManifestMsg("");
     setManifestErr("");
 
     try {
-      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      const isPdf =
+        file.type === "application/pdf" ||
+        file.name.toLowerCase().endsWith(".pdf");
 
       let text = "";
+
       if (isPdf) {
         setManifestMsg("Reading PDF (local)...");
         text = await readPdfAsText(file);
@@ -430,9 +485,9 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
       const found = extractBagTagsFromText(text, { exactLen: 10 }).length;
 
-      // Fallback to OCR for scanned PDFs
       if (isPdf && found === 0) {
         setManifestMsg("No 10-digit tags found locally. Uploading PDF for OCR...");
+
         const up = await uploadPdfForOcr({ file, flightId, user });
 
         setManifestMsg(
@@ -455,6 +510,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
 
     const tags = manifestTagsPreview;
+
     if (!tags || tags.length === 0) {
       setManifestErr("Nothing to import. Preview first. (ONLY 10-digit tags are imported.)");
       return;
@@ -471,10 +527,10 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         const batch = writeBatch(db);
 
         for (const tag of chunk) {
-          // Hard safety: only allow 10 digits
           if (!isValidTag10(tag)) continue;
 
           const ref = doc(db, "flights", flightId, "allowedBagTags", tag);
+
           batch.set(ref, {
             tag,
             importedAt: serverTimestamp(),
@@ -485,10 +541,11 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             },
             source: "import",
           });
+
+          imported += 1;
         }
 
         await batch.commit();
-        imported += chunk.length;
       }
 
       await setDoc(
@@ -505,10 +562,12 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         },
         { merge: true }
       );
+
       setStrictManifest(true);
 
       setManifestMsg(`Imported ${imported} bag tags ✅ Strict Manifest ON (10-digit only)`);
       setImporting(false);
+
       setTimeout(() => setManifestMsg(""), 2500);
     } catch (e) {
       console.error(e);
@@ -516,9 +575,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       setImporting(false);
     }
   };
-
-  // ✅ Save one scanned 10-digit bag tag into allowedBagTags
-  const saveScannedTagToManifest = async (raw) => {
+    const saveScannedTagToManifest = async (raw) => {
     setScanMsg("");
     setScanErr("");
 
@@ -538,12 +595,10 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     try {
       setSavingScan(true);
 
-      // Auto RECEIVING if flight is OPEN
       await ensureStatusReceiving();
 
       const ref = doc(db, "flights", flightId, "allowedBagTags", cleaned);
 
-      // idempotent write
       await setDoc(
         ref,
         {
@@ -559,17 +614,22 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         { merge: true }
       );
 
-      // ensure strictManifest ON
       await setDoc(
         doc(db, "flights", flightId),
-        { strictManifest: true, strictManifestUpdatedAt: serverTimestamp() },
+        {
+          strictManifest: true,
+          strictManifestUpdatedAt: serverTimestamp(),
+        },
         { merge: true }
       );
-      setStrictManifest(true);
 
+      setStrictManifest(true);
       setScanMsg(`Saved ✅  ${cleaned}`);
       setScanInput("");
-      if (scanRef.current) scanRef.current.focus();
+
+      if (scanRef.current) {
+        scanRef.current.focus();
+      }
     } catch (e) {
       console.error(e);
       setScanErr("Could not save scanned tag. Check rules/connection.");
@@ -578,14 +638,16 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
   };
 
-  // ✅ Delete one tag from allowedBagTags (after import/scan)
   const deleteAllowedTag = async (tag) => {
     if (!canEdit) return;
 
     const id = String(tag || "").trim();
     if (!id) return;
 
-    const ok = window.confirm(`Delete this manifest tag?\n\n${id}\n\nThis cannot be undone.`);
+    const ok = window.confirm(
+      `Delete this manifest tag?\n\n${id}\n\nThis cannot be undone.`
+    );
+
     if (!ok) return;
 
     try {
@@ -599,7 +661,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
   };
 
-  // Enter submit
   const onScanKeyDown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -607,28 +668,33 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     }
   };
 
-  // ✅ Debounced auto-save (if scanner doesn't send Enter)
   useEffect(() => {
     if (!canEdit) return;
+
     const raw = scanInput;
     if (!raw) return;
 
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
 
     debounceRef.current = setTimeout(() => {
       const cleaned = onlyDigits(cleanTagValue(raw));
+
       if (isValidTag10(cleaned)) {
         saveScannedTagToManifest(cleaned);
       }
     }, 200);
 
     return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanInput]);
 
-  const title = isGateController ? "Gate Controller (Read Only)" : "Gate Controller";
+  const title = isGateController ? "Gate Controller" : "Gate Controller";
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
@@ -649,7 +715,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
 
       <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
 
-      {/* Flight info */}
       {flightLoading ? (
         <p style={{ color: "#6b7280" }}>Loading flight...</p>
       ) : !flight ? (
@@ -663,7 +728,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         </div>
       )}
 
-      {/* Flight Status */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -692,12 +756,15 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           <button disabled={!canEdit} onClick={() => updateFlightStatus("OPEN")} style={btnStatus(canEdit)}>
             Open
           </button>
+
           <button disabled={!canEdit} onClick={() => updateFlightStatus("RECEIVING")} style={btnStatus(canEdit)}>
             Receiving
           </button>
+
           <button disabled={!canEdit} onClick={() => updateFlightStatus("LOADING")} style={btnStatus(canEdit)}>
             Loading
           </button>
+
           <button disabled={!canEdit} onClick={() => updateFlightStatus("LOADED")} style={btnStatus(canEdit)}>
             Loaded
           </button>
@@ -710,7 +777,6 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
         )}
       </section>
 
-      {/* Scan Bag Tags (Build Manifest) */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -721,6 +787,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               <strong>Only 10-digit numeric tags are accepted.</strong>
             </p>
           </div>
+
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Manifest tags saved</div>
             <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>{loadingAllowed ? "…" : allowedCount}</div>
@@ -732,6 +799,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
               Bag Tag (10 digits)
             </label>
+
             <input
               ref={scanRef}
               value={scanInput}
@@ -777,75 +845,127 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             {scanErr && <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800 }}>{scanErr}</p>}
           </div>
 
-          <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "white", padding: 10, maxHeight: 260, overflow: "auto" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
-              Recent manifest tags (click ❌ to delete)
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "white", padding: 10, maxHeight: 300, overflow: "auto" }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <button onClick={() => setActiveManifestTab("recent")} style={tabBtn(activeManifestTab === "recent")}>
+                Manifest Tags
+              </button>
+
+              <button onClick={() => setActiveManifestTab("missing")} style={tabBtn(activeManifestTab === "missing")}>
+                Missing to Load ({missingManifestTags.length})
+              </button>
             </div>
-            {loadingAllowed ? (
-              <p style={{ color: "#6b7280" }}>Loading…</p>
-            ) : recentAllowed.length === 0 ? (
-              <p style={{ color: "#6b7280" }}>No tags saved yet.</p>
+
+            {activeManifestTab === "recent" ? (
+              <>
+                <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
+                  Recent manifest tags (click ❌ to delete)
+                </div>
+
+                {loadingAllowed ? (
+                  <p style={{ color: "#6b7280" }}>Loading…</p>
+                ) : recentAllowed.length === 0 ? (
+                  <p style={{ color: "#6b7280" }}>No tags saved yet.</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {recentAllowed.map((r) => {
+                      const tag = r.tag || r.id;
+                      const busy = deletingTag === tag;
+
+                      return (
+                        <span key={r.id} style={tagPill}>
+                          {tag}
+                          {canEdit && (
+                            <button
+                              onClick={() => deleteAllowedTag(tag)}
+                              disabled={busy}
+                              title="Delete tag"
+                              style={{
+                                border: "none",
+                                background: "transparent",
+                                cursor: busy ? "not-allowed" : "pointer",
+                                fontWeight: 900,
+                                color: "#b91c1c",
+                                opacity: busy ? 0.6 : 1,
+                              }}
+                            >
+                              {busy ? "…" : "✕"}
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             ) : (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {recentAllowed.map((r) => {
-                  const tag = r.tag || r.id;
-                  const busy = deletingTag === tag;
-                  return (
-                    <span
-                      key={r.id}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "3px 8px",
-                        borderRadius: 999,
-                        border: "1px solid #e5e7eb",
-                        background: "#f9fafb",
-                        fontSize: "0.82rem",
-                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                      }}
-                    >
-                      {tag}
-                      {canEdit && (
-                        <button
-                          onClick={() => deleteAllowedTag(tag)}
-                          disabled={busy}
-                          title="Delete tag"
-                          style={{
-                            border: "none",
-                            background: "transparent",
-                            cursor: busy ? "not-allowed" : "pointer",
-                            fontWeight: 900,
-                            color: "#b91c1c",
-                            opacity: busy ? 0.6 : 1,
-                          }}
-                        >
-                          {busy ? "…" : "✕"}
-                        </button>
-                      )}
-                    </span>
-                  );
-                })}
-              </div>
+              <>
+                <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
+                  Bag tags from manifest not loaded/scanned in aircraft yet.
+                </div>
+
+                {loadingAllowed || aircraftLoading ? (
+                  <p style={{ color: "#6b7280" }}>Loading…</p>
+                ) : missingManifestTags.length === 0 ? (
+                  <p style={{ color: "#16a34a", fontWeight: 800 }}>All manifest tags are loaded ✅</p>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {missingManifestTags.map((tag) => (
+                      <span key={tag} style={{ ...tagPill, background: "#FEF2F2", color: "#991B1B" }}>
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
       </section>
-
-      {/* Gate Total */}
-      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb", marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            {/* Gate Total */}
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          padding: 12,
+          background: "#f9fafb",
+          marginBottom: 14,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
           <div>
             <h3 style={{ margin: 0 }}>Checked Bags Total</h3>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+
+            <p
+              style={{
+                margin: "6px 0 0",
+                color: "#6b7280",
+                fontSize: "0.9rem",
+              }}
+            >
               Enter the total checked bags for this flight.
             </p>
           </div>
 
           <div style={{ minWidth: 260 }}>
-            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.85rem",
+                color: "#374151",
+                marginBottom: 6,
+              }}
+            >
               Total
             </label>
+
             <div style={{ display: "flex", gap: 8 }}>
               <input
                 type="number"
@@ -861,6 +981,7 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
                   background: canEdit ? "white" : "#f3f4f6",
                 }}
               />
+
               <button
                 onClick={saveTotal}
                 disabled={!canEdit || saving}
@@ -880,7 +1001,13 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             </div>
 
             {saveMsg && (
-              <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: saveMsg.includes("✅") ? "#16a34a" : "#b91c1c" }}>
+              <p
+                style={{
+                  margin: "8px 0 0",
+                  fontSize: "0.85rem",
+                  color: saveMsg.includes("✅") ? "#16a34a" : "#b91c1c",
+                }}
+              >
                 {saveMsg}
               </p>
             )}
@@ -889,11 +1016,32 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
       </section>
 
       {/* Manifest Import */}
-      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          padding: 12,
+          marginBottom: 14,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
           <div>
             <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest (Import)</h3>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+
+            <p
+              style={{
+                margin: "6px 0 0",
+                color: "#6b7280",
+                fontSize: "0.9rem",
+              }}
+            >
               Upload CSV/TXT/PDF or paste a list. System ignores names/PNR and imports only bag tag numbers.
               <br />
               <strong>Import reads ONLY numeric tags with exactly 10 digits.</strong>
@@ -901,14 +1049,31 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
           </div>
 
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Strict Manifest</div>
-            <div style={{ fontSize: "1.05rem", fontWeight: 800, color: strictManifest ? "#16a34a" : "#6b7280" }}>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
+              Strict Manifest
+            </div>
+
+            <div
+              style={{
+                fontSize: "1.05rem",
+                fontWeight: 800,
+                color: strictManifest ? "#16a34a" : "#6b7280",
+              }}
+            >
               {strictManifest ? "ON" : "OFF"}
             </div>
           </div>
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
           <input
             type="file"
             accept=".csv,.txt,.pdf,text/csv,text/plain,application/pdf"
@@ -919,15 +1084,27 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
             }}
           />
 
-          <button disabled={!canEdit} onClick={() => updateStrictManifest(!strictManifest)} style={btnStatus(canEdit)}>
+          <button
+            disabled={!canEdit}
+            onClick={() => updateStrictManifest(!strictManifest)}
+            style={btnStatus(canEdit)}
+          >
             Toggle Strict Manifest
           </button>
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: "0.85rem",
+              color: "#374151",
+              marginBottom: 6,
+            }}
+          >
             Paste manifest text (names/PNR allowed — only 10-digit numbers are used)
           </label>
+
           <textarea
             value={manifestText}
             onChange={(e) => setManifestText(e.target.value)}
@@ -940,14 +1117,27 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               borderRadius: 12,
               border: "1px solid #d1d5db",
               background: canEdit ? "white" : "#f3f4f6",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
               fontSize: "0.85rem",
             }}
           />
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button onClick={() => previewFromText(manifestText)} disabled={!canEdit} style={btnStatus(canEdit)}>
+        <div
+          style={{
+            marginTop: 12,
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
+          <button
+            onClick={() => previewFromText(manifestText)}
+            disabled={!canEdit}
+            style={btnStatus(canEdit)}
+          >
             Preview Tags
           </button>
 
@@ -958,45 +1148,72 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
               padding: "8px 12px",
               borderRadius: 12,
               border: "1px solid #1d4ed8",
-              background: (!canEdit || importing) ? "#93c5fd" : "#2563eb",
+              background: !canEdit || importing ? "#93c5fd" : "#2563eb",
               color: "white",
               fontWeight: 800,
-              cursor: (!canEdit || importing) ? "not-allowed" : "pointer",
+              cursor: !canEdit || importing ? "not-allowed" : "pointer",
             }}
           >
             {importing ? "Importing..." : "Import to Flight"}
           </button>
         </div>
 
-        {manifestMsg && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a", whiteSpace: "pre-wrap" }}>{manifestMsg}</p>}
-        {manifestErr && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c", whiteSpace: "pre-wrap" }}>{manifestErr}</p>}
+        {manifestMsg && (
+          <p
+            style={{
+              marginTop: 10,
+              fontSize: "0.9rem",
+              color: "#16a34a",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {manifestMsg}
+          </p>
+        )}
+
+        {manifestErr && (
+          <p
+            style={{
+              marginTop: 10,
+              fontSize: "0.9rem",
+              color: "#b91c1c",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {manifestErr}
+          </p>
+        )}
 
         {manifestTagsPreview.length > 0 && (
-          <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+          <div
+            style={{
+              marginTop: 10,
+              borderTop: "1px solid #e5e7eb",
+              paddingTop: 10,
+            }}
+          >
             <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-              Preview (first 60): <strong>{manifestTagsPreview.length}</strong> tags found (10-digit only)
+              Preview: <strong>{manifestTagsPreview.length}</strong> tags found
+              (10-digit only)
               <span style={{ marginLeft: 8, color: "#6b7280" }}>
                 — click ❌ to remove before import
               </span>
             </div>
 
-            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {manifestTagsPreview.slice(0, 60).map((t) => (
-                <span
-                  key={t}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "3px 8px",
-                    borderRadius: 999,
-                    border: "1px solid #e5e7eb",
-                    background: "#f9fafb",
-                    fontSize: "0.8rem",
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  }}
-                >
+            <div
+              style={{
+                marginTop: 6,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                maxHeight: 220,
+                overflow: "auto",
+              }}
+            >
+              {manifestTagsPreview.map((t) => (
+                <span key={t} style={tagPill}>
                   {t}
+
                   <button
                     onClick={() => removeFromPreview(t)}
                     disabled={!canEdit}
@@ -1013,52 +1230,96 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
                   </button>
                 </span>
               ))}
-
-              {manifestTagsPreview.length > 60 && (
-                <span style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-                  … +{manifestTagsPreview.length - 60} more
-                </span>
-              )}
             </div>
           </div>
         )}
       </section>
-
-      {/* Aircraft loading summary */}
-      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            {/* Aircraft loading summary */}
+      <section
+        style={{
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          padding: 12,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
           <div>
             <h3 style={{ margin: 0 }}>Aircraft Loading</h3>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+
+            <p
+              style={{
+                margin: "6px 0 0",
+                color: "#6b7280",
+                fontSize: "0.9rem",
+              }}
+            >
               Bags scanned in aircraft by zone.
             </p>
           </div>
 
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Aircraft scanned</div>
-            <div style={{ fontSize: "1.6rem", fontWeight: 800 }}>{aircraftLoading ? "…" : aircraftTotal}</div>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
+              Aircraft scanned
+            </div>
+
+            <div style={{ fontSize: "1.6rem", fontWeight: 800 }}>
+              {aircraftLoading ? "…" : aircraftTotal}
+            </div>
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginTop: 12 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))",
+            gap: 10,
+            marginTop: 12,
+          }}
+        >
           <InfoCard label="Zone 1" value={aircraftLoading ? "…" : zones[1]} />
           <InfoCard label="Zone 2" value={aircraftLoading ? "…" : zones[2]} />
           <InfoCard label="Zone 3" value={aircraftLoading ? "…" : zones[3]} />
           <InfoCard label="Zone 4" value={aircraftLoading ? "…" : zones[4]} />
         </div>
 
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div
+          style={{
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: "1px solid #e5e7eb",
+            display: "flex",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 8,
+          }}
+        >
           <div style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-            Gate checked total: <strong>{checkedBagsTotal === null ? "—" : checkedBagsTotal}</strong>
+            Gate checked total:{" "}
+            <strong>
+              {checkedBagsTotal === null ? "—" : checkedBagsTotal}
+            </strong>
           </div>
 
           <div style={{ fontSize: "0.95rem" }}>
             {checkedBagsTotal === null ? (
-              <span style={{ color: "#6b7280" }}>Enter Gate total to calculate missing bags.</span>
+              <span style={{ color: "#6b7280" }}>
+                Enter Gate total to calculate missing bags.
+              </span>
             ) : missing === 0 ? (
-              <span style={{ color: "#16a34a", fontWeight: 700 }}>All bags accounted for ✅</span>
+              <span style={{ color: "#16a34a", fontWeight: 700 }}>
+                All bags accounted for ✅
+              </span>
             ) : (
-              <span style={{ color: "#b91c1c", fontWeight: 800 }}>Missing: {missing}</span>
+              <span style={{ color: "#b91c1c", fontWeight: 800 }}>
+                Missing: {missing}
+              </span>
             )}
           </div>
         </div>
@@ -1066,6 +1327,8 @@ export default function GateControllerPage({ flightId, user, gateControllerOnDut
     </div>
   );
 }
+
+/* ---------- Styles ---------- */
 
 function btnStatus(canEdit) {
   return {
@@ -1078,11 +1341,60 @@ function btnStatus(canEdit) {
   };
 }
 
+function tabBtn(active) {
+  return {
+    padding: "6px 12px",
+    borderRadius: 999,
+    border: active ? "1px solid #111827" : "1px solid #d1d5db",
+    background: active ? "#111827" : "white",
+    color: active ? "white" : "#111827",
+    cursor: "pointer",
+    fontWeight: 800,
+    fontSize: "0.82rem",
+  };
+}
+
+const tagPill = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "3px 8px",
+  borderRadius: 999,
+  border: "1px solid #e5e7eb",
+  background: "#f9fafb",
+  fontSize: "0.82rem",
+  fontFamily:
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+};
+
 function InfoCard({ label, value }) {
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 10, background: "white" }}>
-      <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>{label}</div>
-      <div style={{ fontSize: "1.1rem", fontWeight: 800 }}>{value}</div>
+    <div
+      style={{
+        border: "1px solid #e5e7eb",
+        borderRadius: 12,
+        padding: 10,
+        background: "white",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.8rem",
+          color: "#6b7280",
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontSize: "1.1rem",
+          fontWeight: 800,
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
+      
