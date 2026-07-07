@@ -10,8 +10,8 @@ import {
   writeBatch,
   query,
   orderBy,
-where,
-deleteDoc,
+  where,
+  deleteDoc,
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 
@@ -118,7 +118,6 @@ async function uploadPdfForOcr({ file, flightId, user }) {
   });
 
   const url = await getDownloadURL(r);
-
   return { path, url };
 }
 
@@ -130,6 +129,12 @@ export default function GateControllerPage({
 }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
+
+  const [gateControllers, setGateControllers] = useState([]);
+  const [selectedGateController, setSelectedGateController] = useState(
+    gateControllerOnDuty || localStorage.getItem("gateControllerOnDuty") || ""
+  );
+  const [gcMsg, setGcMsg] = useState("");
 
   const [flight, setFlight] = useState(null);
   const [flightLoading, setFlightLoading] = useState(true);
@@ -158,6 +163,7 @@ export default function GateControllerPage({
 
   const [allowedCount, setAllowedCount] = useState(0);
   const [recentAllowed, setRecentAllowed] = useState([]);
+  const [allManifestTags, setAllManifestTags] = useState([]);
   const [loadingAllowed, setLoadingAllowed] = useState(true);
   const [deletingTag, setDeletingTag] = useState("");
 
@@ -167,6 +173,28 @@ export default function GateControllerPage({
   const debounceRef = useRef(null);
 
   useEffect(() => {
+    const loadGateControllers = async () => {
+      try {
+        const qGC = query(
+          collection(db, "users"),
+          where("role", "==", "gate_controller")
+        );
+
+        const snap = await getDocs(qGC);
+
+        const list = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((u) => u.username);
+
+        setGateControllers(list);
+      } catch (e) {
+        console.error("Error loading gate controllers:", e);
+      }
+    };
+
+    loadGateControllers();
+  }, []);
+    useEffect(() => {
     if (!flightId) return;
 
     setFlightLoading(true);
@@ -186,12 +214,20 @@ export default function GateControllerPage({
 
         if (typeof data.checkedBagsTotal === "number") {
           setCheckedTotalInput(String(data.checkedBagsTotal));
-        } else if (data.checkedBagsTotal === null || data.checkedBagsTotal === undefined) {
+        } else if (
+          data.checkedBagsTotal === null ||
+          data.checkedBagsTotal === undefined
+        ) {
           setCheckedTotalInput("");
         }
 
         if (typeof data.strictManifest === "boolean") {
           setStrictManifest(data.strictManifest);
+        }
+
+        if (data.gateControllerOnDuty) {
+          setSelectedGateController(data.gateControllerOnDuty);
+          localStorage.setItem("gateControllerOnDuty", data.gateControllerOnDuty);
         }
 
         setFlightLoading(false);
@@ -224,20 +260,28 @@ export default function GateControllerPage({
           ...d.data(),
         }));
 
-        setRecentAllowed(rows);
+        setAllManifestTags(
+          rows
+            .map((r) => onlyDigits(r.tag || r.id))
+            .filter((t) => isValidTag10(t))
+        );
+
+        setRecentAllowed(rows.slice(0, 60));
         setLoadingAllowed(false);
       },
       (e) => {
         console.error("allowedBagTags snapshot error:", e);
         setAllowedCount(0);
         setRecentAllowed([]);
+        setAllManifestTags([]);
         setLoadingAllowed(false);
       }
     );
 
     return () => unsub();
   }, [flightId]);
-    useEffect(() => {
+
+  useEffect(() => {
     if (!flightId) return;
 
     const run = async () => {
@@ -309,11 +353,8 @@ export default function GateControllerPage({
   }, [loadedAircraftTags]);
 
   const missingManifestTags = useMemo(() => {
-    return recentAllowed
-      .map((r) => onlyDigits(r.tag || r.id))
-      .filter((t) => isValidTag10(t))
-      .filter((tag) => !loadedTagSet.has(tag));
-  }, [recentAllowed, loadedTagSet]);
+    return allManifestTags.filter((tag) => !loadedTagSet.has(tag));
+  }, [allManifestTags, loadedTagSet]);
 
   const ensureStatusReceiving = async () => {
     if (!flightId || !flight) return;
@@ -334,6 +375,39 @@ export default function GateControllerPage({
       },
       { merge: true }
     );
+  };
+
+  const saveGateControllerOnDuty = async () => {
+    const picked = selectedGateController.trim();
+
+    if (!picked) {
+      setGcMsg("Please select a Gate Controller.");
+      return;
+    }
+
+    try {
+      localStorage.setItem("gateControllerOnDuty", picked);
+
+      await setDoc(
+        doc(db, "flights", flightId),
+        {
+          gateControllerOnDuty: picked,
+          gateControllerUpdatedAt: serverTimestamp(),
+          gateControllerUpdatedBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+        },
+        { merge: true }
+      );
+
+      setGcMsg(`Gate Controller saved: ${picked} ✅`);
+      setTimeout(() => setGcMsg(""), 2500);
+    } catch (e) {
+      console.error(e);
+      setGcMsg("Could not save Gate Controller.");
+    }
   };
 
   const updateFlightStatus = async (nextStatus) => {
@@ -396,7 +470,7 @@ export default function GateControllerPage({
           username: user?.username || null,
           role: user?.role || null,
         },
-        gateControllerOnDuty: gateControllerOnDuty || null,
+        gateControllerOnDuty: selectedGateController || null,
       };
 
       await setDoc(ref, payload, { merge: true });
@@ -576,7 +650,8 @@ export default function GateControllerPage({
       setImporting(false);
     }
   };
-    const saveScannedTagToManifest = async (raw) => {
+
+  const saveScannedTagToManifest = async (raw) => {
     setScanMsg("");
     setScanErr("");
 
@@ -638,8 +713,7 @@ export default function GateControllerPage({
       setSavingScan(false);
     }
   };
-
-  const deleteAllowedTag = async (tag) => {
+    const deleteAllowedTag = async (tag) => {
     if (!canEdit) return;
 
     const id = String(tag || "").trim();
@@ -695,7 +769,7 @@ export default function GateControllerPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scanInput]);
 
-  const title = isGateController ? "Gate Controller" : "Gate Controller";
+  const title = "Gate Controller";
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
@@ -707,11 +781,61 @@ export default function GateControllerPage({
           </p>
         </div>
 
-        {!isGateController && gateControllerOnDuty && (
-          <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
-            Gate Controller on duty: <strong>{gateControllerOnDuty}</strong>
+        <div style={{ textAlign: "right", fontSize: "0.9rem", minWidth: 260 }}>
+          <label style={{ display: "block", fontSize: "0.8rem", color: "#6b7280", marginBottom: 4 }}>
+            Gate Controller on duty
+          </label>
+
+          <div style={{ display: "flex", gap: 6 }}>
+            <select
+              value={selectedGateController}
+              onChange={(e) => setSelectedGateController(e.target.value)}
+              disabled={!canEdit}
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                borderRadius: 8,
+                border: "1px solid #d1d5db",
+                background: canEdit ? "white" : "#f3f4f6",
+              }}
+            >
+              <option value="">Select GC…</option>
+              {gateControllers.map((gc) => (
+                <option key={gc.id} value={gc.username}>
+                  {gc.username}
+                </option>
+              ))}
+            </select>
+
+            <button
+              onClick={saveGateControllerOnDuty}
+              disabled={!canEdit}
+              style={{
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid #2563eb",
+                background: canEdit ? "#2563eb" : "#93c5fd",
+                color: "white",
+                fontWeight: 700,
+                cursor: canEdit ? "pointer" : "not-allowed",
+              }}
+            >
+              Save
+            </button>
           </div>
-        )}
+
+          {gcMsg && (
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: "0.78rem",
+                color: gcMsg.includes("✅") ? "#16a34a" : "#b91c1c",
+              }}
+            >
+              {gcMsg}
+            </div>
+          )}
+        </div>
       </div>
 
       <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
@@ -777,8 +901,7 @@ export default function GateControllerPage({
           </p>
         )}
       </section>
-
-      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
+            <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h3 style={{ margin: 0 }}>Scan Bag Tags (Build Manifest)</h3>
@@ -923,47 +1046,19 @@ export default function GateControllerPage({
           </div>
         </div>
       </section>
-            {/* Gate Total */}
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 12,
-          background: "#f9fafb",
-          marginBottom: 14,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
+
+      {/* Gate Total */}
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb", marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h3 style={{ margin: 0 }}>Checked Bags Total</h3>
-
-            <p
-              style={{
-                margin: "6px 0 0",
-                color: "#6b7280",
-                fontSize: "0.9rem",
-              }}
-            >
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
               Enter the total checked bags for this flight.
             </p>
           </div>
 
           <div style={{ minWidth: 260 }}>
-            <label
-              style={{
-                display: "block",
-                fontSize: "0.85rem",
-                color: "#374151",
-                marginBottom: 6,
-              }}
-            >
+            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
               Total
             </label>
 
@@ -1002,13 +1097,7 @@ export default function GateControllerPage({
             </div>
 
             {saveMsg && (
-              <p
-                style={{
-                  margin: "8px 0 0",
-                  fontSize: "0.85rem",
-                  color: saveMsg.includes("✅") ? "#16a34a" : "#b91c1c",
-                }}
-              >
+              <p style={{ margin: "8px 0 0", fontSize: "0.85rem", color: saveMsg.includes("✅") ? "#16a34a" : "#b91c1c" }}>
                 {saveMsg}
               </p>
             )}
@@ -1017,32 +1106,11 @@ export default function GateControllerPage({
       </section>
 
       {/* Manifest Import */}
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 12,
-          marginBottom: 14,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest (Import)</h3>
-
-            <p
-              style={{
-                margin: "6px 0 0",
-                color: "#6b7280",
-                fontSize: "0.9rem",
-              }}
-            >
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
               Upload CSV/TXT/PDF or paste a list. System ignores names/PNR and imports only bag tag numbers.
               <br />
               <strong>Import reads ONLY numeric tags with exactly 10 digits.</strong>
@@ -1050,31 +1118,14 @@ export default function GateControllerPage({
           </div>
 
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-              Strict Manifest
-            </div>
-
-            <div
-              style={{
-                fontSize: "1.05rem",
-                fontWeight: 800,
-                color: strictManifest ? "#16a34a" : "#6b7280",
-              }}
-            >
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Strict Manifest</div>
+            <div style={{ fontSize: "1.05rem", fontWeight: 800, color: strictManifest ? "#16a34a" : "#6b7280" }}>
               {strictManifest ? "ON" : "OFF"}
             </div>
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: 12,
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <input
             type="file"
             accept=".csv,.txt,.pdf,text/csv,text/plain,application/pdf"
@@ -1085,24 +1136,13 @@ export default function GateControllerPage({
             }}
           />
 
-          <button
-            disabled={!canEdit}
-            onClick={() => updateStrictManifest(!strictManifest)}
-            style={btnStatus(canEdit)}
-          >
+          <button disabled={!canEdit} onClick={() => updateStrictManifest(!strictManifest)} style={btnStatus(canEdit)}>
             Toggle Strict Manifest
           </button>
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <label
-            style={{
-              display: "block",
-              fontSize: "0.85rem",
-              color: "#374151",
-              marginBottom: 6,
-            }}
-          >
+          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
             Paste manifest text (names/PNR allowed — only 10-digit numbers are used)
           </label>
 
@@ -1118,27 +1158,14 @@ export default function GateControllerPage({
               borderRadius: 12,
               border: "1px solid #d1d5db",
               background: canEdit ? "white" : "#f3f4f6",
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
               fontSize: "0.85rem",
             }}
           />
         </div>
 
-        <div
-          style={{
-            marginTop: 12,
-            display: "flex",
-            gap: 10,
-            flexWrap: "wrap",
-            justifyContent: "flex-end",
-          }}
-        >
-          <button
-            onClick={() => previewFromText(manifestText)}
-            disabled={!canEdit}
-            style={btnStatus(canEdit)}
-          >
+        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <button onClick={() => previewFromText(manifestText)} disabled={!canEdit} style={btnStatus(canEdit)}>
             Preview Tags
           </button>
 
@@ -1159,62 +1186,20 @@ export default function GateControllerPage({
           </button>
         </div>
 
-        {manifestMsg && (
-          <p
-            style={{
-              marginTop: 10,
-              fontSize: "0.9rem",
-              color: "#16a34a",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {manifestMsg}
-          </p>
-        )}
-
-        {manifestErr && (
-          <p
-            style={{
-              marginTop: 10,
-              fontSize: "0.9rem",
-              color: "#b91c1c",
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {manifestErr}
-          </p>
-        )}
+        {manifestMsg && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a", whiteSpace: "pre-wrap" }}>{manifestMsg}</p>}
+        {manifestErr && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c", whiteSpace: "pre-wrap" }}>{manifestErr}</p>}
 
         {manifestTagsPreview.length > 0 && (
-          <div
-            style={{
-              marginTop: 10,
-              borderTop: "1px solid #e5e7eb",
-              paddingTop: 10,
-            }}
-          >
+          <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
             <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-              Preview: <strong>{manifestTagsPreview.length}</strong> tags found
-              (10-digit only)
-              <span style={{ marginLeft: 8, color: "#6b7280" }}>
-                — click ❌ to remove before import
-              </span>
+              Preview: <strong>{manifestTagsPreview.length}</strong> tags found (10-digit only)
+              <span style={{ marginLeft: 8, color: "#6b7280" }}> — click ❌ to remove before import</span>
             </div>
 
-            <div
-              style={{
-                marginTop: 6,
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 6,
-                maxHeight: 220,
-                overflow: "auto",
-              }}
-            >
+            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 220, overflow: "auto" }}>
               {manifestTagsPreview.map((t) => (
                 <span key={t} style={tagPill}>
                   {t}
-
                   <button
                     onClick={() => removeFromPreview(t)}
                     disabled={!canEdit}
@@ -1235,92 +1220,42 @@ export default function GateControllerPage({
           </div>
         )}
       </section>
-            {/* Aircraft loading summary */}
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 12,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
+
+      {/* Aircraft loading summary */}
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h3 style={{ margin: 0 }}>Aircraft Loading</h3>
-
-            <p
-              style={{
-                margin: "6px 0 0",
-                color: "#6b7280",
-                fontSize: "0.9rem",
-              }}
-            >
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
               Bags scanned in aircraft by zone.
             </p>
           </div>
 
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-              Aircraft scanned
-            </div>
-
-            <div style={{ fontSize: "1.6rem", fontWeight: 800 }}>
-              {aircraftLoading ? "…" : aircraftTotal}
-            </div>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Aircraft scanned</div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 800 }}>{aircraftLoading ? "…" : aircraftTotal}</div>
           </div>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))",
-            gap: 10,
-            marginTop: 12,
-          }}
-        >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginTop: 12 }}>
           <InfoCard label="Zone 1" value={aircraftLoading ? "…" : zones[1]} />
           <InfoCard label="Zone 2" value={aircraftLoading ? "…" : zones[2]} />
           <InfoCard label="Zone 3" value={aircraftLoading ? "…" : zones[3]} />
           <InfoCard label="Zone 4" value={aircraftLoading ? "…" : zones[4]} />
         </div>
 
-        <div
-          style={{
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: "1px solid #e5e7eb",
-            display: "flex",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <div style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-            Gate checked total:{" "}
-            <strong>
-              {checkedBagsTotal === null ? "—" : checkedBagsTotal}
-            </strong>
+            Gate checked total: <strong>{checkedBagsTotal === null ? "—" : checkedBagsTotal}</strong>
           </div>
 
           <div style={{ fontSize: "0.95rem" }}>
             {checkedBagsTotal === null ? (
-              <span style={{ color: "#6b7280" }}>
-                Enter Gate total to calculate missing bags.
-              </span>
+              <span style={{ color: "#6b7280" }}>Enter Gate total to calculate missing bags.</span>
             ) : missing === 0 ? (
-              <span style={{ color: "#16a34a", fontWeight: 700 }}>
-                All bags accounted for ✅
-              </span>
+              <span style={{ color: "#16a34a", fontWeight: 700 }}>All bags accounted for ✅</span>
             ) : (
-              <span style={{ color: "#b91c1c", fontWeight: 800 }}>
-                Missing: {missing}
-              </span>
+              <span style={{ color: "#b91c1c", fontWeight: 800 }}>Missing: {missing}</span>
             )}
           </div>
         </div>
@@ -1328,8 +1263,6 @@ export default function GateControllerPage({
     </div>
   );
 }
-
-/* ---------- Styles ---------- */
 
 function btnStatus(canEdit) {
   return {
@@ -1364,38 +1297,14 @@ const tagPill = {
   border: "1px solid #e5e7eb",
   background: "#f9fafb",
   fontSize: "0.82rem",
-  fontFamily:
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
 };
 
 function InfoCard({ label, value }) {
   return (
-    <div
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 12,
-        padding: 10,
-        background: "white",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "0.8rem",
-          color: "#6b7280",
-        }}
-      >
-        {label}
-      </div>
-
-      <div
-        style={{
-          fontSize: "1.1rem",
-          fontWeight: 800,
-        }}
-      >
-        {value}
-      </div>
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 10, background: "white" }}>
+      <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>{label}</div>
+      <div style={{ fontSize: "1.1rem", fontWeight: 800 }}>{value}</div>
     </div>
   );
 }
-      
