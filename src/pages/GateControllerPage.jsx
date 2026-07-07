@@ -10,7 +10,8 @@ import {
   writeBatch,
   query,
   orderBy,
-  deleteDoc,
+where,
+deleteDoc,
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 
