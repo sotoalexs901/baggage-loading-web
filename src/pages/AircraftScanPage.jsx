@@ -7,6 +7,8 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  deleteDoc,
+  addDoc,
 } from "firebase/firestore";
 import { db, storage } from "../firebase";
 import Modal from "../components/Modal.jsx";
@@ -21,13 +23,14 @@ function normalizeRole(role) {
 }
 
 function cleanTagValue(v) {
-  // ✅ quita saltos de línea (scanners a veces mandan \n o \r)
   return String(v || "").replace(/[\r\n]+/g, "").trim();
 }
 
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
-  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED" ? v : "OPEN";
+  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED"
+    ? v
+    : "OPEN";
 }
 
 function safeStr(v, fallback = "-") {
@@ -35,7 +38,6 @@ function safeStr(v, fallback = "-") {
   return s ? s : fallback;
 }
 
-// ✅ Ajusta si tus bagtags son siempre de 6–12 dígitos
 const MIN_TAG_LEN = 6;
 const AUTO_SUBMIT_IDLE_MS = 90;
 
@@ -46,42 +48,38 @@ export default function AircraftScanPage({ flightId, user }) {
   const canCompleteLoading =
     role === "supervisor" || role === "duty_manager" || role === "station_manager";
 
+  const canReopenOrOffload =
+    role === "supervisor" || role === "duty_manager" || role === "station_manager";
+
   const [flight, setFlight] = useState(null);
   const [flightLoading, setFlightLoading] = useState(true);
 
-  // Zone selection
   const [zone, setZone] = useState(1);
 
-  // Scan input
   const [tagInput, setTagInput] = useState("");
   const inputRef = useRef(null);
 
-  // UI state
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
-  // Live list/count
   const [scans, setScans] = useState([]);
   const [loadingScans, setLoadingScans] = useState(true);
 
-  // Bagroom total (only count)
   const [bagroomTotal, setBagroomTotal] = useState(0);
   const [loadingBagroomTotal, setLoadingBagroomTotal] = useState(true);
 
-  // Strict manifest mode (read from flight.strictManifest)
   const [strictManifest, setStrictManifest] = useState(false);
 
-  // Completion
   const [completing, setCompleting] = useState(false);
   const [completeMsg, setCompleteMsg] = useState("");
 
-  // Export
   const [exporting, setExporting] = useState(false);
 
-  // Modal
+  const [reopening, setReopening] = useState(false);
+  const [offloadingTag, setOffloadingTag] = useState("");
+
   const { modal, show, close } = useModal();
 
-  // ✅ Auto-submit control
   const autoTimerRef = useRef(null);
   const isSubmittingRef = useRef(false);
 
@@ -96,7 +94,55 @@ export default function AircraftScanPage({ flightId, user }) {
     });
   };
 
-  // Load flight
+  const promptReason = ({ title, message, confirmText, tone = "warning", onConfirm }) => {
+    let reasonValue = "";
+
+    show({
+      title,
+      tone,
+      showCancel: true,
+      confirmText,
+      cancelText: "Cancel",
+      content: (
+        <div>
+          <div style={{ whiteSpace: "pre-wrap", marginBottom: 10 }}>{message}</div>
+
+          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+            Reason required
+          </label>
+
+          <textarea
+            autoFocus
+            rows={4}
+            placeholder="Explain the reason..."
+            onChange={(e) => {
+              reasonValue = e.target.value;
+            }}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              resize: "vertical",
+            }}
+          />
+        </div>
+      ),
+      onCancel: close,
+      onConfirm: async () => {
+        const reason = String(reasonValue || "").trim();
+
+        if (!reason) {
+          popup("Reason required", "Please enter a reason before continuing.", "warning");
+          return;
+        }
+
+        close();
+        await onConfirm(reason);
+      },
+    });
+  };
+    // Load flight
   useEffect(() => {
     if (!flightId) return;
 
@@ -111,6 +157,7 @@ export default function AircraftScanPage({ flightId, user }) {
           setFlightLoading(false);
           return;
         }
+
         const data = { id: snap.id, ...snap.data() };
         setFlight(data);
 
@@ -141,11 +188,13 @@ export default function AircraftScanPage({ flightId, user }) {
       ref,
       (snap) => {
         const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
         rows.sort((a, b) => {
           const ta = a.createdAt?.seconds || 0;
           const tb = b.createdAt?.seconds || 0;
           return tb - ta;
         });
+
         setScans(rows);
         setLoadingScans(false);
       },
@@ -186,7 +235,6 @@ export default function AircraftScanPage({ flightId, user }) {
     if (inputRef.current) inputRef.current.focus();
   }, []);
 
-  // cleanup timer
   useEffect(() => {
     return () => {
       if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
@@ -194,14 +242,14 @@ export default function AircraftScanPage({ flightId, user }) {
   }, []);
 
   const isLoadingCompleted =
-    Boolean(flight?.aircraftLoadingCompleted) || normalizeStatus(flight?.status) === "LOADED";
+    Boolean(flight?.aircraftLoadingCompleted) ||
+    normalizeStatus(flight?.status) === "LOADED";
 
-  /**
-   * ✅ Auto status: first aircraft scan sets LOADING (unless already LOADED)
-   */
   const ensureStatusLoading = async () => {
     if (!flight) return;
+
     const current = normalizeStatus(flight.status);
+
     if (current === "LOADED") return;
     if (current === "LOADING") return;
 
@@ -220,10 +268,6 @@ export default function AircraftScanPage({ flightId, user }) {
     );
   };
 
-  /**
-   * ✅ Cross-flight detection:
-   * Global index: bagTags/{tag}
-   */
   const validateAgainstOtherFlight = async (tag) => {
     const tagRef = doc(db, "bagTags", tag);
     const snap = await getDoc(tagRef);
@@ -231,6 +275,7 @@ export default function AircraftScanPage({ flightId, user }) {
     if (!snap.exists()) return { ok: true, firstTime: true };
 
     const existing = snap.data();
+
     if (existing.flightId && existing.flightId !== flightId) {
       const currentFlightNumber = flight?.flightNumber || flightId;
       const currentDate = flight?.flightDate || "(no date)";
@@ -250,10 +295,6 @@ export default function AircraftScanPage({ flightId, user }) {
     return { ok: true, firstTime: false };
   };
 
-  /**
-   * ✅ Strict manifest validation:
-   * Requires doc to exist: flights/{flightId}/allowedBagTags/{tag}
-   */
   const validateAgainstManifest = async (tag) => {
     if (!strictManifest) return { ok: true };
 
@@ -279,6 +320,7 @@ export default function AircraftScanPage({ flightId, user }) {
 
   const indexTagToThisFlight = async (tag, zoneNum) => {
     const tagRef = doc(db, "bagTags", tag);
+
     await setDoc(
       tagRef,
       {
@@ -299,9 +341,16 @@ export default function AircraftScanPage({ flightId, user }) {
     const scanRef = doc(db, "flights", flightId, "aircraftScans", tag);
 
     const existing = await getDoc(scanRef);
+
     if (existing.exists()) {
       const prev = existing.data();
-      popup("Duplicate scan", `⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}`, "warning");
+
+      popup(
+        "Duplicate scan",
+        `⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}`,
+        "warning"
+      );
+
       return false;
     }
 
@@ -318,6 +367,188 @@ export default function AircraftScanPage({ flightId, user }) {
 
     return true;
   };
+    const saveActionReport = async ({ type, reason, tag = null, zoneNum = null, extra = {} }) => {
+    await addDoc(collection(db, "flights", flightId, "reports"), {
+      type,
+      reason,
+      tag,
+      zone: zoneNum,
+      createdAt: serverTimestamp(),
+      createdBy: {
+        userId: user?.id || null,
+        username: user?.username || null,
+        role: user?.role || null,
+      },
+      flightSnapshot: {
+        flightNumber: flight?.flightNumber || null,
+        flightDate: flight?.flightDate || null,
+        gate: flight?.gate || null,
+        aircraftType: flight?.aircraftType || null,
+        status: flight?.status || null,
+      },
+      ...extra,
+    });
+  };
+
+  const handleReopenFlight = async () => {
+    if (!canReopenOrOffload) {
+      popup("No permission", "You don't have permission to reopen this flight.", "warning");
+      return;
+    }
+
+    if (!isLoadingCompleted) {
+      popup("Not completed", "This flight is already open for loading.", "info");
+      return;
+    }
+
+    promptReason({
+      title: "Reopen Flight",
+      tone: "warning",
+      confirmText: "Reopen Flight",
+      message:
+        `You are about to reopen this flight for loading.\n\n` +
+        `Flight: ${flight?.flightNumber || flightId}\n` +
+        `Date: ${flight?.flightDate || "-"}\n\n` +
+        `Please enter the reason.`,
+      onConfirm: async (reason) => {
+        try {
+          setReopening(true);
+          setErr("");
+          setMsg("");
+
+          await saveActionReport({
+            type: "REOPEN_FLIGHT",
+            reason,
+            extra: {
+              previousStatus: flight?.status || null,
+              previousAircraftLoadingCompleted: Boolean(flight?.aircraftLoadingCompleted),
+              previousAircraftLoadedBags: flight?.aircraftLoadedBags ?? null,
+            },
+          });
+
+          await setDoc(
+            doc(db, "flights", flightId),
+            {
+              status: "LOADING",
+              aircraftLoadingCompleted: false,
+              aircraftLoadingCompletedAt: null,
+              aircraftLoadingCompletedBy: null,
+              reopenedAt: serverTimestamp(),
+              reopenedReason: reason,
+              reopenedBy: {
+                userId: user?.id || null,
+                username: user?.username || null,
+                role: user?.role || null,
+              },
+              statusUpdatedAt: serverTimestamp(),
+              statusUpdatedBy: {
+                userId: user?.id || null,
+                username: user?.username || null,
+                role: user?.role || null,
+              },
+            },
+            { merge: true }
+          );
+
+          setMsg("✅ Flight reopened. Reason saved in reports.");
+        } catch (e) {
+          console.error(e);
+          setErr("Could not reopen flight. Check Firestore rules/connection.");
+        } finally {
+          setReopening(false);
+        }
+      },
+    });
+  };
+
+  const handleOffloadBag = async (scan) => {
+    if (!canReopenOrOffload) {
+      popup("No permission", "You don't have permission to offload bags.", "warning");
+      return;
+    }
+
+    const tag = String(scan?.tag || scan?.id || "").trim();
+    const zoneNum = scan?.zone ?? null;
+
+    if (!tag) return;
+
+    promptReason({
+      title: "Offload Bag",
+      tone: "danger",
+      confirmText: "Offload Bag",
+      message:
+        `You are about to offload this bag from aircraft.\n\n` +
+        `Bag Tag: ${tag}\n` +
+        `Zone: ${zoneNum ?? "-"}\n\n` +
+        `Please enter the reason.`,
+      onConfirm: async (reason) => {
+        try {
+          setOffloadingTag(tag);
+          setErr("");
+          setMsg("");
+
+          await saveActionReport({
+            type: "OFFLOAD_BAG",
+            reason,
+            tag,
+            zoneNum,
+            extra: {
+              previousScan: scan || null,
+            },
+          });
+
+          await deleteDoc(doc(db, "flights", flightId, "aircraftScans", tag));
+
+          await setDoc(
+            doc(db, "bagTags", tag),
+            {
+              tag,
+              flightId,
+              flightNumber: flight?.flightNumber || null,
+              flightDate: flight?.flightDate || null,
+              lastSeenAt: serverTimestamp(),
+              lastSeenLocation: "offloaded",
+              lastSeenZone: zoneNum,
+              offloadedAt: serverTimestamp(),
+              offloadedReason: reason,
+              offloadedBy: {
+                userId: user?.id || null,
+                username: user?.username || null,
+                role: user?.role || null,
+              },
+            },
+            { merge: true }
+          );
+
+          if (isLoadingCompleted) {
+            await setDoc(
+              doc(db, "flights", flightId),
+              {
+                status: "LOADING",
+                aircraftLoadingCompleted: false,
+                aircraftLoadingCompletedAt: null,
+                aircraftLoadingCompletedBy: null,
+                statusUpdatedAt: serverTimestamp(),
+                statusUpdatedBy: {
+                  userId: user?.id || null,
+                  username: user?.username || null,
+                  role: user?.role || null,
+                },
+              },
+              { merge: true }
+            );
+          }
+
+          setMsg(`✅ Bag offloaded: ${tag}. Reason saved in reports.`);
+        } catch (e) {
+          console.error(e);
+          setErr("Could not offload bag. Check Firestore rules/connection.");
+        } finally {
+          setOffloadingTag("");
+        }
+      },
+    });
+  };
 
   const handleScanSubmit = async (forcedTag) => {
     if (isSubmittingRef.current) return;
@@ -327,7 +558,7 @@ export default function AircraftScanPage({ flightId, user }) {
     setCompleteMsg("");
 
     if (isLoadingCompleted) {
-      popup("Locked", "⚠️ Loading is already completed for this flight. Scanning is locked.", "warning");
+      popup("Locked", "⚠️ Loading is already completed for this flight. Reopen flight first.", "warning");
       setTagInput("");
       return;
     }
@@ -381,14 +612,11 @@ export default function AircraftScanPage({ flightId, user }) {
       isSubmittingRef.current = false;
     }
   };
-
-  // ✅ Auto-submit cuando el scanner termina (idle)
-  const scheduleAutoSubmit = (nextValue) => {
+    const scheduleAutoSubmit = (nextValue) => {
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
 
     const cleaned = cleanTagValue(nextValue);
 
-    // si el scanner manda newline, submit inmediato
     if (/[\r\n]/.test(String(nextValue || "")) && cleaned.length >= MIN_TAG_LEN) {
       handleScanSubmit(cleaned);
       return;
@@ -402,7 +630,10 @@ export default function AircraftScanPage({ flightId, user }) {
   const handleChange = (e) => {
     const v = e.target.value;
     setTagInput(v);
-    if (!isLoadingCompleted) scheduleAutoSubmit(v);
+
+    if (!isLoadingCompleted) {
+      scheduleAutoSubmit(v);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -417,13 +648,14 @@ export default function AircraftScanPage({ flightId, user }) {
       ? Math.max(0, flight.checkedBagsTotal - scans.length)
       : null;
 
-  // ----- PDF helpers -----
   const computeZones = (rows) => {
     const z = { 1: 0, 2: 0, 3: 0, 4: 0 };
+
     for (const r of rows) {
       const zn = Number(r.zone);
       if (zn >= 1 && zn <= 4) z[zn] += 1;
     }
+
     return z;
   };
 
@@ -446,7 +678,9 @@ export default function AircraftScanPage({ flightId, user }) {
     const rampSupervisor = safeStr(user?.username, "-");
 
     const gateTotal =
-      typeof flightDoc?.checkedBagsTotal === "number" ? flightDoc.checkedBagsTotal : null;
+      typeof flightDoc?.checkedBagsTotal === "number"
+        ? flightDoc.checkedBagsTotal
+        : null;
 
     const aircraftTotal = aircraftRows.length;
     const zones = computeZones(aircraftRows);
@@ -488,7 +722,11 @@ export default function AircraftScanPage({ flightId, user }) {
     const tags = aircraftRows
       .slice()
       .sort((a, b) => String(a.tag).localeCompare(String(b.tag)))
-      .map((r) => [String(r.tag), `Z${r.zone ?? "-"}`, r.scannedBy?.username || "-"]);
+      .map((r) => [
+        String(r.tag),
+        `Z${r.zone ?? "-"}`,
+        r.scannedBy?.username || "-",
+      ]);
 
     autoTable(pdf, {
       startY: pdf.lastAutoTable.finalY + 8,
@@ -499,7 +737,11 @@ export default function AircraftScanPage({ flightId, user }) {
     });
 
     pdf.setFontSize(9);
-    pdf.text(`Generated: ${new Date().toLocaleString()}`, 14, pdf.lastAutoTable.finalY + 10);
+    pdf.text(
+      `Generated: ${new Date().toLocaleString()}`,
+      14,
+      pdf.lastAutoTable.finalY + 10
+    );
 
     return pdf;
   };
@@ -526,6 +768,7 @@ export default function AircraftScanPage({ flightId, user }) {
     });
 
     const url = await getDownloadURL(r);
+
     return { path, url, fileName };
   };
 
@@ -549,10 +792,11 @@ export default function AircraftScanPage({ flightId, user }) {
         bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
       });
 
-      const downloadName = `BLCS_${safeStr(flight.flightNumber, flightId)}_${safeStr(
-        flight.flightDate,
-        "date"
-      )}.pdf`;
+      const downloadName = `BLCS_${safeStr(
+        flight.flightNumber,
+        flightId
+      )}_${safeStr(flight.flightDate, "date")}.pdf`;
+
       pdfDoc.save(downloadName);
 
       const uploaded = await uploadPdfToStorage(pdfDoc);
@@ -560,6 +804,7 @@ export default function AircraftScanPage({ flightId, user }) {
       await setDoc(
         doc(db, "flights", flightId, "reports", uploaded.fileName),
         {
+          type: "PDF_REPORT",
           createdAt: serverTimestamp(),
           createdBy: {
             userId: user?.id || null,
@@ -570,7 +815,10 @@ export default function AircraftScanPage({ flightId, user }) {
           storagePath: uploaded.path,
           downloadUrl: uploaded.url,
           snapshot: {
-            gateTotal: typeof flight?.checkedBagsTotal === "number" ? flight.checkedBagsTotal : null,
+            gateTotal:
+              typeof flight?.checkedBagsTotal === "number"
+                ? flight.checkedBagsTotal
+                : null,
             bagroomTotal: loadingBagroomTotal ? null : bagroomTotal,
             aircraftTotal: aircraftRows.length,
           },
@@ -598,8 +846,7 @@ export default function AircraftScanPage({ flightId, user }) {
       setExporting(false);
     }
   };
-
-  const handleLoadingCompleted = async () => {
+    const handleLoadingCompleted = async () => {
     setCompleteMsg("");
 
     if (!flight) {
@@ -644,6 +891,7 @@ export default function AircraftScanPage({ flightId, user }) {
       onCancel: close,
       onConfirm: async () => {
         close();
+
         try {
           setCompleting(true);
 
@@ -670,12 +918,25 @@ export default function AircraftScanPage({ flightId, user }) {
             { merge: true }
           );
 
+          await saveActionReport({
+            type: "LOADING_COMPLETED",
+            reason: "Aircraft loading completed.",
+            extra: {
+              aircraftLoadedBags: aircraftTotal,
+              gateCheckedTotal: checkedTotal,
+            },
+          });
+
           await exportReportPdf();
 
           setCompleteMsg("✅ Aircraft loading completed successfully. Report saved.");
         } catch (e) {
           console.error(e);
-          popup("Error", "Failed to mark loading completed / export PDF. Check connection/rules.", "danger");
+          popup(
+            "Error",
+            "Failed to mark loading completed / export PDF. Check connection/rules.",
+            "danger"
+          );
         } finally {
           setCompleting(false);
         }
@@ -688,9 +949,11 @@ export default function AircraftScanPage({ flightId, user }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ margin: 0 }}>Aircraft Scan</h2>
+
           <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-            Scan bags while loading by zone (1–4).
+            Scan bags while loading by zone 1–4.
           </p>
+
           {isLoadingCompleted && (
             <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
               ✅ Loading Completed
@@ -700,32 +963,78 @@ export default function AircraftScanPage({ flightId, user }) {
 
         <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
           <div>
-            Flight: <strong>{flightLoading ? "…" : (flight?.flightNumber || flightId)}</strong>
+            Flight: <strong>{flightLoading ? "…" : flight?.flightNumber || flightId}</strong>
           </div>
+
           <div style={{ color: "#6b7280" }}>
-            Date: <strong>{flightLoading ? "…" : (flight?.flightDate || "-")}</strong>
+            Date: <strong>{flightLoading ? "…" : flight?.flightDate || "-"}</strong>
           </div>
         </div>
       </div>
 
       <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-        {/* Left */}
+      {canReopenOrOffload && isLoadingCompleted && (
+        <section
+          style={{
+            border: "1px solid #f59e0b",
+            borderRadius: 12,
+            padding: 12,
+            background: "#fef3c7",
+            marginBottom: 14,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <h3 style={{ margin: 0, color: "#92400e" }}>Flight Locked</h3>
+              <p style={{ margin: "6px 0 0", color: "#92400e", fontSize: "0.9rem" }}>
+                To scan again or offload bags after completion, reopen the flight with a reason.
+              </p>
+            </div>
+
+            <button
+              onClick={handleReopenFlight}
+              disabled={reopening}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #f59e0b",
+                background: "#f59e0b",
+                color: "white",
+                fontWeight: 900,
+                cursor: reopening ? "not-allowed" : "pointer",
+                opacity: reopening ? 0.7 : 1,
+              }}
+            >
+              {reopening ? "Reopening…" : "Reopen Flight"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
           <h3 style={{ margin: 0 }}>Scan</h3>
+
           <p style={{ margin: "6px 0 10px", color: "#6b7280", fontSize: "0.9rem" }}>
-            Select zone, then scan bag tag. (Auto-save — no Enter needed)
+            Select zone, then scan bag tag. Auto-save is enabled.
           </p>
 
           <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
             Zone
           </label>
+
           <select
             value={zone}
             onChange={(e) => setZone(Number(e.target.value))}
             disabled={isLoadingCompleted}
-            style={{ width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid #d1d5db" }}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isLoadingCompleted ? "#f3f4f6" : "white",
+            }}
           >
             <option value={1}>Zone 1</option>
             <option value={2}>Zone 2</option>
@@ -736,13 +1045,14 @@ export default function AircraftScanPage({ flightId, user }) {
           <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginTop: 12, marginBottom: 6 }}>
             Bag Tag
           </label>
+
           <input
             ref={inputRef}
             value={tagInput}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             disabled={isLoadingCompleted}
-            placeholder={isLoadingCompleted ? "Loading completed (locked)" : "Scan bag tag…"}
+            placeholder={isLoadingCompleted ? "Loading completed - reopen first" : "Scan bag tag…"}
             style={{
               width: "100%",
               padding: "10px 12px",
@@ -752,7 +1062,6 @@ export default function AircraftScanPage({ flightId, user }) {
             }}
           />
 
-          {/* Botón queda como fallback manual */}
           <button
             onClick={() => handleScanSubmit()}
             disabled={isLoadingCompleted}
@@ -783,8 +1092,8 @@ export default function AircraftScanPage({ flightId, user }) {
               background: "#111827",
               color: "white",
               fontWeight: 900,
-              cursor: (exporting || !flight || loadingScans) ? "not-allowed" : "pointer",
-              opacity: (exporting || !flight || loadingScans) ? 0.7 : 1,
+              cursor: exporting || !flight || loadingScans ? "not-allowed" : "pointer",
+              opacity: exporting || !flight || loadingScans ? 0.7 : 1,
             }}
           >
             {exporting ? "Exporting…" : "Export PDF Report"}
@@ -798,14 +1107,18 @@ export default function AircraftScanPage({ flightId, user }) {
 
           {msg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem" }}>{msg}</p>}
           {err && <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.9rem" }}>{err}</p>}
-          {completeMsg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>{completeMsg}</p>}
+          {completeMsg && (
+            <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>
+              {completeMsg}
+            </p>
+          )}
         </div>
 
-        {/* Right */}
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12 }}>
             <div>
-              <h3 style={{ margin: 0 }}>Aircraft scans</h3>
+              <h3 style={{ margin: 0 }}>Aircraft Scans</h3>
+
               <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
                 Total scanned: <strong>{loadingScans ? "…" : scans.length}</strong>
               </p>
@@ -833,19 +1146,19 @@ export default function AircraftScanPage({ flightId, user }) {
                     padding: "10px 12px",
                     borderRadius: 12,
                     border: "none",
-                    background: (completing || isLoadingCompleted) ? "#86efac" : "#16a34a",
+                    background: completing || isLoadingCompleted ? "#86efac" : "#16a34a",
                     color: "white",
                     fontWeight: 900,
-                    cursor: (completing || isLoadingCompleted) ? "not-allowed" : "pointer",
+                    cursor: completing || isLoadingCompleted ? "not-allowed" : "pointer",
                   }}
                 >
-                  {isLoadingCompleted ? "Completed" : (completing ? "Checking…" : "Loading Completed")}
+                  {isLoadingCompleted ? "Completed" : completing ? "Checking…" : "Loading Completed"}
                 </button>
               </div>
             )}
           </div>
 
-          <div style={{ marginTop: 12, maxHeight: 340, overflow: "auto", borderTop: "1px solid #e5e7eb" }}>
+          <div style={{ marginTop: 12, maxHeight: 360, overflow: "auto", borderTop: "1px solid #e5e7eb" }}>
             {loadingScans ? (
               <p style={{ color: "#6b7280", paddingTop: 10 }}>Loading…</p>
             ) : scans.length === 0 ? (
@@ -856,26 +1169,58 @@ export default function AircraftScanPage({ flightId, user }) {
                   <tr style={{ background: "#f9fafb" }}>
                     <th style={th}>Tag</th>
                     <th style={th}>Zone</th>
-                    <th style={{ ...th, textAlign: "right" }}>User</th>
+                    <th style={th}>User</th>
+                    <th style={{ ...th, textAlign: "right" }}>Action</th>
                   </tr>
                 </thead>
+
                 <tbody>
-                  {scans.map((s) => (
-                    <tr key={s.id}>
-                      <td style={td}><strong>{s.tag}</strong></td>
-                      <td style={td}>{s.zone ?? "-"}</td>
-                      <td style={{ ...td, textAlign: "right", color: "#6b7280" }}>
-                        {s.scannedBy?.username || "-"}
-                      </td>
-                    </tr>
-                  ))}
+                  {scans.map((s) => {
+                    const tag = s.tag || s.id;
+                    const busy = offloadingTag === tag;
+
+                    return (
+                      <tr key={s.id}>
+                        <td style={td}>
+                          <strong>{tag}</strong>
+                        </td>
+
+                        <td style={td}>{s.zone ?? "-"}</td>
+
+                        <td style={{ ...td, color: "#6b7280" }}>
+                          {s.scannedBy?.username || "-"}
+                        </td>
+
+                        <td style={{ ...td, textAlign: "right" }}>
+                          {canReopenOrOffload && (
+                            <button
+                              onClick={() => handleOffloadBag(s)}
+                              disabled={busy}
+                              style={{
+                                padding: "5px 10px",
+                                borderRadius: 999,
+                                border: "1px solid #ef4444",
+                                background: "#ef4444",
+                                color: "white",
+                                fontWeight: 800,
+                                cursor: busy ? "not-allowed" : "pointer",
+                                opacity: busy ? 0.7 : 1,
+                              }}
+                            >
+                              {busy ? "Offloading…" : "Offload"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
           </div>
 
           <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-            Tip: ahora guarda automático al terminar el scan (ENTER opcional).
+            Tip: scans save automatically after the scanner finishes. Enter is optional.
           </p>
         </div>
       </div>
