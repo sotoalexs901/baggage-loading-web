@@ -5,7 +5,6 @@ import {
   onSnapshot,
   orderBy,
   query,
-  where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { db, functions } from "../firebase";
@@ -70,12 +69,12 @@ export default function ReportsPage({ flightId, flight, user }) {
   useEffect(() => {
     setSelectedFlightId(resolvedFlightId);
   }, [resolvedFlightId]);
-    useEffect(() => {
+
+  useEffect(() => {
     setLoadingFlights(true);
 
     const qRef = query(
       collection(db, "flights"),
-      where("status", "==", "LOADED"),
       orderBy("flightDate", "desc")
     );
 
@@ -87,7 +86,14 @@ export default function ReportsPage({ flightId, flight, user }) {
           .filter((f) => {
             const fd = String(f.flightDate || "");
             if (!fd) return false;
-            return fd >= dateFrom && fd <= dateTo;
+
+            const status = String(f.status || "").trim().toUpperCase();
+
+            return (
+              fd >= dateFrom &&
+              fd <= dateTo &&
+              (status === "LOADED" || status === "LOADING")
+            );
           });
 
         setLoadedFlights(list);
@@ -102,8 +108,7 @@ export default function ReportsPage({ flightId, flight, user }) {
 
     return () => unsub();
   }, [dateFrom, dateTo]);
-
-  useEffect(() => {
+    useEffect(() => {
     if (!selectedFlightId) {
       setRows([]);
       setLoadingReports(false);
@@ -175,7 +180,9 @@ export default function ReportsPage({ flightId, flight, user }) {
       });
 
       setDeleteMsg(
-        `Deleted ${res.data?.deletedFlights || 0} loaded flight(s) for ${res.data?.month || deleteMonth}.`
+        `Deleted ${res.data?.deletedFlights || 0} loaded flight(s) for ${
+          res.data?.month || deleteMonth
+        }.`
       );
 
       if (selectedFlightId) {
@@ -194,46 +201,57 @@ export default function ReportsPage({ flightId, flight, user }) {
       <h2 style={{ marginTop: 0 }}>Flight Reports</h2>
 
       <p style={{ color: "#6b7280", marginTop: 6 }}>
-        View loaded flights, reports, reopen/offload logs, and exported PDFs.
+        View loaded/reopened flights, reports, reopen/offload logs, and exported PDFs.
       </p>
-            <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginTop: 14 }}>
-        <h3 style={{ margin: 0 }}>Loaded Flights</h3>
+
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginTop: 14 }}>
+        <h3 style={{ margin: 0 }}>Loaded / Reopened Flights</h3>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
           <div>
             <label style={label}>From</label>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={input} />
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              style={input}
+            />
           </div>
 
           <div>
             <label style={label}>To</label>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={input} />
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              style={input}
+            />
           </div>
         </div>
 
         <div style={{ marginTop: 12 }}>
           {loadingFlights ? (
-            <p style={{ color: "#6b7280" }}>Loading loaded flights…</p>
+            <p style={{ color: "#6b7280" }}>Loading flights…</p>
           ) : loadedFlights.length === 0 ? (
-            <p style={{ color: "#6b7280" }}>No loaded flights found for this date range.</p>
+            <p style={{ color: "#6b7280" }}>No LOADED or LOADING flights found for this date range.</p>
           ) : (
             <select
               value={selectedFlightId}
               onChange={(e) => setSelectedFlightId(e.target.value)}
               style={{ ...input, width: "100%" }}
             >
-              <option value="">Select loaded flight…</option>
+              <option value="">Select flight…</option>
+
               {loadedFlights.map((f) => (
                 <option key={f.id} value={f.id}>
-                  {f.flightDate || "-"} · {f.flightNumber || f.id} · {f.gate || "-"}
+                  {f.flightDate || "-"} · {f.flightNumber || f.id} · {f.gate || "-"} · {f.status || "-"}
                 </option>
               ))}
             </select>
           )}
         </div>
       </section>
-
-      {canDeleteMonth && (
+            {canDeleteMonth && (
         <section style={{ border: "1px solid #fecaca", borderRadius: 12, padding: 12, marginTop: 14, background: "#fef2f2" }}>
           <h3 style={{ margin: 0, color: "#991b1b" }}>Delete Loaded Flights by Month</h3>
 
@@ -280,12 +298,12 @@ export default function ReportsPage({ flightId, flight, user }) {
 
         {selectedFlight && (
           <p style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-            Selected: <strong>{selectedFlight.flightNumber}</strong> · {selectedFlight.flightDate}
+            Selected: <strong>{selectedFlight.flightNumber}</strong> · {selectedFlight.flightDate} · {selectedFlight.status}
           </p>
         )}
 
         {!selectedFlightId ? (
-          <p style={{ color: "#6b7280", marginTop: 12 }}>Select a loaded flight first.</p>
+          <p style={{ color: "#6b7280", marginTop: 12 }}>Select a flight first.</p>
         ) : loadingReports ? (
           <p style={{ color: "#6b7280", marginTop: 12 }}>Loading reports…</p>
         ) : rows.length === 0 ? (
@@ -338,7 +356,12 @@ export default function ReportsPage({ flightId, flight, user }) {
 
                   <td style={{ ...td, textAlign: "right" }}>
                     {r.downloadUrl ? (
-                      <a href={r.downloadUrl} target="_blank" rel="noreferrer" style={{ fontWeight: 800 }}>
+                      <a
+                        href={r.downloadUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ fontWeight: 800 }}
+                      >
                         Open PDF
                       </a>
                     ) : (
