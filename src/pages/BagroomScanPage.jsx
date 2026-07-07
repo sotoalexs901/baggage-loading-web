@@ -20,6 +20,10 @@ function cleanTagValue(v) {
   return String(v || "").replace(/[\r\n]+/g, "").trim();
 }
 
+function normalizeCartNumber(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
 
@@ -31,8 +35,6 @@ function normalizeStatus(s) {
 const MIN_TAG_LEN = 6;
 const AUTO_SUBMIT_IDLE_MS = 90;
 
-const CART_OPTIONS = ["1", "2", "3", "4", "5", "6", "BULK", "LATE"];
-
 export default function BagroomScanPage({ flightId, user }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
   const isGateController = role === "gate_controller";
@@ -43,6 +45,8 @@ export default function BagroomScanPage({ flightId, user }) {
   const [cartNumber, setCartNumber] = useState(
     localStorage.getItem(`bagroomCart_${flightId}`) || ""
   );
+
+  const selectedCart = normalizeCartNumber(cartNumber);
 
   const [tagInput, setTagInput] = useState("");
   const inputRef = useRef(null);
@@ -71,13 +75,11 @@ export default function BagroomScanPage({ flightId, user }) {
     });
   };
 
-  const selectedCart = String(cartNumber || "").trim();
-
   const groupedByCart = useMemo(() => {
     const groups = {};
 
     for (const scan of scans) {
-      const cart = String(scan.cartNumber || "NO CART").trim() || "NO CART";
+      const cart = normalizeCartNumber(scan.cartNumber) || "NO CART";
 
       if (!groups[cart]) {
         groups[cart] = [];
@@ -169,237 +171,225 @@ export default function BagroomScanPage({ flightId, user }) {
       }
     };
   }, []);
-  const isLoadingCompleted =
-  Boolean(flight?.aircraftLoadingCompleted) ||
-  normalizeStatus(flight?.status) === "LOADED";
+    const isLoadingCompleted =
+    Boolean(flight?.aircraftLoadingCompleted) ||
+    normalizeStatus(flight?.status) === "LOADED";
 
-const ensureStatusReceiving = async () => {
-  if (!flight) return;
+  const ensureStatusReceiving = async () => {
+    if (!flight) return;
 
-  const current = normalizeStatus(flight.status);
+    const current = normalizeStatus(flight.status);
 
-  if (current === "LOADING" || current === "LOADED") return;
-  if (current === "RECEIVING") return;
+    if (current === "LOADING" || current === "LOADED") return;
+    if (current === "RECEIVING") return;
 
-  await setDoc(
-    doc(db, "flights", flightId),
-    {
-      status: "RECEIVING",
-      statusUpdatedAt: serverTimestamp(),
-      statusUpdatedBy: {
+    await setDoc(
+      doc(db, "flights", flightId),
+      {
+        status: "RECEIVING",
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
+      },
+      { merge: true }
+    );
+  };
+
+  const saveCartToFlight = async () => {
+    if (!selectedCart || !flightId) return;
+
+    const existingCarts = Array.isArray(flight?.cartNumbers)
+      ? flight.cartNumbers.map(normalizeCartNumber).filter(Boolean)
+      : [];
+
+    if (existingCarts.includes(selectedCart)) return;
+
+    const nextCarts = [...existingCarts, selectedCart].sort((a, b) =>
+      String(a).localeCompare(String(b), undefined, { numeric: true })
+    );
+
+    await setDoc(
+      doc(db, "flights", flightId),
+      {
+        cartNumbers: nextCarts,
+        cartNumbersUpdatedAt: serverTimestamp(),
+        cartNumbersUpdatedBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
+      },
+      { merge: true }
+    );
+  };
+
+  const validateAgainstManifest = async (tag) => {
+    if (!strictManifest) return { ok: true };
+
+    const allowRef = doc(db, "flights", flightId, "allowedBagTags", tag);
+    const allowSnap = await getDoc(allowRef);
+
+    if (!allowSnap.exists()) {
+      return {
+        ok: false,
+        message:
+          `❌ Bag tag NOT in flight manifest.\n\n` +
+          `Flight: ${flight?.flightNumber || flightId}\n` +
+          `Date: ${flight?.flightDate || "-"}`,
+      };
+    }
+
+    return { ok: true };
+  };
+
+  const validateAgainstOtherFlight = async (tag) => {
+    const tagRef = doc(db, "bagTags", tag);
+    const snap = await getDoc(tagRef);
+
+    if (!snap.exists()) return { ok: true, firstTime: true };
+
+    const existing = snap.data();
+
+    if (existing.flightId && existing.flightId !== flightId) {
+      return {
+        ok: false,
+        message:
+          `❌ Bag tag belongs to another flight/date.\n\n` +
+          `Current flight: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
+          `Registered flight: ${existing.flightNumber || existing.flightId} (${existing.flightDate || "-"})\n\n` +
+          `Do NOT accept this bag for this flight.`,
+      };
+    }
+
+    return { ok: true, firstTime: false };
+  };
+
+  const indexTag = async (tag) => {
+    const ref = doc(db, "bagTags", tag);
+
+    await setDoc(
+      ref,
+      {
+        tag,
+        flightId,
+        flightNumber: flight?.flightNumber || null,
+        flightDate: flight?.flightDate || null,
+        lastSeenAt: serverTimestamp(),
+        lastSeenLocation: "bagroom",
+        lastSeenCart: selectedCart || null,
+        firstSeenAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  };
+
+  const saveBagroomScan = async (tag) => {
+    const ref = doc(db, "flights", flightId, "bagroomScans", tag);
+    const existing = await getDoc(ref);
+
+    if (existing.exists()) {
+      popup("Duplicate scan", "⚠️ Bag already scanned in Bagroom.", "warning");
+      return false;
+    }
+
+    await setDoc(ref, {
+      tag,
+      cartNumber: selectedCart,
+      createdAt: serverTimestamp(),
+      scannedBy: {
         userId: user?.id || null,
         username: user?.username || null,
         role: user?.role || null,
       },
-    },
-    { merge: true }
-  );
-};
+    });
 
-const validateAgainstManifest = async (tag) => {
+    return true;
+  };
 
-  // Si todavía no existe manifiesto, permitir escanear
-  if (!strictManifest) {
-    return { ok: true };
-  }
+  const handleScanSubmit = async (forcedTag) => {
+    if (isSubmittingRef.current) return;
 
-  const allowRef = doc(
-    db,
-    "flights",
-    flightId,
-    "allowedBagTags",
-    tag
-  );
+    setMsg("");
+    setErr("");
 
-  const allowSnap = await getDoc(allowRef);
-
-  if (!allowSnap.exists()) {
-    return {
-      ok: false,
-      message:
-        `❌ Bag tag NOT in flight manifest.\n\n` +
-        `Flight: ${flight?.flightNumber || flightId}`
-    };
-  }
-
-  return { ok: true };
-};
-
-const validateAgainstOtherFlight = async (tag) => {
-
-  const tagRef = doc(db, "bagTags", tag);
-  const snap = await getDoc(tagRef);
-
-  if (!snap.exists()) {
-    return { ok: true };
-  }
-
-  const existing = snap.data();
-
-  if (
-    existing.flightId &&
-    existing.flightId !== flightId
-  ) {
-    return {
-      ok: false,
-      message:
-        `❌ Bag belongs to another flight.\n\n` +
-        `${existing.flightNumber || existing.flightId}`
-    };
-  }
-
-  return { ok: true };
-};
-
-const indexTag = async (tag) => {
-
-  await setDoc(
-    doc(db, "bagTags", tag),
-    {
-      tag,
-      flightId,
-      flightNumber: flight?.flightNumber || null,
-      flightDate: flight?.flightDate || null,
-      lastSeenLocation: "bagroom",
-      lastSeenAt: serverTimestamp(),
-      firstSeenAt: serverTimestamp(),
-    },
-    { merge: true }
-  );
-};
-
-const saveBagroomScan = async (tag) => {
-
-  const ref = doc(
-    db,
-    "flights",
-    flightId,
-    "bagroomScans",
-    tag
-  );
-
-  const existing = await getDoc(ref);
-
-  if (existing.exists()) {
-    popup(
-      "Duplicate",
-      "⚠️ Bag already scanned.",
-      "warning"
-    );
-    return false;
-  }
-
-  await setDoc(ref, {
-    tag,
-
-    // NUEVO
-    cartNumber: selectedCart,
-
-    createdAt: serverTimestamp(),
-
-    scannedBy: {
-      userId: user?.id || null,
-      username: user?.username || null,
-      role: user?.role || null,
-    },
-  });
-
-  return true;
-};
-
-const handleScanSubmit = async (forcedTag) => {
-
-  if (isSubmittingRef.current) return;
-
-  if (!selectedCart) {
-
-    popup(
-      "Cart Required",
-      "Please select a cart before scanning bags.",
-      "warning"
-    );
-
-    return;
-  }
-
-  setMsg("");
-  setErr("");
-
-  if (isLoadingCompleted) {
-    popup(
-      "Locked",
-      "Loading already completed.",
-      "warning"
-    );
-
-    return;
-  }
-
-  const tag = cleanTagValue(
-    forcedTag ?? tagInput
-  );
-
-  if (!tag) return;
-
-  if (tag.length < MIN_TAG_LEN) return;
-
-  try {
-
-    isSubmittingRef.current = true;
-
-    const manifest = await validateAgainstManifest(tag);
-
-    if (!manifest.ok) {
-      popup("Manifest", manifest.message, "danger");
+    if (isLoadingCompleted) {
+      popup(
+        "Locked",
+        "⚠️ Aircraft loading is already completed for this flight. Bagroom scanning is locked.",
+        "warning"
+      );
       setTagInput("");
       return;
     }
 
-    const cross = await validateAgainstOtherFlight(tag);
-
-    if (!cross.ok) {
-      popup("Wrong Flight", cross.message, "danger");
-      setTagInput("");
+    if (!selectedCart) {
+      popup(
+        "Cart required",
+        "Please enter or select a cart number before scanning bags.",
+        "warning"
+      );
       return;
     }
 
-    const ok = await saveBagroomScan(tag);
+    const tag = cleanTagValue(forcedTag ?? tagInput);
+    if (!tag) return;
 
-    if (!ok) {
+    if (tag.length < MIN_TAG_LEN) return;
+
+    try {
+      isSubmittingRef.current = true;
+
+      if (!flight) {
+        setErr("Flight not loaded.");
+        return;
+      }
+
+      const m = await validateAgainstManifest(tag);
+
+      if (!m.ok) {
+        popup("Not in manifest", m.message, "danger");
+        setTagInput("");
+        return;
+      }
+
+      const cross = await validateAgainstOtherFlight(tag);
+
+      if (!cross.ok) {
+        popup("Wrong flight/date", cross.message, "danger");
+        setTagInput("");
+        return;
+      }
+
+      await saveCartToFlight();
+
+      const ok = await saveBagroomScan(tag);
+
+      if (!ok) {
+        setTagInput("");
+        return;
+      }
+
+      await indexTag(tag);
+      await ensureStatusReceiving();
+
+      localStorage.setItem(`bagroomCart_${flightId}`, selectedCart);
+
+      setMsg(`Scanned ✅ Cart ${selectedCart} · ${tag}`);
       setTagInput("");
-      return;
+
+      if (inputRef.current) inputRef.current.focus();
+    } catch (e) {
+      console.error(e);
+      setErr("Scan failed. Check connection.");
+    } finally {
+      isSubmittingRef.current = false;
     }
+  };
 
-    await indexTag(tag);
-
-    await ensureStatusReceiving();
-
-    setMsg(
-      `Cart ${selectedCart} • ${tag} scanned`
-    );
-
-    setTagInput("");
-
-    localStorage.setItem(
-      `bagroomCart_${flightId}`,
-      selectedCart
-    );
-
-    inputRef.current?.focus();
-
-  } catch (e) {
-
-    console.error(e);
-
-    setErr("Scan failed.");
-
-  } finally {
-
-    isSubmittingRef.current = false;
-
-  }
-};
-    const scheduleAutoSubmit = (nextValue) => {
+  const scheduleAutoSubmit = (nextValue) => {
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
 
     const cleaned = cleanTagValue(nextValue);
@@ -417,7 +407,10 @@ const handleScanSubmit = async (forcedTag) => {
   const handleChange = (e) => {
     const v = e.target.value;
     setTagInput(v);
-    if (!isLoadingCompleted) scheduleAutoSubmit(v);
+
+    if (!isLoadingCompleted) {
+      scheduleAutoSubmit(v);
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -426,14 +419,13 @@ const handleScanSubmit = async (forcedTag) => {
       handleScanSubmit();
     }
   };
-
-  return (
+    return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ margin: 0 }}>Bagroom Scan</h2>
           <p style={{ marginTop: 6, color: "#6b7280", fontSize: "0.9rem" }}>
-            Select a cart, then scan bags loaded into that cart.
+            Enter the cart number, then scan bags loaded into that cart.
           </p>
 
           {isLoadingCompleted && (
@@ -457,40 +449,39 @@ const handleScanSubmit = async (forcedTag) => {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
-          <h3 style={{ marginTop: 0 }}>Cart Selection</h3>
+          <h3 style={{ marginTop: 0 }}>Cart Number</h3>
 
-          <label style={label}>Cart Number</label>
-
-          <select
+          <input
             value={cartNumber}
             onChange={(e) => {
-              setCartNumber(e.target.value);
-              localStorage.setItem(`bagroomCart_${flightId}`, e.target.value);
-              setTimeout(() => inputRef.current?.focus(), 100);
+              const value = normalizeCartNumber(e.target.value);
+              setCartNumber(value);
+              localStorage.setItem(`bagroomCart_${flightId}`, value);
             }}
             disabled={isLoadingCompleted}
-            style={input}
-          >
-            <option value="">Select cart…</option>
-            {CART_OPTIONS.map((cart) => (
-              <option key={cart} value={cart}>
-                Cart {cart}
-              </option>
-            ))}
-          </select>
+            placeholder="Enter cart number, e.g. 1, 2, 3, BULK"
+            style={{
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isLoadingCompleted ? "#f3f4f6" : "white",
+              fontWeight: 800,
+            }}
+          />
 
           <div
             style={{
-              marginTop: 12,
+              marginTop: 10,
               padding: 10,
               borderRadius: 12,
               border: "1px solid #e5e7eb",
               background: selectedCart ? "#DCFCE7" : "#FEF3C7",
               color: selectedCart ? "#166534" : "#92400E",
-              fontWeight: 800,
+              fontWeight: 900,
             }}
           >
-            {selectedCart ? `Active Cart: ${selectedCart}` : "Please select a cart before scanning."}
+            {selectedCart ? `Active Cart: ${selectedCart}` : "Cart number required before scanning."}
           </div>
 
           <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
@@ -507,11 +498,14 @@ const handleScanSubmit = async (forcedTag) => {
               isLoadingCompleted
                 ? "Loading completed (locked)"
                 : !selectedCart
-                  ? "Select cart first"
+                  ? "Enter cart number first"
                   : "Scan bag tag…"
             }
             style={{
-              ...input,
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
               background: isLoadingCompleted || !selectedCart ? "#f3f4f6" : "white",
             }}
           />
@@ -644,20 +638,6 @@ const handleScanSubmit = async (forcedTag) => {
     </div>
   );
 }
-
-const label = {
-  display: "block",
-  fontSize: "0.85rem",
-  color: "#374151",
-  marginBottom: 6,
-};
-
-const input = {
-  width: "100%",
-  padding: "12px",
-  borderRadius: 12,
-  border: "1px solid #d1d5db",
-};
 
 const th = {
   textAlign: "left",
