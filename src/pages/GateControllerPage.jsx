@@ -63,12 +63,6 @@ function normalizeCartNumber(value) {
   return String(value || "").trim().toUpperCase();
 }
 
-function sortCartNumbers(list) {
-  return [...list].sort((a, b) =>
-    String(a).localeCompare(String(b), undefined, { numeric: true })
-  );
-}
-
 function extractBagTagsFromText(text, { exactLen = 10 } = {}) {
   const src = String(text || "");
   const matches = src.match(/\d+/g) || [];
@@ -137,8 +131,6 @@ export default function GateControllerPage({
   gateControllerOnDuty,
   canEdit,
 }) {
-  const role = useMemo(() => normalizeRole(user?.role), [user]);
-
   const [gateControllers, setGateControllers] = useState([]);
   const [selectedGateController, setSelectedGateController] = useState(
     gateControllerOnDuty || localStorage.getItem("gateControllerOnDuty") || ""
@@ -148,10 +140,6 @@ export default function GateControllerPage({
   const [flight, setFlight] = useState(null);
   const [flightLoading, setFlightLoading] = useState(true);
 
-  const [cartInput, setCartInput] = useState("");
-  const [cartNumbers, setCartNumbers] = useState([]);
-  const [cartMsg, setCartMsg] = useState("");
-
   const [checkedTotalInput, setCheckedTotalInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
@@ -159,6 +147,10 @@ export default function GateControllerPage({
   const [aircraftTotal, setAircraftTotal] = useState(0);
   const [zones, setZones] = useState({ 1: 0, 2: 0, 3: 0, 4: 0 });
   const [aircraftLoading, setAircraftLoading] = useState(true);
+
+  const [bagroomScans, setBagroomScans] = useState([]);
+  const [loadingBagroomScans, setLoadingBagroomScans] = useState(true);
+  const [activeBagroomTab, setActiveBagroomTab] = useState("summary");
 
   const [manifestText, setManifestText] = useState("");
   const [manifestTagsPreview, setManifestTagsPreview] = useState([]);
@@ -184,8 +176,7 @@ export default function GateControllerPage({
   const [activeManifestTab, setActiveManifestTab] = useState("recent");
 
   const debounceRef = useRef(null);
-
-  useEffect(() => {
+    useEffect(() => {
     const loadGateControllers = async () => {
       try {
         const qGC = query(
@@ -207,7 +198,8 @@ export default function GateControllerPage({
 
     loadGateControllers();
   }, []);
-    useEffect(() => {
+
+  useEffect(() => {
     if (!flightId) return;
 
     setFlightLoading(true);
@@ -236,12 +228,6 @@ export default function GateControllerPage({
 
         if (typeof data.strictManifest === "boolean") {
           setStrictManifest(data.strictManifest);
-        }
-
-        if (Array.isArray(data.cartNumbers)) {
-          setCartNumbers(sortCartNumbers(data.cartNumbers.map(normalizeCartNumber)));
-        } else {
-          setCartNumbers([]);
         }
 
         if (data.gateControllerOnDuty) {
@@ -294,6 +280,40 @@ export default function GateControllerPage({
         setRecentAllowed([]);
         setAllManifestTags([]);
         setLoadingAllowed(false);
+      }
+    );
+
+    return () => unsub();
+  }, [flightId]);
+
+  useEffect(() => {
+    if (!flightId) return;
+
+    setLoadingBagroomScans(true);
+
+    const ref = collection(db, "flights", flightId, "bagroomScans");
+
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const rows = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
+        rows.sort((a, b) => {
+          const ta = a.createdAt?.seconds || 0;
+          const tb = b.createdAt?.seconds || 0;
+          return tb - ta;
+        });
+
+        setBagroomScans(rows);
+        setLoadingBagroomScans(false);
+      },
+      (e) => {
+        console.error("bagroomScans snapshot error:", e);
+        setBagroomScans([]);
+        setLoadingBagroomScans(false);
       }
     );
 
@@ -363,6 +383,10 @@ export default function GateControllerPage({
   const flightStatus = normalizeStatus(flight?.status);
   const statusStyle = STATUS_COLORS[flightStatus] || STATUS_COLORS.OPEN;
 
+  const manifestTagSet = useMemo(() => {
+    return new Set(allManifestTags);
+  }, [allManifestTags]);
+
   const loadedTagSet = useMemo(() => {
     return new Set(
       loadedAircraftTags
@@ -375,7 +399,37 @@ export default function GateControllerPage({
     return allManifestTags.filter((tag) => !loadedTagSet.has(tag));
   }, [allManifestTags, loadedTagSet]);
 
-  const ensureStatusReceiving = async () => {
+  const bagroomMatchedTags = useMemo(() => {
+    return bagroomScans
+      .map((s) => onlyDigits(s.tag || s.id))
+      .filter((tag) => isValidTag10(tag) && manifestTagSet.has(tag));
+  }, [bagroomScans, manifestTagSet]);
+
+  const bagroomNotInManifest = useMemo(() => {
+    return bagroomScans
+      .map((s) => ({
+        ...s,
+        cleanTag: onlyDigits(s.tag || s.id),
+      }))
+      .filter((s) => isValidTag10(s.cleanTag) && !manifestTagSet.has(s.cleanTag));
+  }, [bagroomScans, manifestTagSet]);
+
+  const bagroomByCart = useMemo(() => {
+    const groups = {};
+
+    for (const scan of bagroomScans) {
+      const cart = normalizeCartNumber(scan.cartNumber) || "NO CART";
+
+      if (!groups[cart]) {
+        groups[cart] = [];
+      }
+
+      groups[cart].push(scan);
+    }
+
+    return groups;
+  }, [bagroomScans]);
+    const ensureStatusReceiving = async () => {
     if (!flightId || !flight) return;
 
     const st = normalizeStatus(flight.status);
@@ -396,66 +450,7 @@ export default function GateControllerPage({
     );
   };
 
-  const saveCartNumbers = async (nextCarts) => {
-    try {
-      const cleanCarts = sortCartNumbers(
-        [...new Set(nextCarts.map(normalizeCartNumber).filter(Boolean))]
-      );
-
-      await setDoc(
-        doc(db, "flights", flightId),
-        {
-          cartNumbers: cleanCarts,
-          cartNumbersUpdatedAt: serverTimestamp(),
-          cartNumbersUpdatedBy: {
-            userId: user?.id || null,
-            username: user?.username || null,
-            role: user?.role || null,
-          },
-        },
-        { merge: true }
-      );
-
-      setCartNumbers(cleanCarts);
-      setCartMsg("Cart numbers saved ✅");
-      setTimeout(() => setCartMsg(""), 2000);
-    } catch (e) {
-      console.error(e);
-      setCartMsg("Could not save cart numbers.");
-    }
-  };
-
-  const addCartNumber = async () => {
-    const value = normalizeCartNumber(cartInput);
-
-    if (!canEdit) {
-      setCartMsg("You don't have permission to edit carts.");
-      return;
-    }
-
-    if (!value) {
-      setCartMsg("Enter a cart number.");
-      return;
-    }
-
-    if (cartNumbers.includes(value)) {
-      setCartMsg("This cart already exists.");
-      return;
-    }
-
-    setCartInput("");
-    await saveCartNumbers([...cartNumbers, value]);
-  };
-
-  const removeCartNumber = async (cart) => {
-    if (!canEdit) return;
-
-    const value = normalizeCartNumber(cart);
-    const next = cartNumbers.filter((c) => c !== value);
-
-    await saveCartNumbers(next);
-  };
-    const saveGateControllerOnDuty = async () => {
+  const saveGateControllerOnDuty = async () => {
     const picked = selectedGateController.trim();
 
     if (!picked) {
@@ -538,20 +533,20 @@ export default function GateControllerPage({
     try {
       setSaving(true);
 
-      const ref = doc(db, "flights", flightId);
-
-      const payload = {
-        checkedBagsTotal: value,
-        gateTotalUpdatedAt: serverTimestamp(),
-        gateTotalUpdatedBy: {
-          userId: user?.id || null,
-          username: user?.username || null,
-          role: user?.role || null,
+      await setDoc(
+        doc(db, "flights", flightId),
+        {
+          checkedBagsTotal: value,
+          gateTotalUpdatedAt: serverTimestamp(),
+          gateTotalUpdatedBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+          gateControllerOnDuty: selectedGateController || null,
         },
-        gateControllerOnDuty: selectedGateController || null,
-      };
-
-      await setDoc(ref, payload, { merge: true });
+        { merge: true }
+      );
 
       setSaveMsg("Saved ✅");
       setSaving(false);
@@ -855,7 +850,7 @@ export default function GateControllerPage({
         <div>
           <h2 style={{ margin: 0 }}>{title}</h2>
           <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-            Verified counts, cart setup, and manifest for Ramp coordination.
+            Verified counts, Bagroom match, and manifest for Ramp coordination.
           </p>
         </div>
 
@@ -983,246 +978,106 @@ export default function GateControllerPage({
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h3 style={{ margin: 0 }}>Cart Numbers</h3>
+            <h3 style={{ margin: 0 }}>Bagroom Manifest Match</h3>
             <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-              Add cart numbers so Bagroom and Ramp can load bags by cart.
+              Compares Bagroom scans by cart against the uploaded manifest.
             </p>
           </div>
 
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Carts added</div>
-            <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>{cartNumbers.length}</div>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Bagroom scanned</div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>
+              {loadingBagroomScans ? "…" : bagroomScans.length}
+            </div>
           </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginTop: 12 }}>
+          <InfoCard label="Manifest Tags" value={loadingAllowed ? "…" : allManifestTags.length} />
+          <InfoCard label="Bagroom Scanned" value={loadingBagroomScans ? "…" : bagroomScans.length} />
+          <InfoCard label="Matched Manifest" value={loadingAllowed || loadingBagroomScans ? "…" : bagroomMatchedTags.length} />
+          <InfoCard label="Not in Manifest" value={loadingAllowed || loadingBagroomScans ? "…" : bagroomNotInManifest.length} />
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input
-            value={cartInput}
-            onChange={(e) => setCartInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addCartNumber();
-              }
-            }}
-            placeholder="Cart number, e.g. 1, 2, 3, BULK, LATE"
-            disabled={!canEdit}
-            style={{
-              flex: 1,
-              minWidth: 220,
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: canEdit ? "white" : "#f3f4f6",
-            }}
-          />
-
-          <button
-            onClick={addCartNumber}
-            disabled={!canEdit}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #111827",
-              background: canEdit ? "#111827" : "#9ca3af",
-              color: "white",
-              fontWeight: 800,
-              cursor: canEdit ? "pointer" : "not-allowed",
-            }}
-          >
-            Add Cart
+          <button onClick={() => setActiveBagroomTab("summary")} style={tabBtn(activeBagroomTab === "summary")}>
+            By Cart
+          </button>
+          <button onClick={() => setActiveBagroomTab("matched")} style={tabBtn(activeBagroomTab === "matched")}>
+            Matched ({bagroomMatchedTags.length})
+          </button>
+          <button onClick={() => setActiveBagroomTab("notManifest")} style={tabBtn(activeBagroomTab === "notManifest")}>
+            Not in Manifest ({bagroomNotInManifest.length})
           </button>
         </div>
+                <div style={{ marginTop: 12 }}>
+          {loadingBagroomScans ? (
+            <p style={{ color: "#6b7280" }}>Loading Bagroom scans…</p>
+          ) : bagroomScans.length === 0 ? (
+            <p style={{ color: "#6b7280" }}>No Bagroom scans yet.</p>
+          ) : activeBagroomTab === "summary" ? (
+            <div style={{ display: "grid", gap: 12 }}>
+              {Object.keys(bagroomByCart)
+                .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
+                .map((cart) => {
+                  const rows = bagroomByCart[cart];
+                  const matched = rows.filter((s) =>
+                    manifestTagSet.has(onlyDigits(s.tag || s.id))
+                  );
 
-        {cartMsg && (
-          <p style={{ marginTop: 8, color: cartMsg.includes("✅") ? "#16a34a" : "#b91c1c", fontWeight: 800 }}>
-            {cartMsg}
-          </p>
-        )}
+                  return (
+                    <div key={cart} style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "white", padding: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 900 }}>
+                        <span>Cart {cart}</span>
+                        <span>{matched.length}/{rows.length} matched</span>
+                      </div>
 
-        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {cartNumbers.length === 0 ? (
-            <span style={{ color: "#6b7280" }}>No carts added yet.</span>
-          ) : (
-            cartNumbers.map((cart) => (
-              <span
-                key={cart}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: "1px solid #d1d5db",
-                  background: "white",
-                  fontWeight: 800,
-                }}
-              >
-                Cart {cart}
+                      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {rows.map((s) => {
+                          const tag = onlyDigits(s.tag || s.id);
+                          const ok = manifestTagSet.has(tag);
 
-                {canEdit && (
-                  <button
-                    onClick={() => removeCartNumber(cart)}
-                    title="Remove cart"
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "#b91c1c",
-                      cursor: "pointer",
-                      fontWeight: 900,
-                    }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </span>
-            ))
-          )}
-        </div>
-      </section>
-            <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Scan Bag Tags (Build Manifest)</h3>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-              Scan bags one-by-one to build this flight manifest. Saves into <strong>allowedBagTags</strong>.
-              <br />
-              <strong>Only 10-digit numeric tags are accepted.</strong>
-            </p>
-          </div>
-
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Manifest tags saved</div>
-            <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>{loadingAllowed ? "…" : allowedCount}</div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "minmax(240px, 1fr) minmax(240px, 1fr)", gap: 12 }}>
-          <div>
-            <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
-              Bag Tag (10 digits)
-            </label>
-
-            <input
-              ref={scanRef}
-              value={scanInput}
-              onChange={(e) => setScanInput(e.target.value)}
-              onKeyDown={onScanKeyDown}
-              disabled={!canEdit || savingScan}
-              placeholder={!canEdit ? "Read-only" : "Scan bag tag…"}
-              style={{
-                width: "100%",
-                padding: "12px",
-                borderRadius: 12,
-                border: "1px solid #d1d5db",
-                background: canEdit ? "white" : "#f3f4f6",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                fontSize: "0.95rem",
-              }}
-            />
-
-            <button
-              onClick={() => saveScannedTagToManifest(scanInput)}
-              disabled={!canEdit || savingScan}
-              style={{
-                width: "100%",
-                marginTop: 10,
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid #111827",
-                background: !canEdit ? "#9ca3af" : "#111827",
-                color: "white",
-                fontWeight: 900,
-                cursor: !canEdit ? "not-allowed" : "pointer",
-                opacity: savingScan ? 0.7 : 1,
-              }}
-            >
-              {savingScan ? "Saving…" : "Save Tag"}
-            </button>
-
-            <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-              Tip: if your scanner does NOT send Enter, the system auto-saves after a short pause.
-            </p>
-
-            {scanMsg && <p style={{ marginTop: 8, color: "#16a34a", fontWeight: 800 }}>{scanMsg}</p>}
-            {scanErr && <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800 }}>{scanErr}</p>}
-          </div>
-
-          <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, background: "white", padding: 10, maxHeight: 300, overflow: "auto" }}>
-            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-              <button onClick={() => setActiveManifestTab("recent")} style={tabBtn(activeManifestTab === "recent")}>
-                Manifest Tags
-              </button>
-
-              <button onClick={() => setActiveManifestTab("missing")} style={tabBtn(activeManifestTab === "missing")}>
-                Missing to Load ({missingManifestTags.length})
-              </button>
-            </div>
-
-            {activeManifestTab === "recent" ? (
-              <>
-                <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
-                  Recent manifest tags (click ❌ to delete)
-                </div>
-
-                {loadingAllowed ? (
-                  <p style={{ color: "#6b7280" }}>Loading…</p>
-                ) : recentAllowed.length === 0 ? (
-                  <p style={{ color: "#6b7280" }}>No tags saved yet.</p>
-                ) : (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {recentAllowed.map((r) => {
-                      const tag = r.tag || r.id;
-                      const busy = deletingTag === tag;
-
-                      return (
-                        <span key={r.id} style={tagPill}>
-                          {tag}
-                          {canEdit && (
-                            <button
-                              onClick={() => deleteAllowedTag(tag)}
-                              disabled={busy}
-                              title="Delete tag"
+                          return (
+                            <span
+                              key={s.id}
                               style={{
-                                border: "none",
-                                background: "transparent",
-                                cursor: busy ? "not-allowed" : "pointer",
-                                fontWeight: 900,
-                                color: "#b91c1c",
-                                opacity: busy ? 0.6 : 1,
+                                ...tagPill,
+                                background: ok ? "#DCFCE7" : "#FEF2F2",
+                                color: ok ? "#166534" : "#991B1B",
                               }}
                             >
-                              {busy ? "…" : "✕"}
-                            </button>
-                          )}
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
+                              {tag || s.tag}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : activeBagroomTab === "matched" ? (
+            bagroomMatchedTags.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>No matched Bagroom tags yet.</p>
             ) : (
-              <>
-                <div style={{ fontSize: "0.85rem", color: "#6b7280", marginBottom: 8 }}>
-                  Bag tags from manifest not loaded/scanned in aircraft yet.
-                </div>
-
-                {loadingAllowed || aircraftLoading ? (
-                  <p style={{ color: "#6b7280" }}>Loading…</p>
-                ) : missingManifestTags.length === 0 ? (
-                  <p style={{ color: "#16a34a", fontWeight: 800 }}>All manifest tags are loaded ✅</p>
-                ) : (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {missingManifestTags.map((tag) => (
-                      <span key={tag} style={{ ...tagPill, background: "#FEF2F2", color: "#991B1B" }}>
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {bagroomMatchedTags.map((tag) => (
+                  <span key={tag} style={{ ...tagPill, background: "#DCFCE7", color: "#166534" }}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )
+          ) : bagroomNotInManifest.length === 0 ? (
+            <p style={{ color: "#16a34a", fontWeight: 800 }}>All Bagroom scans are in the manifest ✅</p>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {bagroomNotInManifest.map((s) => (
+                <span key={s.id} style={{ ...tagPill, background: "#FEF2F2", color: "#991B1B" }}>
+                  {s.cleanTag} · Cart {s.cartNumber || "-"}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -1286,23 +1141,7 @@ export default function GateControllerPage({
 
       {/* Manifest Import */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest (Import)</h3>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-              Upload CSV/TXT/PDF or paste a list. System ignores names/PNR and imports only bag tag numbers.
-              <br />
-              <strong>Import reads ONLY numeric tags with exactly 10 digits.</strong>
-            </p>
-          </div>
-
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Strict Manifest</div>
-            <div style={{ fontSize: "1.05rem", fontWeight: 800, color: strictManifest ? "#16a34a" : "#6b7280" }}>
-              {strictManifest ? "ON" : "OFF"}
-            </div>
-          </div>
-        </div>
+        <h3 style={{ margin: 0 }}>Flight Bag Tag Manifest (Import)</h3>
 
         <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <input
@@ -1320,30 +1159,23 @@ export default function GateControllerPage({
           </button>
         </div>
 
-        <div style={{ marginTop: 12 }}>
-          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
-            Paste manifest text (names/PNR allowed — only 10-digit numbers are used)
-          </label>
+        <textarea
+          value={manifestText}
+          onChange={(e) => setManifestText(e.target.value)}
+          disabled={!canEdit}
+          rows={6}
+          placeholder="Paste manifest text here..."
+          style={{
+            marginTop: 12,
+            width: "100%",
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: "1px solid #d1d5db",
+            background: canEdit ? "white" : "#f3f4f6",
+          }}
+        />
 
-          <textarea
-            value={manifestText}
-            onChange={(e) => setManifestText(e.target.value)}
-            placeholder={`Example:\nName 0123456789 9876543210\nPNR: XYZ123 0123456789`}
-            disabled={!canEdit}
-            rows={6}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: canEdit ? "white" : "#f3f4f6",
-              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: "0.85rem",
-            }}
-          />
-        </div>
-
-        <div style={{ marginTop: 12, display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ marginTop: 12, display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <button onClick={() => previewFromText(manifestText)} disabled={!canEdit} style={btnStatus(canEdit)}>
             Preview Tags
           </button>
@@ -1358,85 +1190,36 @@ export default function GateControllerPage({
               background: !canEdit || importing ? "#93c5fd" : "#2563eb",
               color: "white",
               fontWeight: 800,
-              cursor: !canEdit || importing ? "not-allowed" : "pointer",
             }}
           >
             {importing ? "Importing..." : "Import to Flight"}
           </button>
         </div>
 
-        {manifestMsg && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#16a34a", whiteSpace: "pre-wrap" }}>{manifestMsg}</p>}
-        {manifestErr && <p style={{ marginTop: 10, fontSize: "0.9rem", color: "#b91c1c", whiteSpace: "pre-wrap" }}>{manifestErr}</p>}
-
-        {manifestTagsPreview.length > 0 && (
-          <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>
-              Preview: <strong>{manifestTagsPreview.length}</strong> tags found (10-digit only)
-              <span style={{ marginLeft: 8, color: "#6b7280" }}> — click ❌ to remove before import</span>
-            </div>
-
-            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 220, overflow: "auto" }}>
-              {manifestTagsPreview.map((t) => (
-                <span key={t} style={tagPill}>
-                  {t}
-                  <button
-                    onClick={() => removeFromPreview(t)}
-                    disabled={!canEdit}
-                    title="Remove from preview"
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      cursor: canEdit ? "pointer" : "not-allowed",
-                      fontWeight: 900,
-                      color: "#b91c1c",
-                    }}
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+        {manifestMsg && <p style={{ color: "#16a34a", whiteSpace: "pre-wrap" }}>{manifestMsg}</p>}
+        {manifestErr && <p style={{ color: "#b91c1c", whiteSpace: "pre-wrap" }}>{manifestErr}</p>}
       </section>
 
       {/* Aircraft loading summary */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <h3 style={{ margin: 0 }}>Aircraft Loading</h3>
-            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-              Bags scanned in aircraft by zone.
-            </p>
-          </div>
-
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Aircraft scanned</div>
-            <div style={{ fontSize: "1.6rem", fontWeight: 800 }}>{aircraftLoading ? "…" : aircraftTotal}</div>
-          </div>
-        </div>
+        <h3 style={{ margin: 0 }}>Aircraft Loading</h3>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginTop: 12 }}>
+          <InfoCard label="Aircraft scanned" value={aircraftLoading ? "…" : aircraftTotal} />
           <InfoCard label="Zone 1" value={aircraftLoading ? "…" : zones[1]} />
           <InfoCard label="Zone 2" value={aircraftLoading ? "…" : zones[2]} />
           <InfoCard label="Zone 3" value={aircraftLoading ? "…" : zones[3]} />
           <InfoCard label="Zone 4" value={aircraftLoading ? "…" : zones[4]} />
         </div>
 
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <div style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-            Gate checked total: <strong>{checkedBagsTotal === null ? "—" : checkedBagsTotal}</strong>
-          </div>
-
-          <div style={{ fontSize: "0.95rem" }}>
-            {checkedBagsTotal === null ? (
-              <span style={{ color: "#6b7280" }}>Enter Gate total to calculate missing bags.</span>
-            ) : missing === 0 ? (
-              <span style={{ color: "#16a34a", fontWeight: 700 }}>All bags accounted for ✅</span>
-            ) : (
-              <span style={{ color: "#b91c1c", fontWeight: 800 }}>Missing: {missing}</span>
-            )}
-          </div>
+        <div style={{ marginTop: 12 }}>
+          {checkedBagsTotal === null ? (
+            <span style={{ color: "#6b7280" }}>Enter Gate total to calculate missing bags.</span>
+          ) : missing === 0 ? (
+            <span style={{ color: "#16a34a", fontWeight: 700 }}>All bags accounted for ✅</span>
+          ) : (
+            <span style={{ color: "#b91c1c", fontWeight: 800 }}>Missing: {missing}</span>
+          )}
         </div>
       </section>
     </div>
@@ -1487,5 +1270,3 @@ function InfoCard({ label, value }) {
     </div>
   );
 }
-
-      
