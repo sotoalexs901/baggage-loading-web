@@ -38,6 +38,19 @@ async function requireManager(data) {
   return role;
 }
 
+async function requireStationManager(data) {
+  const role = normalizeRole(data?.userRole);
+
+  if (role !== "station_manager") {
+    throw new functions.https.HttpsError(
+      "permission-denied",
+      "Only Station Manager can delete a full month."
+    );
+  }
+
+  return role;
+}
+
 async function deleteCollection(path, batchSize = 400) {
   const colRef = db.collection(path);
 
@@ -74,113 +87,76 @@ async function deleteBagTagsIndexForFlight(flightId, batchSize = 400) {
     await batch.commit();
   }
 }
-
 /* =========================
-   DELETE FLIGHT CASCADE
+   DELETE MONTH (LOADED FLIGHTS)
 ========================= */
 
-exports.deleteFlightCascade = region.https.onCall(async (data, context) => {
-  await requireManager(data);
+exports.deleteLoadedFlightsByMonth = region.https.onCall(async (data, context) => {
+  await requireStationManager(data);
 
-  const flightId = String(data?.flightId || "").trim();
+  const year = Number(data?.year);
+  const month = Number(data?.month);
 
-  if (!flightId) {
-    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
+  if (!year || !month || month < 1 || month > 12) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "year and month are required."
+    );
   }
 
-  const flightRef = db.collection("flights").doc(flightId);
-  const flightSnap = await flightRef.get();
-
-  if (!flightSnap.exists) {
-    throw new functions.https.HttpsError("not-found", "Flight not found.");
-  }
+  // month = 7  -> "2026-07"
+  const monthPrefix =
+    `${year}-${String(month).padStart(2, "0")}`;
 
   try {
-    await deleteCollection(`flights/${flightId}/aircraftScans`);
-    await deleteCollection(`flights/${flightId}/bagroomScans`);
-    await deleteCollection(`flights/${flightId}/allowedBagTags`);
-    await deleteCollection(`flights/${flightId}/reports`);
+    const flightsSnap = await db
+      .collection("flights")
+      .where("status", "==", "LOADED")
+      .get();
 
-    await deleteStoragePrefix(`flights/${flightId}/reports/`);
-    await deleteStoragePrefix(`flights/${flightId}/manifests/`);
+    let deletedFlights = 0;
 
-    await deleteBagTagsIndexForFlight(flightId);
+    for (const docSnap of flightsSnap.docs) {
 
-    await flightRef.delete();
+      const flight = docSnap.data();
+
+      const flightDate = String(flight.flightDate || "");
+
+      // Solo vuelos del mes seleccionado
+      if (!flightDate.startsWith(monthPrefix)) continue;
+
+      const flightId = docSnap.id;
+
+      console.log(`Deleting ${flight.flightNumber} (${flightId})`);
+
+      await deleteCollection(`flights/${flightId}/aircraftScans`);
+      await deleteCollection(`flights/${flightId}/bagroomScans`);
+      await deleteCollection(`flights/${flightId}/allowedBagTags`);
+      await deleteCollection(`flights/${flightId}/reports`);
+
+      await deleteStoragePrefix(`flights/${flightId}/reports/`);
+      await deleteStoragePrefix(`flights/${flightId}/manifests/`);
+
+      await deleteBagTagsIndexForFlight(flightId);
+
+      await docSnap.ref.delete();
+
+      deletedFlights++;
+    }
 
     return {
       ok: true,
-      deletedFlightId: flightId,
+      deletedFlights,
+      month: monthPrefix,
     };
+
   } catch (e) {
-    console.error("[deleteFlightCascade] failed:", e);
+
+    console.error("[deleteLoadedFlightsByMonth]", e);
 
     throw new functions.https.HttpsError(
       "internal",
-      e?.message || "Delete cascade failed."
-    );
-  }
-});
-
-/* =========================
-   REOPEN FLIGHT
-========================= */
-
-exports.reopenFlight = region.https.onCall(async (data, context) => {
-  await requireManager(data);
-
-  const flightId = String(data?.flightId || "").trim();
-
-  if (!flightId) {
-    throw new functions.https.HttpsError("invalid-argument", "flightId is required.");
-  }
-
-  const ref = db.collection("flights").doc(flightId);
-  const snap = await ref.get();
-
-  if (!snap.exists) {
-    throw new functions.https.HttpsError("not-found", "Flight not found.");
-  }
-
-  const flight = snap.data() || {};
-  const status = String(flight.status || "OPEN").trim().toUpperCase();
-
-  if (status !== "LOADED") {
-    throw new functions.https.HttpsError(
-      "failed-precondition",
-      "Only LOADED flights can be reopened."
-    );
-  }
-
-  try {
-    await ref.set(
-      {
-        status: "LOADING",
-
-        aircraftLoadingCompleted: false,
-        aircraftLoadingCompletedAt: null,
-        aircraftLoadingCompletedBy: null,
-        aircraftLoadedBags: null,
-
-        reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
-        reopenedBy: {
-          username: data?.username || null,
-          role: data?.userRole || null,
-        },
-      },
-      { merge: true }
-    );
-
-    return {
-      ok: true,
-      reopenedFlightId: flightId,
-    };
-  } catch (e) {
-    console.error("[reopenFlight] failed:", e);
-
-    throw new functions.https.HttpsError(
-      "internal",
-      e?.message || "Reopen failed."
+      e.message || "Unable to delete flights."
     );
   }
 });
