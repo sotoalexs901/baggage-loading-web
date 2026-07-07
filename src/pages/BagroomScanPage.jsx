@@ -227,23 +227,11 @@ export default function BagroomScanPage({ flightId, user }) {
   };
 
   const validateAgainstManifest = async (tag) => {
-    if (!strictManifest) return { ok: true };
-
-    const allowRef = doc(db, "flights", flightId, "allowedBagTags", tag);
-    const allowSnap = await getDoc(allowRef);
-
-    if (!allowSnap.exists()) {
-      return {
-        ok: false,
-        message:
-          `❌ Bag tag NOT in flight manifest.\n\n` +
-          `Flight: ${flight?.flightNumber || flightId}\n` +
-          `Date: ${flight?.flightDate || "-"}`,
-      };
-    }
-
-    return { ok: true };
-  };
+  // Bagroom puede escanear antes de que Gate suba el manifiesto.
+  // También permite escanear aunque el tag no esté en manifest.
+  // Gate Controller hará el match luego y mostrará "Not in Manifest".
+  return { ok: true };
+};
 
   const validateAgainstOtherFlight = async (tag) => {
     const tagRef = doc(db, "bagTags", tag);
