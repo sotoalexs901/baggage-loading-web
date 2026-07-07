@@ -1079,7 +1079,86 @@ export default function GateControllerPage({
           )}
         </div>
       </section>
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
+        <h3 style={{ margin: 0 }}>Manifest Loading Status</h3>
 
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, marginTop: 12 }}>
+          <InfoCard label="Manifest Tags" value={loadingAllowed ? "…" : allManifestTags.length} />
+          <InfoCard label="Aircraft Loaded" value={aircraftLoading ? "…" : loadedAircraftTags.length} />
+          <InfoCard label="Missing to Load" value={loadingAllowed || aircraftLoading ? "…" : missingManifestTags.length} />
+        </div>
+
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setActiveManifestTab("recent")} style={tabBtn(activeManifestTab === "recent")}>
+            Manifest Tags
+          </button>
+
+          <button onClick={() => setActiveManifestTab("missing")} style={tabBtn(activeManifestTab === "missing")}>
+            Missing to Load ({missingManifestTags.length})
+          </button>
+        </div>
+
+        <div style={{ marginTop: 12, maxHeight: 300, overflow: "auto" }}>
+          {activeManifestTab === "recent" ? (
+            loadingAllowed ? (
+              <p style={{ color: "#6b7280" }}>Loading manifest…</p>
+            ) : recentAllowed.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>No manifest tags uploaded yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {recentAllowed.map((r) => {
+                  const tag = r.tag || r.id;
+                  const busy = deletingTag === tag;
+
+                  return (
+                    <span key={r.id} style={tagPill}>
+                      {tag}
+                      {canEdit && (
+                        <button
+                          onClick={() => deleteAllowedTag(tag)}
+                          disabled={busy}
+                          title="Delete tag"
+                          style={{
+                            border: "none",
+                            background: "transparent",
+                            cursor: busy ? "not-allowed" : "pointer",
+                            fontWeight: 900,
+                            color: "#b91c1c",
+                            opacity: busy ? 0.6 : 1,
+                          }}
+                        >
+                          {busy ? "…" : "✕"}
+                        </button>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+            )
+          ) : loadingAllowed || aircraftLoading ? (
+            <p style={{ color: "#6b7280" }}>Loading missing tags…</p>
+          ) : missingManifestTags.length === 0 ? (
+            <p style={{ color: "#16a34a", fontWeight: 800 }}>
+              All manifest tags are loaded ✅
+            </p>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {missingManifestTags.map((tag) => (
+                <span
+                  key={tag}
+                  style={{
+                    ...tagPill,
+                    background: "#FEF2F2",
+                    color: "#991B1B",
+                  }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb", marginBottom: 14 }}>
         <h3 style={{ margin: 0 }}>Checked Bags Total</h3>
 
