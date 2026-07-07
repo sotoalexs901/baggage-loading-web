@@ -59,6 +59,16 @@ function isValidTag10(tag) {
   return t.length === 10;
 }
 
+function normalizeCartNumber(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function sortCartNumbers(list) {
+  return [...list].sort((a, b) =>
+    String(a).localeCompare(String(b), undefined, { numeric: true })
+  );
+}
+
 function extractBagTagsFromText(text, { exactLen = 10 } = {}) {
   const src = String(text || "");
   const matches = src.match(/\d+/g) || [];
@@ -128,7 +138,6 @@ export default function GateControllerPage({
   canEdit,
 }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
-  const isGateController = role === "gate_controller";
 
   const [gateControllers, setGateControllers] = useState([]);
   const [selectedGateController, setSelectedGateController] = useState(
@@ -138,6 +147,10 @@ export default function GateControllerPage({
 
   const [flight, setFlight] = useState(null);
   const [flightLoading, setFlightLoading] = useState(true);
+
+  const [cartInput, setCartInput] = useState("");
+  const [cartNumbers, setCartNumbers] = useState([]);
+  const [cartMsg, setCartMsg] = useState("");
 
   const [checkedTotalInput, setCheckedTotalInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -223,6 +236,12 @@ export default function GateControllerPage({
 
         if (typeof data.strictManifest === "boolean") {
           setStrictManifest(data.strictManifest);
+        }
+
+        if (Array.isArray(data.cartNumbers)) {
+          setCartNumbers(sortCartNumbers(data.cartNumbers.map(normalizeCartNumber)));
+        } else {
+          setCartNumbers([]);
         }
 
         if (data.gateControllerOnDuty) {
@@ -377,7 +396,66 @@ export default function GateControllerPage({
     );
   };
 
-  const saveGateControllerOnDuty = async () => {
+  const saveCartNumbers = async (nextCarts) => {
+    try {
+      const cleanCarts = sortCartNumbers(
+        [...new Set(nextCarts.map(normalizeCartNumber).filter(Boolean))]
+      );
+
+      await setDoc(
+        doc(db, "flights", flightId),
+        {
+          cartNumbers: cleanCarts,
+          cartNumbersUpdatedAt: serverTimestamp(),
+          cartNumbersUpdatedBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+        },
+        { merge: true }
+      );
+
+      setCartNumbers(cleanCarts);
+      setCartMsg("Cart numbers saved ✅");
+      setTimeout(() => setCartMsg(""), 2000);
+    } catch (e) {
+      console.error(e);
+      setCartMsg("Could not save cart numbers.");
+    }
+  };
+
+  const addCartNumber = async () => {
+    const value = normalizeCartNumber(cartInput);
+
+    if (!canEdit) {
+      setCartMsg("You don't have permission to edit carts.");
+      return;
+    }
+
+    if (!value) {
+      setCartMsg("Enter a cart number.");
+      return;
+    }
+
+    if (cartNumbers.includes(value)) {
+      setCartMsg("This cart already exists.");
+      return;
+    }
+
+    setCartInput("");
+    await saveCartNumbers([...cartNumbers, value]);
+  };
+
+  const removeCartNumber = async (cart) => {
+    if (!canEdit) return;
+
+    const value = normalizeCartNumber(cart);
+    const next = cartNumbers.filter((c) => c !== value);
+
+    await saveCartNumbers(next);
+  };
+    const saveGateControllerOnDuty = async () => {
     const picked = selectedGateController.trim();
 
     if (!picked) {
@@ -650,8 +728,7 @@ export default function GateControllerPage({
       setImporting(false);
     }
   };
-
-  const saveScannedTagToManifest = async (raw) => {
+    const saveScannedTagToManifest = async (raw) => {
     setScanMsg("");
     setScanErr("");
 
@@ -713,7 +790,8 @@ export default function GateControllerPage({
       setSavingScan(false);
     }
   };
-    const deleteAllowedTag = async (tag) => {
+
+  const deleteAllowedTag = async (tag) => {
     if (!canEdit) return;
 
     const id = String(tag || "").trim();
@@ -777,7 +855,7 @@ export default function GateControllerPage({
         <div>
           <h2 style={{ margin: 0 }}>{title}</h2>
           <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-            Verified counts and manifest for Ramp coordination.
+            Verified counts, cart setup, and manifest for Ramp coordination.
           </p>
         </div>
 
@@ -900,6 +978,107 @@ export default function GateControllerPage({
             Read-only access.
           </p>
         )}
+      </section>
+
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h3 style={{ margin: 0 }}>Cart Numbers</h3>
+            <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+              Add cart numbers so Bagroom and Ramp can load bags by cart.
+            </p>
+          </div>
+
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: "0.85rem", color: "#6b7280" }}>Carts added</div>
+            <div style={{ fontSize: "1.6rem", fontWeight: 900 }}>{cartNumbers.length}</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            value={cartInput}
+            onChange={(e) => setCartInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addCartNumber();
+              }
+            }}
+            placeholder="Cart number, e.g. 1, 2, 3, BULK, LATE"
+            disabled={!canEdit}
+            style={{
+              flex: 1,
+              minWidth: 220,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: canEdit ? "white" : "#f3f4f6",
+            }}
+          />
+
+          <button
+            onClick={addCartNumber}
+            disabled={!canEdit}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #111827",
+              background: canEdit ? "#111827" : "#9ca3af",
+              color: "white",
+              fontWeight: 800,
+              cursor: canEdit ? "pointer" : "not-allowed",
+            }}
+          >
+            Add Cart
+          </button>
+        </div>
+
+        {cartMsg && (
+          <p style={{ marginTop: 8, color: cartMsg.includes("✅") ? "#16a34a" : "#b91c1c", fontWeight: 800 }}>
+            {cartMsg}
+          </p>
+        )}
+
+        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {cartNumbers.length === 0 ? (
+            <span style={{ color: "#6b7280" }}>No carts added yet.</span>
+          ) : (
+            cartNumbers.map((cart) => (
+              <span
+                key={cart}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  fontWeight: 800,
+                }}
+              >
+                Cart {cart}
+
+                {canEdit && (
+                  <button
+                    onClick={() => removeCartNumber(cart)}
+                    title="Remove cart"
+                    style={{
+                      border: "none",
+                      background: "transparent",
+                      color: "#b91c1c",
+                      cursor: "pointer",
+                      fontWeight: 900,
+                    }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </span>
+            ))
+          )}
+        </div>
       </section>
             <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14, background: "#f9fafb" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -1308,3 +1487,5 @@ function InfoCard({ label, value }) {
     </div>
   );
 }
+
+      
