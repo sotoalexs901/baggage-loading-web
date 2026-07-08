@@ -15,17 +15,48 @@ function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
 }
 
+function getSessionJson(key, fallback = null) {
+  try {
+    const saved = sessionStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [gateControllerOnDuty, setGateControllerOnDuty] = useState(null);
-  const [currentView, setCurrentView] = useState("dashboard");
-  const [selectedFlightId, setSelectedFlightId] = useState(null);
+  const [user, setUser] = useState(() => getSessionJson("blcsUser", null));
+
+  const [gateControllerOnDuty, setGateControllerOnDuty] = useState(() => {
+    return sessionStorage.getItem("gateControllerOnDuty") || null;
+  });
+
+  const [currentView, setCurrentView] = useState(() => {
+    return sessionStorage.getItem("currentView") || "dashboard";
+  });
+
+  const [selectedFlightId, setSelectedFlightId] = useState(() => {
+    return sessionStorage.getItem("selectedFlightId") || null;
+  });
+
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleLogin = (userData, sessionMeta) => {
+    const gc = sessionMeta?.gateControllerUsername || null;
+
     setUser(userData);
-    setGateControllerOnDuty(sessionMeta?.gateControllerUsername || null);
+    setGateControllerOnDuty(gc);
     setCurrentView("dashboard");
+
+    sessionStorage.setItem("blcsUser", JSON.stringify(userData));
+
+    if (gc) {
+      sessionStorage.setItem("gateControllerOnDuty", gc);
+    } else {
+      sessionStorage.removeItem("gateControllerOnDuty");
+    }
+
+    sessionStorage.setItem("currentView", "dashboard");
   };
 
   if (!user) {
@@ -47,11 +78,23 @@ export default function App() {
     role === "supervisor" ||
     role === "gate_controller";
 
+  const goToView = (view) => {
+    setCurrentView(view);
+    sessionStorage.setItem("currentView", view);
+  };
+
+  const selectFlight = (flightId) => {
+    setSelectedFlightId(flightId);
+    sessionStorage.setItem("selectedFlightId", flightId);
+  };
+
   const handleSoftRefresh = () => {
     setRefreshKey((prev) => prev + 1);
   };
 
   const handleLogout = () => {
+    sessionStorage.clear();
+
     setUser(null);
     setGateControllerOnDuty(null);
     setSelectedFlightId(null);
@@ -62,6 +105,9 @@ export default function App() {
   const handleOpenFlightFromDashboard = (flightId, targetView) => {
     setSelectedFlightId(flightId);
     setCurrentView(targetView);
+
+    sessionStorage.setItem("selectedFlightId", flightId);
+    sessionStorage.setItem("currentView", targetView);
   };
 
   const renderView = () => {
@@ -80,7 +126,7 @@ export default function App() {
         <FlightsPage
           user={user}
           canCreateFlights={canCreateFlights}
-          onFlightSelected={(flightId) => setSelectedFlightId(flightId)}
+          onFlightSelected={(flightId) => selectFlight(flightId)}
         />
       );
     }
@@ -142,36 +188,36 @@ export default function App() {
           }}
         >
           <nav className="nav-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>
+            <button onClick={() => goToView("dashboard")}>Dashboard</button>
 
-            <button onClick={() => setCurrentView("flights")}>Flights</button>
+            <button onClick={() => goToView("flights")}>Flights</button>
 
-            <button onClick={() => setCurrentView("counter")} disabled={!selectedFlightId}>
+            <button onClick={() => goToView("counter")} disabled={!selectedFlightId}>
               Counter Scan
             </button>
 
-            <button onClick={() => setCurrentView("gate")} disabled={!selectedFlightId}>
+            <button onClick={() => goToView("gate")} disabled={!selectedFlightId}>
               Gate Controller
             </button>
 
-            <button onClick={() => setCurrentView("bagroom")} disabled={!selectedFlightId}>
+            <button onClick={() => goToView("bagroom")} disabled={!selectedFlightId}>
               Bagroom
             </button>
 
-            <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
+            <button onClick={() => goToView("aircraft")} disabled={!selectedFlightId}>
               Aircraft
             </button>
 
-            <button onClick={() => setCurrentView("tracking")}>
+            <button onClick={() => goToView("tracking")}>
               Baggage Tracking
             </button>
 
-            <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
+            <button onClick={() => goToView("reports")} disabled={!selectedFlightId}>
               Reports
             </button>
 
             {isStationManager && (
-              <button onClick={() => setCurrentView("adminUsers")}>Admin Users</button>
+              <button onClick={() => goToView("adminUsers")}>Admin Users</button>
             )}
           </nav>
 
