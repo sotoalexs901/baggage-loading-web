@@ -1,13 +1,6 @@
 // src/pages/BaggageTrackingPage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  orderBy,
-  query,
-} from "firebase/firestore";
+import { collection, doc, getDoc, getDocs } from "firebase/firestore";
 import { db } from "../firebase";
 
 function cleanTag(value) {
@@ -16,7 +9,6 @@ function cleanTag(value) {
 
 function formatDateTime(ts) {
   if (!ts) return "-";
-
   try {
     const d = ts.toDate ? ts.toDate() : new Date(ts);
     return d.toLocaleString();
@@ -27,7 +19,6 @@ function formatDateTime(ts) {
 
 function getEventTitle(type) {
   const t = String(type || "").toUpperCase();
-
   if (t === "COUNTER_SCAN") return "Counter Scan";
   if (t === "BAGROOM_SCAN") return "Bagroom Received";
   if (t === "AIRCRAFT_LOAD") return "Loaded on Aircraft";
@@ -38,7 +29,6 @@ function getEventTitle(type) {
 
 function getEventIcon(type) {
   const t = String(type || "").toUpperCase();
-
   if (t === "COUNTER_SCAN") return "🟢";
   if (t === "BAGROOM_SCAN") return "🟡";
   if (t === "AIRCRAFT_LOAD") return "🔵";
@@ -49,7 +39,6 @@ function getEventIcon(type) {
 
 function getEventBorder(type) {
   const t = String(type || "").toUpperCase();
-
   if (t === "COUNTER_SCAN") return "#22c55e";
   if (t === "BAGROOM_SCAN") return "#f59e0b";
   if (t === "AIRCRAFT_LOAD") return "#2563eb";
@@ -62,8 +51,12 @@ function getLastStatusText(tagDoc) {
   const loc = String(tagDoc?.lastSeenLocation || "").toLowerCase();
 
   if (loc === "counter") return "At Counter";
-  if (loc === "bagroom") return `In Bagroom${tagDoc?.lastSeenCart ? ` · Cart ${tagDoc.lastSeenCart}` : ""}`;
-  if (loc === "aircraft") return `Loaded on Aircraft${tagDoc?.lastSeenZone ? ` · Zone ${tagDoc.lastSeenZone}` : ""}`;
+  if (loc === "bagroom") {
+    return `In Bagroom${tagDoc?.lastSeenCart ? ` · Cart ${tagDoc.lastSeenCart}` : ""}`;
+  }
+  if (loc === "aircraft") {
+    return `Loaded on Aircraft${tagDoc?.lastSeenZone ? ` · Zone ${tagDoc.lastSeenZone}` : ""}`;
+  }
   if (loc === "offloaded") return "Offloaded";
   return "Unknown";
 }
@@ -91,6 +84,78 @@ export default function BaggageTrackingPage({ user }) {
       return ta - tb;
     });
   }, [events]);
+
+  const loadFallbackEvents = async (tag, mainData) => {
+    const currentFlightId = mainData?.flightId;
+    if (!currentFlightId) return [];
+
+    const fallback = [];
+
+    const counterSnap = await getDoc(
+      doc(db, "flights", currentFlightId, "counterScans", tag)
+    );
+
+    if (counterSnap.exists()) {
+      const d = counterSnap.data();
+      fallback.push({
+        id: "fallback_counter",
+        type: "COUNTER_SCAN",
+        message: "Bag tag scanned at counter",
+        tag,
+        flightId: currentFlightId,
+        flightNumber: mainData.flightNumber || null,
+        flightDate: mainData.flightDate || null,
+        gate: mainData.gate || null,
+        createdAt: d.createdAt || null,
+        createdBy: d.scannedBy || null,
+      });
+    }
+
+    const bagroomSnap = await getDoc(
+      doc(db, "flights", currentFlightId, "bagroomScans", tag)
+    );
+
+    if (bagroomSnap.exists()) {
+      const d = bagroomSnap.data();
+      fallback.push({
+        id: "fallback_bagroom",
+        type: "BAGROOM_SCAN",
+        message: "Bag received/scanned in Bagroom",
+        tag,
+        cartNumber: d.cartNumber || null,
+        flightId: currentFlightId,
+        flightNumber: mainData.flightNumber || null,
+        flightDate: mainData.flightDate || null,
+        gate: mainData.gate || null,
+        createdAt: d.createdAt || null,
+        createdBy: d.scannedBy || null,
+      });
+    }
+
+    const aircraftSnap = await getDoc(
+      doc(db, "flights", currentFlightId, "aircraftScans", tag)
+    );
+
+    if (aircraftSnap.exists()) {
+      const d = aircraftSnap.data();
+      fallback.push({
+        id: "fallback_aircraft",
+        type: "AIRCRAFT_LOAD",
+        message: "Bag loaded on aircraft",
+        tag,
+        zone: d.zone || null,
+        flightId: currentFlightId,
+        flightNumber: mainData.flightNumber || null,
+        flightDate: mainData.flightDate || null,
+        gate: mainData.gate || null,
+        createdAt: d.createdAt || null,
+        createdBy: d.scannedBy || null,
+      });
+    }
+
+    return fallback;
+  };
+
   const handleSearch = async (forcedTag) => {
     setErr("");
     setTagDoc(null);
@@ -112,7 +177,6 @@ export default function BaggageTrackingPage({ user }) {
 
       if (!tagSnap.exists()) {
         setErr(`No tracking found for bag tag ${tag}.`);
-        setLoading(false);
         return;
       }
 
@@ -123,18 +187,27 @@ export default function BaggageTrackingPage({ user }) {
 
       setTagDoc(mainData);
 
-      const eventsRef = collection(db, "bagTags", tag, "events");
-      const qRef = query(eventsRef, orderBy("createdAt", "asc"));
-      const eventsSnap = await getDocs(qRef);
+      let eventList = [];
 
-      const list = eventsSnap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      }));
+      try {
+        const eventsSnap = await getDocs(collection(db, "bagTags", tag, "events"));
+        eventList = eventsSnap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+      } catch (eventError) {
+        console.error("Events read error:", eventError);
+      }
 
-        const fallbackEvents = await loadFallbackEvents(tag, mainData);
+      let fallbackEvents = [];
 
-      const merged = [...list];
+      try {
+        fallbackEvents = await loadFallbackEvents(tag, mainData);
+      } catch (fallbackError) {
+        console.error("Fallback tracking error:", fallbackError);
+      }
+
+      const merged = [...eventList];
 
       for (const ev of fallbackEvents) {
         const exists = merged.some((x) => String(x.type) === String(ev.type));
@@ -142,10 +215,10 @@ export default function BaggageTrackingPage({ user }) {
       }
 
       setEvents(merged);
-      setLoading(false);
     } catch (e) {
       console.error("Baggage tracking search error:", e);
       setErr("Could not load tracking. Check Firestore rules/connection.");
+    } finally {
       setLoading(false);
     }
   };
@@ -153,101 +226,15 @@ export default function BaggageTrackingPage({ user }) {
   const handleKeyDown = (e) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
-        const loadFallbackEvents = async (tag, mainData) => {
-    const flightId = mainData?.flightId;
-    if (!flightId) return [];
-
-    const fallback = [];
-
-    const counterSnap = await getDoc(
-      doc(db, "flights", flightId, "counterScans", tag)
-    );
-
-    if (counterSnap.exists()) {
-      const d = counterSnap.data();
-      fallback.push({
-        id: "fallback_counter",
-        type: "COUNTER_SCAN",
-        message: "Bag tag scanned at counter",
-        tag,
-        flightId,
-        flightNumber: mainData.flightNumber || null,
-        flightDate: mainData.flightDate || null,
-        gate: mainData.gate || null,
-        createdAt: d.createdAt || null,
-        createdBy: d.scannedBy || null,
-      });
-    }
-
-    const bagroomSnap = await getDoc(
-      doc(db, "flights", flightId, "bagroomScans", tag)
-    );
-
-    if (bagroomSnap.exists()) {
-      const d = bagroomSnap.data();
-      fallback.push({
-        id: "fallback_bagroom",
-        type: "BAGROOM_SCAN",
-        message: "Bag received/scanned in Bagroom",
-        tag,
-        cartNumber: d.cartNumber || null,
-        flightId,
-        flightNumber: mainData.flightNumber || null,
-        flightDate: mainData.flightDate || null,
-        gate: mainData.gate || null,
-        createdAt: d.createdAt || null,
-        createdBy: d.scannedBy || null,
-      });
-    }
-
-    const aircraftSnap = await getDoc(
-      doc(db, "flights", flightId, "aircraftScans", tag)
-    );
-
-    if (aircraftSnap.exists()) {
-      const d = aircraftSnap.data();
-      fallback.push({
-        id: "fallback_aircraft",
-        type: "AIRCRAFT_LOAD",
-        message: "Bag loaded on aircraft",
-        tag,
-        zone: d.zone || null,
-        flightId,
-        flightNumber: mainData.flightNumber || null,
-        flightDate: mainData.flightDate || null,
-        gate: mainData.gate || null,
-        createdAt: d.createdAt || null,
-        createdBy: d.scannedBy || null,
-      });
-    }
-
-    return fallback;
-  };
       handleSearch();
     }
   };
 
   return (
-    <div
-      style={{
-        background: "white",
-        border: "1px solid #e5e7eb",
-        borderRadius: 12,
-        padding: 16,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          alignItems: "end",
-        }}
-      >
+    <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "end" }}>
         <div>
           <h2 style={{ margin: 0 }}>Baggage Tracking</h2>
-
           <p style={{ marginTop: 6, color: "#6b7280", fontSize: "0.9rem" }}>
             Track one bag from Counter → Bagroom → Aircraft → Offload/Reload.
           </p>
@@ -258,31 +245,10 @@ export default function BaggageTrackingPage({ user }) {
         </div>
       </div>
 
-      <hr
-        style={{
-          border: "none",
-          borderTop: "1px solid #e5e7eb",
-          margin: "14px 0",
-        }}
-      />
+      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
 
-      <section
-        style={{
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: 12,
-          background: "#f9fafb",
-          marginBottom: 14,
-        }}
-      >
-        <label
-          style={{
-            display: "block",
-            fontSize: "0.85rem",
-            color: "#374151",
-            marginBottom: 6,
-          }}
-        >
+      <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb", marginBottom: 14 }}>
+        <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
           Bag Tag Number
         </label>
 
@@ -300,8 +266,7 @@ export default function BaggageTrackingPage({ user }) {
               borderRadius: 12,
               border: "1px solid #d1d5db",
               background: "white",
-              fontFamily:
-                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
               fontSize: "0.95rem",
             }}
           />
@@ -324,36 +289,17 @@ export default function BaggageTrackingPage({ user }) {
         </div>
 
         {err && (
-          <p
-            style={{
-              marginTop: 10,
-              color: "#b91c1c",
-              fontWeight: 800,
-              whiteSpace: "pre-wrap",
-            }}
-          >
+          <p style={{ marginTop: 10, color: "#b91c1c", fontWeight: 800, whiteSpace: "pre-wrap" }}>
             {err}
           </p>
         )}
       </section>
-            {tagDoc && (
-        <section
-          style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 14,
-          }}
-        >
+
+      {tagDoc && (
+        <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, marginBottom: 14 }}>
           <h3 style={{ marginTop: 0 }}>Bag Summary</h3>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 10,
-            }}
-          >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
             <InfoCard label="Bag Tag" value={tagDoc.tag || searchedTag} />
             <InfoCard label="Flight" value={tagDoc.flightNumber || tagDoc.flightId || "-"} />
             <InfoCard label="Date" value={tagDoc.flightDate || "-"} />
@@ -365,19 +311,11 @@ export default function BaggageTrackingPage({ user }) {
       )}
 
       {tagDoc && (
-        <section
-          style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-          }}
-        >
+        <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
           <h3 style={{ marginTop: 0 }}>Tracking Timeline</h3>
 
           {sortedEvents.length === 0 ? (
-            <p style={{ color: "#6b7280" }}>
-              No event timeline found for this bag yet.
-            </p>
+            <p style={{ color: "#6b7280" }}>No event timeline found for this bag yet.</p>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
               {sortedEvents.map((ev) => (
@@ -391,14 +329,7 @@ export default function BaggageTrackingPage({ user }) {
                     background: "white",
                   }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      flexWrap: "wrap",
-                    }}
-                  >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                     <div style={{ fontWeight: 900 }}>
                       {getEventIcon(ev.type)} {getEventTitle(ev.type)}
                     </div>
@@ -412,15 +343,7 @@ export default function BaggageTrackingPage({ user }) {
                     {ev.message || "-"}
                   </div>
 
-                  <div
-                    style={{
-                      marginTop: 8,
-                      display: "flex",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      fontSize: "0.82rem",
-                    }}
-                  >
+                  <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.82rem" }}>
                     {ev.tag && <Badge label={`Tag ${ev.tag}`} />}
                     {ev.cartNumber && <Badge label={`Cart ${ev.cartNumber}`} />}
                     {ev.zone && <Badge label={`Zone ${ev.zone}`} />}
@@ -430,17 +353,7 @@ export default function BaggageTrackingPage({ user }) {
                   </div>
 
                   {ev.reason && (
-                    <div
-                      style={{
-                        marginTop: 8,
-                        padding: 8,
-                        borderRadius: 10,
-                        background: "#fef2f2",
-                        color: "#991b1b",
-                        fontSize: "0.85rem",
-                        fontWeight: 800,
-                      }}
-                    >
+                    <div style={{ marginTop: 8, padding: 8, borderRadius: 10, background: "#fef2f2", color: "#991b1b", fontSize: "0.85rem", fontWeight: 800 }}>
                       Reason: {ev.reason}
                     </div>
                   )}
@@ -456,14 +369,7 @@ export default function BaggageTrackingPage({ user }) {
 
 function InfoCard({ label, value }) {
   return (
-    <div
-      style={{
-        border: "1px solid #e5e7eb",
-        borderRadius: 12,
-        padding: 10,
-        background: "#f9fafb",
-      }}
-    >
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 10, background: "#f9fafb" }}>
       <div style={{ fontSize: "0.8rem", color: "#6b7280" }}>{label}</div>
       <div style={{ fontSize: "1rem", fontWeight: 900 }}>{value}</div>
     </div>
