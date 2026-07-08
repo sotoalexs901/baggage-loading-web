@@ -8,6 +8,8 @@ import BagroomScanPage from "./pages/BagroomScanPage.jsx";
 import AircraftScanPage from "./pages/AircraftScanPage.jsx";
 import ReportsPage from "./pages/ReportsPage.jsx";
 import AdminUsersPage from "./pages/AdminUsersPage.jsx";
+import CounterScanPage from "./pages/CounterScanPage.jsx";
+import BaggageTrackingPage from "./pages/BaggageTrackingPage.jsx";
 
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
@@ -30,7 +32,6 @@ export default function App() {
   }
 
   const role = normalizeRole(user.role);
-
   const isStationManager = role === "station_manager";
 
   const canCreateFlights =
@@ -44,14 +45,6 @@ export default function App() {
     role === "duty_manager" ||
     role === "supervisor" ||
     role === "gate_controller";
-
-  const canSeeDashboard = true;
-  const canSeeFlights = true;
-  const canSeeGate = true;
-  const canSeeBagroom = true;
-  const canSeeAircraft = true;
-  const canSeeReports = true;
-  const canSeeAdminUsers = isStationManager;
 
   const handleLogout = () => {
     setUser(null);
@@ -81,11 +74,13 @@ export default function App() {
         <FlightsPage
           user={user}
           canCreateFlights={canCreateFlights}
-          onFlightSelected={(flightId) => {
-            setSelectedFlightId(flightId);
-          }}
+          onFlightSelected={(flightId) => setSelectedFlightId(flightId)}
         />
       );
+    }
+
+    if (currentView === "tracking") {
+      return <BaggageTrackingPage user={user} />;
     }
 
     if (currentView === "adminUsers") {
@@ -94,6 +89,10 @@ export default function App() {
 
     if (!selectedFlightId) {
       return <p>Please select a flight first.</p>;
+    }
+
+    if (currentView === "counter") {
+      return <CounterScanPage flightId={selectedFlightId} user={user} />;
     }
 
     if (currentView === "gate") {
@@ -137,39 +136,35 @@ export default function App() {
           }}
         >
           <nav className="nav-buttons" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {canSeeDashboard && (
-              <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>
-            )}
+            <button onClick={() => setCurrentView("dashboard")}>Dashboard</button>
 
-            {canSeeFlights && (
-              <button onClick={() => setCurrentView("flights")}>Flights</button>
-            )}
+            <button onClick={() => setCurrentView("flights")}>Flights</button>
 
-            {canSeeGate && (
-              <button onClick={() => setCurrentView("gate")} disabled={!selectedFlightId}>
-                Gate Controller
-              </button>
-            )}
+            <button onClick={() => setCurrentView("counter")} disabled={!selectedFlightId}>
+              Counter Scan
+            </button>
 
-            {canSeeBagroom && (
-              <button onClick={() => setCurrentView("bagroom")} disabled={!selectedFlightId}>
-                Bagroom
-              </button>
-            )}
+            <button onClick={() => setCurrentView("gate")} disabled={!selectedFlightId}>
+              Gate Controller
+            </button>
 
-            {canSeeAircraft && (
-              <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
-                Aircraft
-              </button>
-            )}
+            <button onClick={() => setCurrentView("bagroom")} disabled={!selectedFlightId}>
+              Bagroom
+            </button>
 
-            {canSeeReports && (
-              <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
-                Reports
-              </button>
-            )}
+            <button onClick={() => setCurrentView("aircraft")} disabled={!selectedFlightId}>
+              Aircraft
+            </button>
 
-            {canSeeAdminUsers && (
+            <button onClick={() => setCurrentView("tracking")}>
+              Baggage Tracking
+            </button>
+
+            <button onClick={() => setCurrentView("reports")} disabled={!selectedFlightId}>
+              Reports
+            </button>
+
+            {isStationManager && (
               <button onClick={() => setCurrentView("adminUsers")}>Admin Users</button>
             )}
           </nav>
