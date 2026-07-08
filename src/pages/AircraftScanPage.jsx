@@ -39,6 +39,22 @@ function safeStr(v, fallback = "-") {
   return s ? s : fallback;
 }
 
+function normalizeBagType(value) {
+  const v = String(value || "CHECKED_BAG").trim().toUpperCase();
+
+  return v === "CHECKED_BAG" || v === "GATE_CHECK" || v === "OVERSIZE"
+    ? v
+    : "CHECKED_BAG";
+}
+
+function getBagTypeLabel(value) {
+  const v = normalizeBagType(value);
+
+  if (v === "GATE_CHECK") return "Gate Check";
+  if (v === "OVERSIZE") return "Oversize";
+  return "Checked Bag";
+}
+
 const MIN_TAG_LEN = 6;
 const AUTO_SUBMIT_IDLE_MS = 90;
 
@@ -249,7 +265,9 @@ export default function AircraftScanPage({ flightId, user }) {
   }, [flightId]);
 
   useEffect(() => {
-    if (inputRef.current) inputRef.current.focus();
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
   }, []);
 
   useEffect(() => {
@@ -266,6 +284,21 @@ export default function AircraftScanPage({ flightId, user }) {
     typeof flight?.checkedBagsTotal === "number"
       ? Math.max(0, flight.checkedBagsTotal - scans.length)
       : null;
+
+  const bagTypeCounts = useMemo(() => {
+    const counts = {
+      CHECKED_BAG: 0,
+      GATE_CHECK: 0,
+      OVERSIZE: 0,
+    };
+
+    for (const scan of scans) {
+      const type = normalizeBagType(scan.bagType);
+      counts[type] += 1;
+    }
+
+    return counts;
+  }, [scans]);
 
   const ensureStatusLoading = async () => {
     if (!flight) return;
@@ -331,7 +364,25 @@ export default function AircraftScanPage({ flightId, user }) {
 
     return { ok: true };
   };
-    const indexTagToThisFlight = async (tag, zoneNum) => {
+    const getBagTypeInfo = async (tag) => {
+    const snap = await getDoc(doc(db, "bagTags", tag));
+
+    if (!snap.exists()) {
+      return {
+        bagType: "CHECKED_BAG",
+        bagTypeLabel: "Checked Bag",
+      };
+    }
+
+    const data = snap.data();
+
+    return {
+      bagType: normalizeBagType(data.bagType),
+      bagTypeLabel: data.bagTypeLabel || getBagTypeLabel(data.bagType),
+    };
+  };
+
+  const indexTagToThisFlight = async (tag, zoneNum, typeInfo) => {
     const tagRef = doc(db, "bagTags", tag);
 
     await setDoc(
@@ -341,6 +392,9 @@ export default function AircraftScanPage({ flightId, user }) {
         flightId,
         flightNumber: flight?.flightNumber || null,
         flightDate: flight?.flightDate || null,
+        gate: flight?.gate || null,
+        bagType: typeInfo?.bagType || "CHECKED_BAG",
+        bagTypeLabel: typeInfo?.bagTypeLabel || "Checked Bag",
         lastSeenAt: serverTimestamp(),
         lastSeenLocation: "aircraft",
         lastSeenZone: zoneNum ?? null,
@@ -360,6 +414,8 @@ export default function AircraftScanPage({ flightId, user }) {
     tag,
     zoneNum = null,
     reason = null,
+    bagType = "CHECKED_BAG",
+    bagTypeLabel = "Checked Bag",
   }) => {
     const eventRef = doc(
       db,
@@ -374,10 +430,12 @@ export default function AircraftScanPage({ flightId, user }) {
       location: type === "OFFLOAD_BAG" ? "offloaded" : "aircraft",
       message:
         type === "AIRCRAFT_LOAD"
-          ? "Bag loaded on aircraft"
-          : "Bag offloaded from aircraft",
+          ? `Bag loaded on aircraft · ${bagTypeLabel}`
+          : `Bag offloaded from aircraft · ${bagTypeLabel}`,
       tag,
       zone: zoneNum,
+      bagType,
+      bagTypeLabel,
       reason,
       flightId,
       flightNumber: flight?.flightNumber || null,
@@ -405,12 +463,16 @@ export default function AircraftScanPage({ flightId, user }) {
         "warning"
       );
 
-      return false;
+      return { ok: false, typeInfo: null };
     }
+
+    const typeInfo = await getBagTypeInfo(tag);
 
     await setDoc(scanRef, {
       tag,
       zone: zoneNum,
+      bagType: typeInfo.bagType,
+      bagTypeLabel: typeInfo.bagTypeLabel,
       createdAt: serverTimestamp(),
       scannedBy: {
         userId: user?.id || null,
@@ -419,7 +481,7 @@ export default function AircraftScanPage({ flightId, user }) {
       },
     });
 
-    return true;
+    return { ok: true, typeInfo };
   };
 
   const saveActionReport = async ({
@@ -529,6 +591,8 @@ export default function AircraftScanPage({ flightId, user }) {
 
     const tag = String(scan?.tag || scan?.id || "").trim();
     const zoneNum = scan?.zone ?? null;
+    const bagType = normalizeBagType(scan?.bagType);
+    const bagTypeLabel = scan?.bagTypeLabel || getBagTypeLabel(scan?.bagType);
 
     if (!tag) return;
 
@@ -539,6 +603,7 @@ export default function AircraftScanPage({ flightId, user }) {
       message:
         `You are about to offload this bag from aircraft.\n\n` +
         `Bag Tag: ${tag}\n` +
+        `Type: ${bagTypeLabel}\n` +
         `Zone: ${zoneNum ?? "-"}\n\n` +
         `Please enter the reason.`,
       onConfirm: async (reason) => {
@@ -553,6 +618,8 @@ export default function AircraftScanPage({ flightId, user }) {
             tag,
             zoneNum,
             extra: {
+              bagType,
+              bagTypeLabel,
               previousScan: scan || null,
             },
           });
@@ -566,6 +633,9 @@ export default function AircraftScanPage({ flightId, user }) {
               flightId,
               flightNumber: flight?.flightNumber || null,
               flightDate: flight?.flightDate || null,
+              gate: flight?.gate || null,
+              bagType,
+              bagTypeLabel,
               lastSeenAt: serverTimestamp(),
               lastSeenLocation: "offloaded",
               lastSeenZone: zoneNum,
@@ -590,6 +660,8 @@ export default function AircraftScanPage({ flightId, user }) {
             tag,
             zoneNum,
             reason,
+            bagType,
+            bagTypeLabel,
           });
 
           if (isLoadingCompleted) {
@@ -611,7 +683,7 @@ export default function AircraftScanPage({ flightId, user }) {
             );
           }
 
-          setMsg(`✅ Bag offloaded: ${tag}. Reason saved in reports/tracking.`);
+          setMsg(`✅ Bag offloaded: ${tag} · ${bagTypeLabel}. Reason saved in reports/tracking.`);
         } catch (e) {
           console.error(e);
           setErr("Could not offload bag. Check Firestore rules/connection.");
@@ -667,23 +739,30 @@ export default function AircraftScanPage({ flightId, user }) {
         return;
       }
 
-      const ok = await saveAircraftScan(tag, zoneNum);
-      if (!ok) {
+      const result = await saveAircraftScan(tag, zoneNum);
+      if (!result.ok) {
         setTagInput("");
         return;
       }
 
-      await indexTagToThisFlight(tag, zoneNum);
+      const typeInfo = result.typeInfo || {
+        bagType: "CHECKED_BAG",
+        bagTypeLabel: "Checked Bag",
+      };
+
+      await indexTagToThisFlight(tag, zoneNum, typeInfo);
 
       await saveTrackingEvent({
         type: "AIRCRAFT_LOAD",
         tag,
         zoneNum,
+        bagType: typeInfo.bagType,
+        bagTypeLabel: typeInfo.bagTypeLabel,
       });
 
       await ensureStatusLoading();
 
-      setMsg(`Scanned ✅  Tag: ${tag}  (Zone ${zoneNum})`);
+      setMsg(`Scanned ✅ Tag: ${tag} · ${typeInfo.bagTypeLabel} · Zone ${zoneNum}`);
       setTagInput("");
 
       if (inputRef.current) inputRef.current.focus();
@@ -736,6 +815,21 @@ export default function AircraftScanPage({ flightId, user }) {
     return z;
   };
 
+  const computeBagTypes = (rows) => {
+    const counts = {
+      CHECKED_BAG: 0,
+      GATE_CHECK: 0,
+      OVERSIZE: 0,
+    };
+
+    for (const r of rows) {
+      const type = normalizeBagType(r.bagType);
+      counts[type] += 1;
+    }
+
+    return counts;
+  };
+
   const buildPdf = ({ flightDoc, aircraftRows, bagroomCount }) => {
     const pdf = new jsPDF();
 
@@ -760,6 +854,7 @@ export default function AircraftScanPage({ flightId, user }) {
 
     const aircraftTotal = aircraftRows.length;
     const zones = computeZones(aircraftRows);
+    const bagTypes = computeBagTypes(aircraftRows);
 
     const missing =
       gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
@@ -785,6 +880,9 @@ export default function AircraftScanPage({ flightId, user }) {
         ["Gate checked total", gateTotal === null ? "—" : String(gateTotal)],
         ["Bagroom scanned", String(bagroomCount)],
         ["Aircraft scanned", String(aircraftTotal)],
+        ["Checked Bags loaded", String(bagTypes.CHECKED_BAG)],
+        ["Gate Checks loaded", String(bagTypes.GATE_CHECK)],
+        ["Oversize loaded", String(bagTypes.OVERSIZE)],
         ["Zone 1", String(zones[1])],
         ["Zone 2", String(zones[2])],
         ["Zone 3", String(zones[3])],
@@ -800,13 +898,14 @@ export default function AircraftScanPage({ flightId, user }) {
       .sort((a, b) => String(a.tag).localeCompare(String(b.tag)))
       .map((r) => [
         String(r.tag),
+        r.bagTypeLabel || getBagTypeLabel(r.bagType),
         `Z${r.zone ?? "-"}`,
         r.scannedBy?.username || "-",
       ]);
 
     autoTable(pdf, {
       startY: pdf.lastAutoTable.finalY + 8,
-      head: [["Bag Tag", "Zone", "Scanned By"]],
+      head: [["Bag Tag", "Type", "Zone", "Scanned By"]],
       body: tags,
       styles: { fontSize: 9 },
       headStyles: { fillColor: [240, 240, 240] },
@@ -894,6 +993,7 @@ export default function AircraftScanPage({ flightId, user }) {
                 : null,
             bagroomTotal: loadingBagroomTotal ? null : bagroomTotal,
             aircraftTotal: scans.length,
+            bagTypes: bagTypeCounts,
           },
         },
         { merge: true }
@@ -947,7 +1047,7 @@ export default function AircraftScanPage({ flightId, user }) {
       cancelText: "Not yet",
       content: (
         <div style={{ whiteSpace: "pre-wrap" }}>
-          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nMark loading completed and generate report PDF?`}
+          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nChecked Bags: ${bagTypeCounts.CHECKED_BAG}\nGate Checks: ${bagTypeCounts.GATE_CHECK}\nOversize: ${bagTypeCounts.OVERSIZE}\n\nMark loading completed and generate report PDF?`}
         </div>
       ),
       onCancel: close,
@@ -963,6 +1063,7 @@ export default function AircraftScanPage({ flightId, user }) {
               aircraftLoadingCompleted: true,
               aircraftLoadingCompletedAt: serverTimestamp(),
               aircraftLoadedBags: aircraftTotal,
+              aircraftLoadedBagTypes: bagTypeCounts,
               aircraftLoadingCompletedBy: {
                 userId: user?.id || null,
                 username: user?.username || null,
@@ -986,6 +1087,7 @@ export default function AircraftScanPage({ flightId, user }) {
             extra: {
               aircraftLoadedBags: aircraftTotal,
               gateCheckedTotal: checkedTotal,
+              aircraftLoadedBagTypes: bagTypeCounts,
             },
           });
 
@@ -1183,6 +1285,12 @@ export default function AircraftScanPage({ flightId, user }) {
                   </strong>
                 </p>
               )}
+
+              <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.82rem" }}>
+                <span style={miniPill}>Checked: {bagTypeCounts.CHECKED_BAG}</span>
+                <span style={miniPill}>Gate Check: {bagTypeCounts.GATE_CHECK}</span>
+                <span style={miniPill}>Oversize: {bagTypeCounts.OVERSIZE}</span>
+              </div>
             </div>
 
             {canCompleteLoading && (
@@ -1214,6 +1322,7 @@ export default function AircraftScanPage({ flightId, user }) {
                 <thead>
                   <tr style={{ background: "#f9fafb" }}>
                     <th style={th}>Tag</th>
+                    <th style={th}>Type</th>
                     <th style={th}>Zone</th>
                     <th style={th}>User</th>
                     <th style={{ ...th, textAlign: "right" }}>Action</th>
@@ -1228,6 +1337,7 @@ export default function AircraftScanPage({ flightId, user }) {
                     return (
                       <tr key={s.id}>
                         <td style={td}><strong>{tag}</strong></td>
+                        <td style={td}>{s.bagTypeLabel || getBagTypeLabel(s.bagType)}</td>
                         <td style={td}>{s.zone ?? "-"}</td>
                         <td style={{ ...td, color: "#6b7280" }}>{s.scannedBy?.username || "-"}</td>
                         <td style={{ ...td, textAlign: "right" }}>
@@ -1285,6 +1395,17 @@ export default function AircraftScanPage({ flightId, user }) {
     </div>
   );
 }
+
+const miniPill = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "4px 8px",
+  borderRadius: 999,
+  background: "#f3f4f6",
+  border: "1px solid #e5e7eb",
+  color: "#374151",
+  fontWeight: 800,
+};
 
 const th = {
   textAlign: "left",
