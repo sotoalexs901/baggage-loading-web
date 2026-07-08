@@ -20,6 +20,7 @@ export default function App() {
   const [gateControllerOnDuty, setGateControllerOnDuty] = useState(null);
   const [currentView, setCurrentView] = useState("dashboard");
   const [selectedFlightId, setSelectedFlightId] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const handleLogin = (userData, sessionMeta) => {
     setUser(userData);
@@ -46,11 +47,16 @@ export default function App() {
     role === "supervisor" ||
     role === "gate_controller";
 
+  const handleSoftRefresh = () => {
+    setRefreshKey((prev) => prev + 1);
+  };
+
   const handleLogout = () => {
     setUser(null);
     setGateControllerOnDuty(null);
     setSelectedFlightId(null);
     setCurrentView("dashboard");
+    setRefreshKey(0);
   };
 
   const handleOpenFlightFromDashboard = (flightId, targetView) => {
@@ -181,6 +187,10 @@ export default function App() {
               </div>
             )}
 
+            <button onClick={handleSoftRefresh} style={{ marginTop: 6, marginRight: 6 }}>
+              Refresh
+            </button>
+
             <button onClick={handleLogout} style={{ marginTop: 6 }}>
               Logout
             </button>
@@ -194,7 +204,7 @@ export default function App() {
         )}
       </header>
 
-      <main>{renderView()}</main>
+      <main key={refreshKey}>{renderView()}</main>
     </div>
   );
 }
