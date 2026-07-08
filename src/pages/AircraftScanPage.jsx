@@ -364,23 +364,38 @@ export default function AircraftScanPage({ flightId, user }) {
 
     return { ok: true };
   };
-    const getBagTypeInfo = async (tag) => {
-    const snap = await getDoc(doc(db, "bagTags", tag));
+  const getBagTypeInfo = async (tag) => {
+  const tagSnap = await getDoc(doc(db, "bagTags", tag));
 
-    if (!snap.exists()) {
+  if (tagSnap.exists()) {
+    const data = tagSnap.data();
+
+    if (data.bagType) {
       return {
-        bagType: "CHECKED_BAG",
-        bagTypeLabel: "Checked Bag",
+        bagType: normalizeBagType(data.bagType),
+        bagTypeLabel: data.bagTypeLabel || getBagTypeLabel(data.bagType),
       };
     }
+  }
 
-    const data = snap.data();
+  const counterSnap = await getDoc(
+    doc(db, "flights", flightId, "counterScans", tag)
+  );
+
+  if (counterSnap.exists()) {
+    const data = counterSnap.data();
 
     return {
       bagType: normalizeBagType(data.bagType),
       bagTypeLabel: data.bagTypeLabel || getBagTypeLabel(data.bagType),
     };
+  }
+
+  return {
+    bagType: "CHECKED_BAG",
+    bagTypeLabel: "Checked Bag",
   };
+};
 
   const indexTagToThisFlight = async (tag, zoneNum, typeInfo) => {
     const tagRef = doc(db, "bagTags", tag);
@@ -451,20 +466,46 @@ export default function AircraftScanPage({ flightId, user }) {
   };
 
   const saveAircraftScan = async (tag, zoneNum) => {
-    const scanRef = doc(db, "flights", flightId, "aircraftScans", tag);
-    const existing = await getDoc(scanRef);
+  const scanRef = doc(db, "flights", flightId, "aircraftScans", tag);
+  const existing = await getDoc(scanRef);
+  const typeInfo = await getBagTypeInfo(tag);
 
-    if (existing.exists()) {
-      const prev = existing.data();
+  if (existing.exists()) {
+    const prev = existing.data();
 
-      popup(
-        "Duplicate scan",
-        `⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}`,
-        "warning"
-      );
+    await setDoc(
+      scanRef,
+      {
+        bagType: typeInfo.bagType,
+        bagTypeLabel: typeInfo.bagTypeLabel,
+      },
+      { merge: true }
+    );
 
-      return { ok: false, typeInfo: null };
-    }
+    popup(
+      "Duplicate scan",
+      `⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}\nType updated: ${typeInfo.bagTypeLabel}`,
+      "warning"
+    );
+
+    return { ok: false, typeInfo };
+  }
+
+  await setDoc(scanRef, {
+    tag,
+    zone: zoneNum,
+    bagType: typeInfo.bagType,
+    bagTypeLabel: typeInfo.bagTypeLabel,
+    createdAt: serverTimestamp(),
+    scannedBy: {
+      userId: user?.id || null,
+      username: user?.username || null,
+      role: user?.role || null,
+    },
+  });
+
+  return { ok: true, typeInfo };
+};
 
     const typeInfo = await getBagTypeInfo(tag);
 
