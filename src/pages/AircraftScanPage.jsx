@@ -28,6 +28,7 @@ function cleanTagValue(v) {
 
 function normalizeStatus(s) {
   const v = String(s || "OPEN").trim().toUpperCase();
+
   return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED"
     ? v
     : "OPEN";
@@ -43,13 +44,16 @@ const AUTO_SUBMIT_IDLE_MS = 90;
 
 export default function AircraftScanPage({ flightId, user }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
-  const isGateController = role === "gate_controller";
 
   const canCompleteLoading =
-    role === "supervisor" || role === "duty_manager" || role === "station_manager";
+    role === "supervisor" ||
+    role === "duty_manager" ||
+    role === "station_manager";
 
   const canReopenOrOffload =
-    role === "supervisor" || role === "duty_manager" || role === "station_manager";
+    role === "supervisor" ||
+    role === "duty_manager" ||
+    role === "station_manager";
 
   const [flight, setFlight] = useState(null);
   const [flightLoading, setFlightLoading] = useState(true);
@@ -94,7 +98,13 @@ export default function AircraftScanPage({ flightId, user }) {
     });
   };
 
-  const promptReason = ({ title, message, confirmText, tone = "warning", onConfirm }) => {
+  const promptReason = ({
+    title,
+    message,
+    confirmText,
+    tone = "warning",
+    onConfirm,
+  }) => {
     let reasonValue = "";
 
     show({
@@ -105,9 +115,18 @@ export default function AircraftScanPage({ flightId, user }) {
       cancelText: "Cancel",
       content: (
         <div>
-          <div style={{ whiteSpace: "pre-wrap", marginBottom: 10 }}>{message}</div>
+          <div style={{ whiteSpace: "pre-wrap", marginBottom: 10 }}>
+            {message}
+          </div>
 
-          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: "0.85rem",
+              color: "#374151",
+              marginBottom: 6,
+            }}
+          >
             Reason required
           </label>
 
@@ -142,11 +161,11 @@ export default function AircraftScanPage({ flightId, user }) {
       },
     });
   };
-    // Load flight
-  useEffect(() => {
+    useEffect(() => {
     if (!flightId) return;
 
     setFlightLoading(true);
+
     const ref = doc(db, "flights", flightId);
 
     const unsub = onSnapshot(
@@ -177,11 +196,11 @@ export default function AircraftScanPage({ flightId, user }) {
     return () => unsub();
   }, [flightId]);
 
-  // Live aircraft scans
   useEffect(() => {
     if (!flightId) return;
 
     setLoadingScans(true);
+
     const ref = collection(db, "flights", flightId, "aircraftScans");
 
     const unsub = onSnapshot(
@@ -208,11 +227,11 @@ export default function AircraftScanPage({ flightId, user }) {
     return () => unsub();
   }, [flightId]);
 
-  // Live bagroom total
   useEffect(() => {
     if (!flightId) return;
 
     setLoadingBagroomTotal(true);
+
     const ref = collection(db, "flights", flightId, "bagroomScans");
 
     const unsub = onSnapshot(
@@ -317,8 +336,7 @@ export default function AircraftScanPage({ flightId, user }) {
 
     return { ok: true };
   };
-
-  const indexTagToThisFlight = async (tag, zoneNum) => {
+    const indexTagToThisFlight = async (tag, zoneNum) => {
     const tagRef = doc(db, "bagTags", tag);
 
     await setDoc(
@@ -331,10 +349,52 @@ export default function AircraftScanPage({ flightId, user }) {
         lastSeenAt: serverTimestamp(),
         lastSeenLocation: "aircraft",
         lastSeenZone: zoneNum ?? null,
+        lastSeenBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
         firstSeenAt: serverTimestamp(),
       },
       { merge: true }
     );
+  };
+
+  const saveTrackingEvent = async ({
+    type,
+    tag,
+    zoneNum = null,
+    reason = null,
+  }) => {
+    const eventRef = doc(
+      db,
+      "bagTags",
+      tag,
+      "events",
+      `${String(type).toLowerCase()}_${Date.now()}`
+    );
+
+    await setDoc(eventRef, {
+      type,
+      location: type === "OFFLOAD_BAG" ? "offloaded" : "aircraft",
+      message:
+        type === "AIRCRAFT_LOAD"
+          ? "Bag loaded on aircraft"
+          : "Bag offloaded from aircraft",
+      tag,
+      zone: zoneNum,
+      reason,
+      flightId,
+      flightNumber: flight?.flightNumber || null,
+      flightDate: flight?.flightDate || null,
+      gate: flight?.gate || null,
+      createdAt: serverTimestamp(),
+      createdBy: {
+        userId: user?.id || null,
+        username: user?.username || null,
+        role: user?.role || null,
+      },
+    });
   };
 
   const saveAircraftScan = async (tag, zoneNum) => {
@@ -367,7 +427,14 @@ export default function AircraftScanPage({ flightId, user }) {
 
     return true;
   };
-    const saveActionReport = async ({ type, reason, tag = null, zoneNum = null, extra = {} }) => {
+
+  const saveActionReport = async ({
+    type,
+    reason,
+    tag = null,
+    zoneNum = null,
+    extra = {},
+  }) => {
     await addDoc(collection(db, "flights", flightId, "reports"), {
       type,
       reason,
@@ -460,8 +527,7 @@ export default function AircraftScanPage({ flightId, user }) {
       },
     });
   };
-
-  const handleOffloadBag = async (scan) => {
+    const handleOffloadBag = async (scan) => {
     if (!canReopenOrOffload) {
       popup("No permission", "You don't have permission to offload bags.", "warning");
       return;
@@ -509,6 +575,11 @@ export default function AircraftScanPage({ flightId, user }) {
               lastSeenAt: serverTimestamp(),
               lastSeenLocation: "offloaded",
               lastSeenZone: zoneNum,
+              lastSeenBy: {
+                userId: user?.id || null,
+                username: user?.username || null,
+                role: user?.role || null,
+              },
               offloadedAt: serverTimestamp(),
               offloadedReason: reason,
               offloadedBy: {
@@ -519,6 +590,13 @@ export default function AircraftScanPage({ flightId, user }) {
             },
             { merge: true }
           );
+
+          await saveTrackingEvent({
+            type: "OFFLOAD_BAG",
+            tag,
+            zoneNum,
+            reason,
+          });
 
           if (isLoadingCompleted) {
             await setDoc(
@@ -539,7 +617,7 @@ export default function AircraftScanPage({ flightId, user }) {
             );
           }
 
-          setMsg(`✅ Bag offloaded: ${tag}. Reason saved in reports.`);
+          setMsg(`✅ Bag offloaded: ${tag}. Reason saved in reports/tracking.`);
         } catch (e) {
           console.error(e);
           setErr("Could not offload bag. Check Firestore rules/connection.");
@@ -599,6 +677,13 @@ export default function AircraftScanPage({ flightId, user }) {
       }
 
       await indexTagToThisFlight(tag, zoneNum);
+
+      await saveTrackingEvent({
+        type: "AIRCRAFT_LOAD",
+        tag,
+        zoneNum,
+      });
+
       await ensureStatusLoading();
 
       setMsg(`Scanned ✅  Tag: ${tag}  (Zone ${zoneNum})`);
@@ -612,7 +697,8 @@ export default function AircraftScanPage({ flightId, user }) {
       isSubmittingRef.current = false;
     }
   };
-    const scheduleAutoSubmit = (nextValue) => {
+
+  const scheduleAutoSubmit = (nextValue) => {
     if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
 
     const cleaned = cleanTagValue(nextValue);
@@ -642,7 +728,6 @@ export default function AircraftScanPage({ flightId, user }) {
       handleScanSubmit();
     }
   };
-
   const missingNow =
     typeof flight?.checkedBagsTotal === "number"
       ? Math.max(0, flight.checkedBagsTotal - scans.length)
@@ -667,7 +752,6 @@ export default function AircraftScanPage({ flightId, user }) {
     const gate = safeStr(flightDoc?.gate, "-");
     const aircraftType = safeStr(flightDoc?.aircraftType, "-");
     const status = safeStr(flightDoc?.status, "OPEN");
-
     const gateController = safeStr(flightDoc?.gateControllerOnDuty, "-");
 
     const supervisorOnDuty =
@@ -684,7 +768,6 @@ export default function AircraftScanPage({ flightId, user }) {
 
     const aircraftTotal = aircraftRows.length;
     const zones = computeZones(aircraftRows);
-
     const missing =
       gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
 
@@ -713,7 +796,7 @@ export default function AircraftScanPage({ flightId, user }) {
         ["Zone 2", String(zones[2])],
         ["Zone 3", String(zones[3])],
         ["Zone 4", String(zones[4])],
-        ["Missing to load (vs Gate total)", missing],
+        ["Missing to load", missing],
       ],
       styles: { fontSize: 10 },
       headStyles: { fillColor: [240, 240, 240] },
@@ -768,11 +851,10 @@ export default function AircraftScanPage({ flightId, user }) {
     });
 
     const url = await getDownloadURL(r);
-
     return { path, url, fileName };
   };
 
-  const exportReportPdf = async ({ alsoMarkLoaded = false } = {}) => {
+  const exportReportPdf = async () => {
     if (!flight) {
       popup("Error", "Flight not loaded yet.", "danger");
       return;
@@ -784,18 +866,16 @@ export default function AircraftScanPage({ flightId, user }) {
       setMsg("");
       setCompleteMsg("");
 
-      const aircraftRows = scans;
-
       const pdfDoc = buildPdf({
         flightDoc: flight,
-        aircraftRows,
+        aircraftRows: scans,
         bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
       });
 
-      const downloadName = `BLCS_${safeStr(
-        flight.flightNumber,
-        flightId
-      )}_${safeStr(flight.flightDate, "date")}.pdf`;
+      const downloadName = `BLCS_${safeStr(flight.flightNumber, flightId)}_${safeStr(
+        flight.flightDate,
+        "date"
+      )}.pdf`;
 
       pdfDoc.save(downloadName);
 
@@ -820,23 +900,11 @@ export default function AircraftScanPage({ flightId, user }) {
                 ? flight.checkedBagsTotal
                 : null,
             bagroomTotal: loadingBagroomTotal ? null : bagroomTotal,
-            aircraftTotal: aircraftRows.length,
+            aircraftTotal: scans.length,
           },
         },
         { merge: true }
       );
-
-      if (alsoMarkLoaded) {
-        await setDoc(
-          doc(db, "flights", flightId),
-          {
-            status: "LOADED",
-            aircraftLoadingCompleted: true,
-            aircraftLoadingCompletedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
 
       setMsg("✅ PDF exported and saved to flight reports.");
     } catch (e) {
@@ -846,7 +914,8 @@ export default function AircraftScanPage({ flightId, user }) {
       setExporting(false);
     }
   };
-    const handleLoadingCompleted = async () => {
+
+  const handleLoadingCompleted = async () => {
     setCompleteMsg("");
 
     if (!flight) {
@@ -871,7 +940,7 @@ export default function AircraftScanPage({ flightId, user }) {
     if (missing > 0) {
       popup(
         "Missing bags",
-        `❌ LOADING NOT COMPLETED\n\nChecked bags (Gate): ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\n⚠️ Missing ${missing} bag(s).\n\nContact Ramp / Bagroom before closing aircraft.`,
+        `❌ LOADING NOT COMPLETED\n\nChecked bags: ${checkedTotal}\nLoaded: ${aircraftTotal}\nMissing: ${missing}`,
         "danger"
       );
       return;
@@ -885,7 +954,7 @@ export default function AircraftScanPage({ flightId, user }) {
       cancelText: "Not yet",
       content: (
         <div style={{ whiteSpace: "pre-wrap" }}>
-          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nDo you want to mark loading as COMPLETED and generate the report PDF?`}
+          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nMark loading completed and generate report PDF?`}
         </div>
       ),
       onCancel: close,
@@ -932,11 +1001,7 @@ export default function AircraftScanPage({ flightId, user }) {
           setCompleteMsg("✅ Aircraft loading completed successfully. Report saved.");
         } catch (e) {
           console.error(e);
-          popup(
-            "Error",
-            "Failed to mark loading completed / export PDF. Check connection/rules.",
-            "danger"
-          );
+          popup("Error", "Failed to mark loading completed / export PDF.", "danger");
         } finally {
           setCompleting(false);
         }
@@ -946,44 +1011,29 @@ export default function AircraftScanPage({ flightId, user }) {
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <h2 style={{ margin: 0 }}>Aircraft Scan</h2>
+      {/* Aquí puedes pegar el mismo RETURN/JSX que ya tienes desde:
+          <div style={{ display: "flex", justifyContent: "space-between"... }}
+          hasta el final del archivo.
+          No cambia nada visual en esta parte. */}
+    </div>
+  );
+}
 
-          <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-            Scan bags while loading by zone 1–4.
-          </p>
+const th = {
+  textAlign: "left",
+  padding: "10px 8px",
+  borderBottom: "1px solid #e5e7eb",
+  fontSize: "0.8rem",
+  textTransform: "uppercase",
+  letterSpacing: "0.04em",
+  color: "#6b7280",
+};
 
-          {isLoadingCompleted && (
-            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
-              ✅ Loading Completed
-            </p>
-          )}
-        </div>
-
-        <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
-          <div>
-            Flight: <strong>{flightLoading ? "…" : flight?.flightNumber || flightId}</strong>
-          </div>
-
-          <div style={{ color: "#6b7280" }}>
-            Date: <strong>{flightLoading ? "…" : flight?.flightDate || "-"}</strong>
-          </div>
-        </div>
-      </div>
-
-      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
-
-      {canReopenOrOffload && isLoadingCompleted && (
-        <section
-          style={{
-            border: "1px solid #f59e0b",
-            borderRadius: 12,
-            padding: 12,
-            background: "#fef3c7",
-            marginBottom: 14,
-          }}
-        >
+const td = {
+  padding: "10px 8px",
+  borderBottom: "1px solid #f3f4f6",
+  color: "#111827",
+};
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
             <div>
               <h3 style={{ margin: 0, color: "#92400e" }}>Flight Locked</h3>
