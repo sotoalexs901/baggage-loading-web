@@ -171,7 +171,8 @@ export default function BagroomScanPage({ flightId, user }) {
       }
     };
   }, []);
-    const isLoadingCompleted =
+
+  const isLoadingCompleted =
     Boolean(flight?.aircraftLoadingCompleted) ||
     normalizeStatus(flight?.status) === "LOADED";
 
@@ -226,12 +227,9 @@ export default function BagroomScanPage({ flightId, user }) {
     );
   };
 
-  const validateAgainstManifest = async (tag) => {
-  // Bagroom puede escanear antes de que Gate suba el manifiesto.
-  // También permite escanear aunque el tag no esté en manifest.
-  // Gate Controller hará el match luego y mostrará "Not in Manifest".
-  return { ok: true };
-};
+  const validateAgainstManifest = async () => {
+    return { ok: true };
+  };
 
   const validateAgainstOtherFlight = async (tag) => {
     const tagRef = doc(db, "bagTags", tag);
@@ -268,18 +266,54 @@ export default function BagroomScanPage({ flightId, user }) {
         lastSeenAt: serverTimestamp(),
         lastSeenLocation: "bagroom",
         lastSeenCart: selectedCart || null,
+        lastSeenBy: {
+          userId: user?.id || null,
+          username: user?.username || null,
+          role: user?.role || null,
+        },
         firstSeenAt: serverTimestamp(),
       },
       { merge: true }
     );
   };
 
-  const saveBagroomScan = async (tag) => {
+  const saveTrackingEvent = async (tag) => {
+    const eventRef = doc(
+      db,
+      "bagTags",
+      tag,
+      "events",
+      `bagroom_${Date.now()}`
+    );
+
+    await setDoc(eventRef, {
+      type: "BAGROOM_SCAN",
+      location: "bagroom",
+      message: "Bag received/scanned in Bagroom",
+      tag,
+      cartNumber: selectedCart || null,
+      flightId,
+      flightNumber: flight?.flightNumber || null,
+      flightDate: flight?.flightDate || null,
+      gate: flight?.gate || null,
+      createdAt: serverTimestamp(),
+      createdBy: {
+        userId: user?.id || null,
+        username: user?.username || null,
+        role: user?.role || null,
+      },
+    });
+  };
+    const saveBagroomScan = async (tag) => {
     const ref = doc(db, "flights", flightId, "bagroomScans", tag);
     const existing = await getDoc(ref);
 
     if (existing.exists()) {
-      popup("Duplicate scan", "⚠️ Bag already scanned in Bagroom.", "warning");
+      popup(
+        "Duplicate scan",
+        "⚠️ Bag already scanned in Bagroom.",
+        "warning"
+      );
       return false;
     }
 
@@ -323,6 +357,7 @@ export default function BagroomScanPage({ flightId, user }) {
     }
 
     const tag = cleanTagValue(forcedTag ?? tagInput);
+
     if (!tag) return;
 
     if (tag.length < MIN_TAG_LEN) return;
@@ -335,10 +370,10 @@ export default function BagroomScanPage({ flightId, user }) {
         return;
       }
 
-      const m = await validateAgainstManifest(tag);
+      const manifest = await validateAgainstManifest(tag);
 
-      if (!m.ok) {
-        popup("Not in manifest", m.message, "danger");
+      if (!manifest.ok) {
+        popup("Not in Manifest", manifest.message, "danger");
         setTagInput("");
         return;
       }
@@ -346,7 +381,7 @@ export default function BagroomScanPage({ flightId, user }) {
       const cross = await validateAgainstOtherFlight(tag);
 
       if (!cross.ok) {
-        popup("Wrong flight/date", cross.message, "danger");
+        popup("Wrong Flight", cross.message, "danger");
         setTagInput("");
         return;
       }
@@ -361,14 +396,23 @@ export default function BagroomScanPage({ flightId, user }) {
       }
 
       await indexTag(tag);
+
+      // ⭐ NUEVO TRACKING
+      await saveTrackingEvent(tag);
+
       await ensureStatusReceiving();
 
-      localStorage.setItem(`bagroomCart_${flightId}`, selectedCart);
+      localStorage.setItem(
+        `bagroomCart_${flightId}`,
+        selectedCart
+      );
 
       setMsg(`Scanned ✅ Cart ${selectedCart} · ${tag}`);
       setTagInput("");
 
-      if (inputRef.current) inputRef.current.focus();
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
     } catch (e) {
       console.error(e);
       setErr("Scan failed. Check connection.");
@@ -378,26 +422,34 @@ export default function BagroomScanPage({ flightId, user }) {
   };
 
   const scheduleAutoSubmit = (nextValue) => {
-    if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+    if (autoTimerRef.current) {
+      clearTimeout(autoTimerRef.current);
+    }
 
     const cleaned = cleanTagValue(nextValue);
 
-    if (/[\r\n]/.test(String(nextValue || "")) && cleaned.length >= MIN_TAG_LEN) {
+    if (
+      /[\r\n]/.test(String(nextValue || "")) &&
+      cleaned.length >= MIN_TAG_LEN
+    ) {
       handleScanSubmit(cleaned);
       return;
     }
 
     autoTimerRef.current = setTimeout(() => {
-      if (cleaned.length >= MIN_TAG_LEN) handleScanSubmit(cleaned);
+      if (cleaned.length >= MIN_TAG_LEN) {
+        handleScanSubmit(cleaned);
+      }
     }, AUTO_SUBMIT_IDLE_MS);
   };
 
   const handleChange = (e) => {
-    const v = e.target.value;
-    setTagInput(v);
+    const value = e.target.value;
+
+    setTagInput(value);
 
     if (!isLoadingCompleted) {
-      scheduleAutoSubmit(v);
+      scheduleAutoSubmit(value);
     }
   };
 
@@ -407,7 +459,9 @@ export default function BagroomScanPage({ flightId, user }) {
       handleScanSubmit();
     }
   };
-    return (
+
+  return (
+    
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
