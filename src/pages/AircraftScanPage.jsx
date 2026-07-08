@@ -465,7 +465,7 @@ export default function AircraftScanPage({ flightId, user }) {
     });
   };
 
-  const saveAircraftScan = async (tag, zoneNum) => {
+const saveAircraftScan = async (tag, zoneNum) => {
   const scanRef = doc(db, "flights", flightId, "aircraftScans", tag);
   const existing = await getDoc(scanRef);
   const typeInfo = await getBagTypeInfo(tag);
@@ -506,24 +506,6 @@ export default function AircraftScanPage({ flightId, user }) {
 
   return { ok: true, typeInfo };
 };
-
-    const typeInfo = await getBagTypeInfo(tag);
-
-    await setDoc(scanRef, {
-      tag,
-      zone: zoneNum,
-      bagType: typeInfo.bagType,
-      bagTypeLabel: typeInfo.bagTypeLabel,
-      createdAt: serverTimestamp(),
-      scannedBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
-    });
-
-    return { ok: true, typeInfo };
-  };
 
   const saveActionReport = async ({
     type,
