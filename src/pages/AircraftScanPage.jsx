@@ -59,7 +59,6 @@ export default function AircraftScanPage({ flightId, user }) {
   const [flightLoading, setFlightLoading] = useState(true);
 
   const [zone, setZone] = useState(1);
-
   const [tagInput, setTagInput] = useState("");
   const inputRef = useRef(null);
 
@@ -78,14 +77,13 @@ export default function AircraftScanPage({ flightId, user }) {
   const [completeMsg, setCompleteMsg] = useState("");
 
   const [exporting, setExporting] = useState(false);
-
   const [reopening, setReopening] = useState(false);
   const [offloadingTag, setOffloadingTag] = useState("");
 
-  const { modal, show, close } = useModal();
-
   const autoTimerRef = useRef(null);
   const isSubmittingRef = useRef(false);
+
+  const { modal, show, close } = useModal();
 
   const popup = (title, message, tone = "info") => {
     show({
@@ -264,6 +262,11 @@ export default function AircraftScanPage({ flightId, user }) {
     Boolean(flight?.aircraftLoadingCompleted) ||
     normalizeStatus(flight?.status) === "LOADED";
 
+  const missingNow =
+    typeof flight?.checkedBagsTotal === "number"
+      ? Math.max(0, flight.checkedBagsTotal - scans.length)
+      : null;
+
   const ensureStatusLoading = async () => {
     if (!flight) return;
 
@@ -296,17 +299,12 @@ export default function AircraftScanPage({ flightId, user }) {
     const existing = snap.data();
 
     if (existing.flightId && existing.flightId !== flightId) {
-      const currentFlightNumber = flight?.flightNumber || flightId;
-      const currentDate = flight?.flightDate || "(no date)";
-      const otherFlightNumber = existing.flightNumber || existing.flightId;
-      const otherDate = existing.flightDate || "(no date)";
-
       return {
         ok: false,
         message:
           `❌ Bag tag belongs to a different flight/date.\n\n` +
-          `Current: ${currentFlightNumber} (${currentDate})\n` +
-          `Registered: ${otherFlightNumber} (${otherDate})\n\n` +
+          `Current: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
+          `Registered: ${existing.flightNumber || existing.flightId} (${existing.flightDate || "-"})\n\n` +
           `Do NOT load this bag on this aircraft.`,
       };
     }
@@ -321,14 +319,11 @@ export default function AircraftScanPage({ flightId, user }) {
     const allowSnap = await getDoc(allowRef);
 
     if (!allowSnap.exists()) {
-      const currentFlightNumber = flight?.flightNumber || flightId;
-      const currentDate = flight?.flightDate || "(no date)";
-
       return {
         ok: false,
         message:
           `❌ Bag tag NOT found in this flight manifest.\n\n` +
-          `Flight: ${currentFlightNumber} (${currentDate})\n` +
+          `Flight: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
           `Tag: ${tag}\n\n` +
           `Check tag / passenger list. Do NOT load.`,
       };
@@ -399,7 +394,6 @@ export default function AircraftScanPage({ flightId, user }) {
 
   const saveAircraftScan = async (tag, zoneNum) => {
     const scanRef = doc(db, "flights", flightId, "aircraftScans", tag);
-
     const existing = await getDoc(scanRef);
 
     if (existing.exists()) {
@@ -636,14 +630,17 @@ export default function AircraftScanPage({ flightId, user }) {
     setCompleteMsg("");
 
     if (isLoadingCompleted) {
-      popup("Locked", "⚠️ Loading is already completed for this flight. Reopen flight first.", "warning");
+      popup(
+        "Locked",
+        "⚠️ Loading is already completed for this flight. Reopen flight first.",
+        "warning"
+      );
       setTagInput("");
       return;
     }
 
     const tag = cleanTagValue(forcedTag ?? tagInput);
     if (!tag) return;
-
     if (tag.length < MIN_TAG_LEN) return;
 
     const zoneNum = Number(zone);
@@ -728,12 +725,7 @@ export default function AircraftScanPage({ flightId, user }) {
       handleScanSubmit();
     }
   };
-  const missingNow =
-    typeof flight?.checkedBagsTotal === "number"
-      ? Math.max(0, flight.checkedBagsTotal - scans.length)
-      : null;
-
-  const computeZones = (rows) => {
+    const computeZones = (rows) => {
     const z = { 1: 0, 2: 0, 3: 0, 4: 0 };
 
     for (const r of rows) {
@@ -768,6 +760,7 @@ export default function AircraftScanPage({ flightId, user }) {
 
     const aircraftTotal = aircraftRows.length;
     const zones = computeZones(aircraftRows);
+
     const missing =
       gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
 
@@ -872,10 +865,10 @@ export default function AircraftScanPage({ flightId, user }) {
         bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
       });
 
-      const downloadName = `BLCS_${safeStr(flight.flightNumber, flightId)}_${safeStr(
-        flight.flightDate,
-        "date"
-      )}.pdf`;
+      const downloadName = `BLCS_${safeStr(
+        flight.flightNumber,
+        flightId
+      )}_${safeStr(flight.flightDate, "date")}.pdf`;
 
       pdfDoc.save(downloadName);
 
@@ -1011,10 +1004,284 @@ export default function AircraftScanPage({ flightId, user }) {
 
   return (
     <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
-      {/* Aquí puedes pegar el mismo RETURN/JSX que ya tienes desde:
-          <div style={{ display: "flex", justifyContent: "space-between"... }}
-          hasta el final del archivo.
-          No cambia nada visual en esta parte. */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Aircraft Scan</h2>
+          <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+            Scan bags while loading by zone 1–4.
+          </p>
+
+          {isLoadingCompleted && (
+            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
+              ✅ Loading Completed
+            </p>
+          )}
+        </div>
+
+        <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
+          <div>
+            Flight: <strong>{flightLoading ? "…" : flight?.flightNumber || flightId}</strong>
+          </div>
+          <div style={{ color: "#6b7280" }}>
+            Date: <strong>{flightLoading ? "…" : flight?.flightDate || "-"}</strong>
+          </div>
+        </div>
+      </div>
+
+      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
+
+      {canReopenOrOffload && isLoadingCompleted && (
+        <section style={{ border: "1px solid #f59e0b", borderRadius: 12, padding: 12, background: "#fef3c7", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <h3 style={{ margin: 0, color: "#92400e" }}>Flight Locked</h3>
+              <p style={{ margin: "6px 0 0", color: "#92400e", fontSize: "0.9rem" }}>
+                To scan again or offload bags after completion, reopen the flight with a reason.
+              </p>
+            </div>
+
+            <button
+              onClick={handleReopenFlight}
+              disabled={reopening}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 12,
+                border: "1px solid #f59e0b",
+                background: "#f59e0b",
+                color: "white",
+                fontWeight: 900,
+                cursor: reopening ? "not-allowed" : "pointer",
+                opacity: reopening ? 0.7 : 1,
+              }}
+            >
+              {reopening ? "Reopening…" : "Reopen Flight"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 12 }}>
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
+          <h3 style={{ margin: 0 }}>Scan</h3>
+
+          <p style={{ margin: "6px 0 10px", color: "#6b7280", fontSize: "0.9rem" }}>
+            Select zone, then scan bag tag. Auto-save is enabled.
+          </p>
+
+          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
+            Zone
+          </label>
+
+          <select
+            value={zone}
+            onChange={(e) => setZone(Number(e.target.value))}
+            disabled={isLoadingCompleted}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isLoadingCompleted ? "#f3f4f6" : "white",
+            }}
+          >
+            <option value={1}>Zone 1</option>
+            <option value={2}>Zone 2</option>
+            <option value={3}>Zone 3</option>
+            <option value={4}>Zone 4</option>
+          </select>
+
+          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginTop: 12, marginBottom: 6 }}>
+            Bag Tag
+          </label>
+
+          <input
+            ref={inputRef}
+            value={tagInput}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            disabled={isLoadingCompleted}
+            placeholder={isLoadingCompleted ? "Loading completed - reopen first" : "Scan bag tag…"}
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isLoadingCompleted ? "#f3f4f6" : "white",
+            }}
+          />
+
+          <button
+            onClick={() => handleScanSubmit()}
+            disabled={isLoadingCompleted}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #1d4ed8",
+              background: isLoadingCompleted ? "#93c5fd" : "#2563eb",
+              color: "white",
+              fontWeight: 800,
+              cursor: isLoadingCompleted ? "not-allowed" : "pointer",
+            }}
+          >
+            Add Scan
+          </button>
+
+          <button
+            onClick={() => exportReportPdf()}
+            disabled={exporting || !flight || loadingScans}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              padding: "10px 12px",
+              borderRadius: 12,
+              border: "1px solid #111827",
+              background: "#111827",
+              color: "white",
+              fontWeight: 900,
+              cursor: exporting || !flight || loadingScans ? "not-allowed" : "pointer",
+              opacity: exporting || !flight || loadingScans ? 0.7 : 1,
+            }}
+          >
+            {exporting ? "Exporting…" : "Export PDF Report"}
+          </button>
+
+          {strictManifest && (
+            <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.85rem", fontWeight: 900 }}>
+              ⚠️ Strict Manifest ON
+            </p>
+          )}
+
+          {msg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem" }}>{msg}</p>}
+          {err && <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.9rem" }}>{err}</p>}
+          {completeMsg && (
+            <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>
+              {completeMsg}
+            </p>
+          )}
+        </div>
+
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>Aircraft Scans</h3>
+
+              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+                Total scanned: <strong>{loadingScans ? "…" : scans.length}</strong>
+              </p>
+
+              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+                Bagroom scanned: <strong>{loadingBagroomTotal ? "…" : bagroomTotal}</strong>
+              </p>
+
+              {typeof flight?.checkedBagsTotal === "number" && !loadingScans && (
+                <p style={{ margin: "6px 0 0", fontSize: "0.9rem" }}>
+                  Gate total: <strong>{flight.checkedBagsTotal}</strong> · Missing:{" "}
+                  <strong style={{ color: missingNow === 0 ? "#16a34a" : "#b91c1c" }}>
+                    {missingNow}
+                  </strong>
+                </p>
+              )}
+            </div>
+
+            {canCompleteLoading && (
+              <button
+                onClick={handleLoadingCompleted}
+                disabled={completing || isLoadingCompleted}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: completing || isLoadingCompleted ? "#86efac" : "#16a34a",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: completing || isLoadingCompleted ? "not-allowed" : "pointer",
+                }}
+              >
+                {isLoadingCompleted ? "Completed" : completing ? "Checking…" : "Loading Completed"}
+              </button>
+            )}
+          </div>
+
+          <div style={{ marginTop: 12, maxHeight: 360, overflow: "auto", borderTop: "1px solid #e5e7eb" }}>
+            {loadingScans ? (
+              <p style={{ color: "#6b7280", paddingTop: 10 }}>Loading…</p>
+            ) : scans.length === 0 ? (
+              <p style={{ color: "#6b7280", paddingTop: 10 }}>No scans yet.</p>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <thead>
+                  <tr style={{ background: "#f9fafb" }}>
+                    <th style={th}>Tag</th>
+                    <th style={th}>Zone</th>
+                    <th style={th}>User</th>
+                    <th style={{ ...th, textAlign: "right" }}>Action</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {scans.map((s) => {
+                    const tag = s.tag || s.id;
+                    const busy = offloadingTag === tag;
+
+                    return (
+                      <tr key={s.id}>
+                        <td style={td}><strong>{tag}</strong></td>
+                        <td style={td}>{s.zone ?? "-"}</td>
+                        <td style={{ ...td, color: "#6b7280" }}>{s.scannedBy?.username || "-"}</td>
+                        <td style={{ ...td, textAlign: "right" }}>
+                          {canReopenOrOffload && (
+                            <button
+                              onClick={() => handleOffloadBag(s)}
+                              disabled={busy}
+                              style={{
+                                padding: "5px 10px",
+                                borderRadius: 999,
+                                border: "1px solid #ef4444",
+                                background: "#ef4444",
+                                color: "white",
+                                fontWeight: 800,
+                                cursor: busy ? "not-allowed" : "pointer",
+                                opacity: busy ? 0.7 : 1,
+                              }}
+                            >
+                              {busy ? "Offloading…" : "Offload"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
+            Tip: scans save automatically after the scanner finishes. Enter is optional.
+          </p>
+        </div>
+      </div>
+
+      <Modal
+        open={modal.open}
+        title={modal.title}
+        tone={modal.tone}
+        confirmText={modal.confirmText}
+        cancelText={modal.cancelText}
+        showCancel={modal.showCancel}
+        onConfirm={() => {
+          if (typeof modal.onConfirm === "function") modal.onConfirm();
+          else close();
+        }}
+        onCancel={() => {
+          if (typeof modal.onCancel === "function") modal.onCancel();
+          else close();
+        }}
+      >
+        {modal.content}
+      </Modal>
     </div>
   );
 }
