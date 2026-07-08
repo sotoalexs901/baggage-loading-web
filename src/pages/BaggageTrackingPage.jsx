@@ -132,7 +132,16 @@ export default function BaggageTrackingPage({ user }) {
         ...d.data(),
       }));
 
-      setEvents(list);
+        const fallbackEvents = await loadFallbackEvents(tag, mainData);
+
+      const merged = [...list];
+
+      for (const ev of fallbackEvents) {
+        const exists = merged.some((x) => String(x.type) === String(ev.type));
+        if (!exists) merged.push(ev);
+      }
+
+      setEvents(merged);
       setLoading(false);
     } catch (e) {
       console.error("Baggage tracking search error:", e);
@@ -144,6 +153,76 @@ export default function BaggageTrackingPage({ user }) {
   const handleKeyDown = (e) => {
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
+        const loadFallbackEvents = async (tag, mainData) => {
+    const flightId = mainData?.flightId;
+    if (!flightId) return [];
+
+    const fallback = [];
+
+    const counterSnap = await getDoc(
+      doc(db, "flights", flightId, "counterScans", tag)
+    );
+
+    if (counterSnap.exists()) {
+      const d = counterSnap.data();
+      fallback.push({
+        id: "fallback_counter",
+        type: "COUNTER_SCAN",
+        message: "Bag tag scanned at counter",
+        tag,
+        flightId,
+        flightNumber: mainData.flightNumber || null,
+        flightDate: mainData.flightDate || null,
+        gate: mainData.gate || null,
+        createdAt: d.createdAt || null,
+        createdBy: d.scannedBy || null,
+      });
+    }
+
+    const bagroomSnap = await getDoc(
+      doc(db, "flights", flightId, "bagroomScans", tag)
+    );
+
+    if (bagroomSnap.exists()) {
+      const d = bagroomSnap.data();
+      fallback.push({
+        id: "fallback_bagroom",
+        type: "BAGROOM_SCAN",
+        message: "Bag received/scanned in Bagroom",
+        tag,
+        cartNumber: d.cartNumber || null,
+        flightId,
+        flightNumber: mainData.flightNumber || null,
+        flightDate: mainData.flightDate || null,
+        gate: mainData.gate || null,
+        createdAt: d.createdAt || null,
+        createdBy: d.scannedBy || null,
+      });
+    }
+
+    const aircraftSnap = await getDoc(
+      doc(db, "flights", flightId, "aircraftScans", tag)
+    );
+
+    if (aircraftSnap.exists()) {
+      const d = aircraftSnap.data();
+      fallback.push({
+        id: "fallback_aircraft",
+        type: "AIRCRAFT_LOAD",
+        message: "Bag loaded on aircraft",
+        tag,
+        zone: d.zone || null,
+        flightId,
+        flightNumber: mainData.flightNumber || null,
+        flightDate: mainData.flightDate || null,
+        gate: mainData.gate || null,
+        createdAt: d.createdAt || null,
+        createdBy: d.scannedBy || null,
+      });
+    }
+
+    return fallback;
+  };
       handleSearch();
     }
   };
