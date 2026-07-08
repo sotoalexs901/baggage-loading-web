@@ -1,10 +1,9 @@
 // src/pages/CounterScanPage.jsx
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   collection,
   doc,
- getDoc,
+  getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -31,34 +30,49 @@ function normalizeStatus(s) {
     : "OPEN";
 }
 
+function normalizeBagType(value) {
+  const v = String(value || "CHECKED_BAG").trim().toUpperCase();
+
+  return v === "CHECKED_BAG" || v === "GATE_CHECK" || v === "OVERSIZE"
+    ? v
+    : "CHECKED_BAG";
+}
+
+function getBagTypeLabel(value) {
+  const v = normalizeBagType(value);
+
+  if (v === "GATE_CHECK") return "Gate Check";
+  if (v === "OVERSIZE") return "Oversize";
+  return "Checked Bag";
+}
+
 const MIN_TAG = 10;
 const AUTO_SUBMIT_MS = 90;
 
-export default function CounterScanPage({
-  flightId,
-  user,
-}) {
-
-  const role = useMemo(
-    () => normalizeRole(user?.role),
-    [user]
-  );
+export default function CounterScanPage({ flightId, user }) {
+  const role = useMemo(() => normalizeRole(user?.role), [user]);
 
   const inputRef = useRef(null);
   const timerRef = useRef(null);
   const savingRef = useRef(false);
 
-  const [flight,setFlight]=useState(null);
-  const [loadingFlight,setLoadingFlight]=useState(true);
+  const [flight, setFlight] = useState(null);
+  const [loadingFlight, setLoadingFlight] = useState(true);
 
-  const [tagInput,setTagInput]=useState("");
+  const [tagInput, setTagInput] = useState("");
+  const [bagType, setBagType] = useState(
+    localStorage.getItem(`counterBagType_${flightId}`) || "CHECKED_BAG"
+  );
 
-  const [msg,setMsg]=useState("");
-  const [err,setErr]=useState("");
+  const selectedBagType = normalizeBagType(bagType);
 
-  const [rows,setRows]=useState([]);
-  const [loadingRows,setLoadingRows]=useState(true);
-    useEffect(() => {
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const [rows, setRows] = useState([]);
+  const [loadingRows, setLoadingRows] = useState(true);
+
+  useEffect(() => {
     if (!flightId) return;
 
     setLoadingFlight(true);
@@ -171,8 +185,10 @@ export default function CounterScanPage({
     await setDoc(eventRef, {
       type: "COUNTER_SCAN",
       location: "counter",
-      message: "Bag tag created / scanned at counter",
+      message: `Bag tag created / scanned at counter · ${getBagTypeLabel(selectedBagType)}`,
       tag,
+      bagType: selectedBagType,
+      bagTypeLabel: getBagTypeLabel(selectedBagType),
       flightId,
       flightNumber: flight?.flightNumber || null,
       flightDate: flight?.flightDate || null,
@@ -185,7 +201,8 @@ export default function CounterScanPage({
       },
     });
   };
-    const saveCounterScan = async (tag) => {
+
+  const saveCounterScan = async (tag) => {
     const ref = doc(db, "flights", flightId, "counterScans", tag);
     const existing = await getDoc(ref);
 
@@ -198,6 +215,8 @@ export default function CounterScanPage({
     await setDoc(ref, {
       tag,
       location: "counter",
+      bagType: selectedBagType,
+      bagTypeLabel: getBagTypeLabel(selectedBagType),
       createdAt: serverTimestamp(),
       scannedBy: {
         userId: user?.id || null,
@@ -214,6 +233,8 @@ export default function CounterScanPage({
         flightNumber: flight?.flightNumber || null,
         flightDate: flight?.flightDate || null,
         gate: flight?.gate || null,
+        bagType: selectedBagType,
+        bagTypeLabel: getBagTypeLabel(selectedBagType),
         firstSeenAt: serverTimestamp(),
         lastSeenAt: serverTimestamp(),
         lastSeenLocation: "counter",
@@ -230,8 +251,7 @@ export default function CounterScanPage({
 
     return true;
   };
-
-  const handleScanSubmit = async (forcedValue) => {
+    const handleScanSubmit = async (forcedValue) => {
     if (savingRef.current) return;
 
     setMsg("");
@@ -272,7 +292,9 @@ export default function CounterScanPage({
 
       if (!saved) return;
 
-      setMsg(`Counter scan saved ✅ ${tag}`);
+      setMsg(
+        `Counter scan saved ✅ ${tag} · ${getBagTypeLabel(selectedBagType)}`
+      );
       setTagInput("");
 
       if (inputRef.current) {
@@ -313,7 +335,8 @@ export default function CounterScanPage({
       handleScanSubmit();
     }
   };
-    return (
+
+  return (
     <div
       style={{
         background: "white",
@@ -353,17 +376,11 @@ export default function CounterScanPage({
           </div>
 
           <div style={{ color: "#6b7280" }}>
-            Date:{" "}
-            <strong>
-              {loadingFlight ? "…" : flight?.flightDate || "-"}
-            </strong>
+            Date: <strong>{loadingFlight ? "…" : flight?.flightDate || "-"}</strong>
           </div>
 
           <div style={{ color: "#6b7280" }}>
-            Gate:{" "}
-            <strong>
-              {loadingFlight ? "…" : flight?.gate || "-"}
-            </strong>
+            Gate: <strong>{loadingFlight ? "…" : flight?.gate || "-"}</strong>
           </div>
         </div>
       </div>
@@ -392,6 +409,58 @@ export default function CounterScanPage({
           }}
         >
           <h3 style={{ marginTop: 0 }}>Scan Bag Tag</h3>
+
+          <label
+            style={{
+              display: "block",
+              fontSize: "0.85rem",
+              color: "#374151",
+              marginBottom: 6,
+            }}
+          >
+            Bag Type
+          </label>
+
+          <select
+            value={selectedBagType}
+            onChange={(e) => {
+              const next = normalizeBagType(e.target.value);
+              setBagType(next);
+              localStorage.setItem(`counterBagType_${flightId}`, next);
+
+              if (inputRef.current) {
+                inputRef.current.focus();
+              }
+            }}
+            disabled={isFlightLoaded}
+            style={{
+              width: "100%",
+              padding: "12px",
+              borderRadius: 12,
+              border: "1px solid #d1d5db",
+              background: isFlightLoaded ? "#f3f4f6" : "white",
+              fontWeight: 800,
+              marginBottom: 12,
+            }}
+          >
+            <option value="CHECKED_BAG">Checked Bag</option>
+            <option value="GATE_CHECK">Gate Check</option>
+            <option value="OVERSIZE">Oversize</option>
+          </select>
+
+          <div
+            style={{
+              marginBottom: 12,
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid #dbeafe",
+              background: "#eff6ff",
+              color: "#1d4ed8",
+              fontWeight: 900,
+            }}
+          >
+            Selected: {getBagTypeLabel(selectedBagType)}
+          </div>
 
           <label
             style={{
@@ -464,7 +533,8 @@ export default function CounterScanPage({
             </p>
           )}
         </section>
-                <section
+
+        <section
           style={{
             border: "1px solid #e5e7eb",
             borderRadius: 12,
@@ -488,6 +558,7 @@ export default function CounterScanPage({
                 <thead>
                   <tr style={{ background: "#f9fafb" }}>
                     <th style={th}>Bag Tag</th>
+                    <th style={th}>Type</th>
                     <th style={{ ...th, textAlign: "right" }}>User</th>
                   </tr>
                 </thead>
@@ -497,6 +568,10 @@ export default function CounterScanPage({
                     <tr key={r.id}>
                       <td style={td}>
                         <strong>{r.tag || r.id}</strong>
+                      </td>
+
+                      <td style={td}>
+                        {r.bagTypeLabel || getBagTypeLabel(r.bagType)}
                       </td>
 
                       <td style={{ ...td, textAlign: "right", color: "#6b7280" }}>
