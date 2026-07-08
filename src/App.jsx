@@ -38,7 +38,9 @@ export default function App() {
   const [selectedFlightId, setSelectedFlightId] = useState(() => {
     return sessionStorage.getItem("selectedFlightId") || null;
   });
-
+const [selectedFlightNumber, setSelectedFlightNumber] = useState(() => {
+  return sessionStorage.getItem("selectedFlightNumber") || null;
+});
   const [refreshKey, setRefreshKey] = useState(0);
 
   const handleLogin = (userData, sessionMeta) => {
@@ -101,14 +103,19 @@ export default function App() {
     setCurrentView("dashboard");
     setRefreshKey(0);
   };
+const handleOpenFlightFromDashboard = (flightId, targetView, flightNumber) => {
+  setSelectedFlightId(flightId);
+  setSelectedFlightNumber(flightNumber || null);
+  setCurrentView(targetView);
 
-  const handleOpenFlightFromDashboard = (flightId, targetView) => {
-    setSelectedFlightId(flightId);
-    setCurrentView(targetView);
+  sessionStorage.setItem("selectedFlightId", flightId);
+  sessionStorage.setItem("currentView", targetView);
 
-    sessionStorage.setItem("selectedFlightId", flightId);
-    sessionStorage.setItem("currentView", targetView);
-  };
+  if (flightNumber) {
+    sessionStorage.setItem("selectedFlightNumber", flightNumber);
+  }
+};
+  
 
   const renderView = () => {
     if (currentView === "dashboard") {
@@ -238,6 +245,7 @@ export default function App() {
             </button>
 
             <button onClick={handleLogout} style={{ marginTop: 6 }}>
+              setSelectedFlightNumber(null);
               Logout
             </button>
           </div>
@@ -245,7 +253,7 @@ export default function App() {
 
         {selectedFlightId && (
           <p style={{ marginTop: 8 }}>
-            <strong>Flight selected:</strong> {selectedFlightId}
+<strong>Flight selected:</strong> {selectedFlightNumber || selectedFlightId}
           </p>
         )}
       </header>
