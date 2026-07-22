@@ -24,6 +24,38 @@ const BAG_TAG_LENGTH = 10;
 const AUTO_SUBMIT_IDLE_MS = 140;
 const COMPACT_SCREEN_WIDTH = 760;
 
+const RECEIVING_LOCATIONS = {
+  BAGROOM: {
+    value: "BAGROOM",
+    trackingLocation: "bagroom",
+    label: "Bagroom",
+    department: "BAGROOM",
+    eventType: "BAGROOM_SCAN",
+    message: "Bag received/scanned in Bagroom",
+    icon: "🛄",
+  },
+
+  OVERSIZE: {
+    value: "OVERSIZE",
+    trackingLocation: "oversize",
+    label: "Oversize",
+    department: "OVERSIZE",
+    eventType: "OVERSIZE_SCAN",
+    message: "Bag received/scanned at Oversize",
+    icon: "📦",
+  },
+
+  GATE: {
+    value: "GATE",
+    trackingLocation: "gate",
+    label: "Gate / Ramp",
+    department: "RAMP",
+    eventType: "GATE_RAMP_SCAN",
+    message: "Bag received/scanned at Gate by Ramp",
+    icon: "🚪",
+  },
+};
+
 function normalizeRole(role) {
   return String(role || "")
     .trim()
@@ -48,14 +80,68 @@ function normalizeCartNumber(value) {
     .toUpperCase();
 }
 
+function normalizeReceivingLocation(value) {
+  const location = String(value || "BAGROOM")
+    .trim()
+    .toUpperCase();
+
+  return RECEIVING_LOCATIONS[location]
+    ? location
+    : "BAGROOM";
+}
+
+function getReceivingLocationConfig(value) {
+  return (
+    RECEIVING_LOCATIONS[
+      normalizeReceivingLocation(value)
+    ] || RECEIVING_LOCATIONS.BAGROOM
+  );
+}
+
+function getScanLocationLabel(scan) {
+  if (scan?.locationLabel) {
+    return String(scan.locationLabel);
+  }
+
+  const location =
+    scan?.receivingLocation ||
+    scan?.location ||
+    "BAGROOM";
+
+  return getReceivingLocationConfig(location).label;
+}
+
+function getScanGroupName(scan) {
+  const location = normalizeReceivingLocation(
+    scan?.receivingLocation ||
+      scan?.location
+  );
+
+  if (location === "OVERSIZE") {
+    return "OVERSIZE";
+  }
+
+  if (location === "GATE") {
+    return "GATE / RAMP";
+  }
+
+  return (
+    normalizeCartNumber(scan?.cartNumber) ||
+    "NO CART"
+  );
+}
+
 function normalizeStatus(status) {
   const value = String(status || "OPEN")
     .trim()
     .toUpperCase();
 
-  return ["OPEN", "RECEIVING", "LOADING", "LOADED"].includes(
-    value
-  )
+  return [
+    "OPEN",
+    "RECEIVING",
+    "LOADING",
+    "LOADED",
+  ].includes(value)
     ? value
     : "OPEN";
 }
@@ -78,31 +164,47 @@ function normalizeBagType(value) {
 function getBagTypeLabel(value) {
   const type = normalizeBagType(value);
 
-  if (type === "GATE_CHECK") return "Gate Check";
-  if (type === "OVERSIZE") return "Oversize";
-  if (type === "GATE_BAG") return "Gate Bag";
+  if (type === "GATE_CHECK") {
+    return "Gate Check";
+  }
+
+  if (type === "OVERSIZE") {
+    return "Oversize";
+  }
+
+  if (type === "GATE_BAG") {
+    return "Gate Bag";
+  }
 
   return "Checked Bag";
 }
 
 function useCompactScreen() {
-  const [compact, setCompact] = useState(() =>
-    typeof window !== "undefined"
-      ? window.innerWidth <= COMPACT_SCREEN_WIDTH
-      : false
-  );
+  const [compact, setCompact] = useState(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+
+    return (
+      window.innerWidth <= COMPACT_SCREEN_WIDTH
+    );
+  });
 
   useEffect(() => {
     const update = () => {
       setCompact(
-        window.innerWidth <= COMPACT_SCREEN_WIDTH
+        window.innerWidth <=
+          COMPACT_SCREEN_WIDTH
       );
     };
 
     window.addEventListener("resize", update);
 
     return () => {
-      window.removeEventListener("resize", update);
+      window.removeEventListener(
+        "resize",
+        update
+      );
     };
   }, []);
 
@@ -128,43 +230,102 @@ export default function BagroomScanPage({
   ].includes(role);
 
   const [flight, setFlight] = useState(null);
-  const [flightLoading, setFlightLoading] =
-    useState(true);
+
+  const [
+    flightLoading,
+    setFlightLoading,
+  ] = useState(true);
+
+  const [
+    receivingLocation,
+    setReceivingLocation,
+  ] = useState(() => {
+    return (
+      localStorage.getItem(
+        `bagroomReceivingLocation_${flightId}`
+      ) || "BAGROOM"
+    );
+  });
+
+  const normalizedReceivingLocation =
+    normalizeReceivingLocation(
+      receivingLocation
+    );
+
+  const receivingLocationConfig =
+    getReceivingLocationConfig(
+      normalizedReceivingLocation
+    );
+
+  const isRegularBagroom =
+    normalizedReceivingLocation === "BAGROOM";
 
   const [cartNumber, setCartNumber] = useState(
-    localStorage.getItem(`bagroomCart_${flightId}`) ||
-      ""
+    () => {
+      return (
+        localStorage.getItem(
+          `bagroomLastRegularCart_${flightId}`
+        ) ||
+        localStorage.getItem(
+          `bagroomCart_${flightId}`
+        ) ||
+        ""
+      );
+    }
   );
 
   const selectedCart =
     normalizeCartNumber(cartNumber);
 
-  const [scannerMode, setScannerMode] = useState(
-    () =>
-      localStorage.getItem("bagroomScannerMode") !==
-      "manual"
-  );
+  /*
+   * A cart is required only when the
+   * selected receiving area is Bagroom.
+   *
+   * Oversize and Gate/Ramp can scan
+   * without selecting a cart.
+   */
+  const locationReady =
+    !isRegularBagroom ||
+    Boolean(selectedCart);
 
-  const [tagInput, setTagInput] = useState("");
+  const [scannerMode, setScannerMode] =
+    useState(() => {
+      return (
+        localStorage.getItem(
+          "bagroomScannerMode"
+        ) !== "manual"
+      );
+    });
+
+  const [tagInput, setTagInput] =
+    useState("");
+
   const inputRef = useRef(null);
 
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
   const [scans, setScans] = useState([]);
-  const [loadingScans, setLoadingScans] =
-    useState(true);
 
-  const [counterScans, setCounterScans] =
-    useState([]);
+  const [
+    loadingScans,
+    setLoadingScans,
+  ] = useState(true);
+
+  const [
+    counterScans,
+    setCounterScans,
+  ] = useState([]);
 
   const [
     loadingCounterScans,
     setLoadingCounterScans,
   ] = useState(true);
 
-  const [strictManifest, setStrictManifest] =
-    useState(false);
+  const [
+    strictManifest,
+    setStrictManifest,
+  ] = useState(false);
 
   const [
     deletingCounterTag,
@@ -178,16 +339,28 @@ export default function BagroomScanPage({
 
   const autoTimerRef = useRef(null);
   const isSubmittingRef = useRef(false);
-  const lastSubmittedTagRef = useRef("");
-  const lastSubmittedTimeRef = useRef(0);
 
-  const { modal, show, close } = useModal();
+  const lastSubmittedTagRef =
+    useRef("");
+
+  const lastSubmittedTimeRef =
+    useRef(0);
+
+  const { modal, show, close } =
+    useModal();
+
+  const isLoadingCompleted =
+    Boolean(
+      flight?.aircraftLoadingCompleted
+    ) ||
+    normalizeStatus(flight?.status) ===
+      "LOADED";
 
   const focusScanner = () => {
     window.setTimeout(() => {
       if (
         inputRef.current &&
-        selectedCart &&
+        locationReady &&
         !isLoadingCompleted
       ) {
         inputRef.current.focus();
@@ -203,26 +376,30 @@ export default function BagroomScanPage({
     show({
       title,
       tone,
+
       content: (
-        <div style={{ whiteSpace: "pre-wrap" }}>
+        <div
+          style={{
+            whiteSpace: "pre-wrap",
+          }}
+        >
           {message}
         </div>
       ),
+
       confirmText: "OK",
+
       onConfirm: () => {
         close();
         focusScanner();
       },
+
       onCancel: () => {
         close();
         focusScanner();
       },
     });
   };
-
-  const isLoadingCompleted =
-    Boolean(flight?.aircraftLoadingCompleted) ||
-    normalizeStatus(flight?.status) === "LOADED";
 
   const availableCarts = useMemo(() => {
     const carts = new Set();
@@ -232,15 +409,35 @@ export default function BagroomScanPage({
         const normalized =
           normalizeCartNumber(cart);
 
-        if (normalized) carts.add(normalized);
+        if (normalized) {
+          carts.add(normalized);
+        }
       });
     }
 
     scans.forEach((scan) => {
-      const normalized =
-        normalizeCartNumber(scan.cartNumber);
+      const scanLocation =
+        normalizeReceivingLocation(
+          scan.receivingLocation ||
+            scan.location
+        );
 
-      if (normalized) carts.add(normalized);
+      /*
+       * Only regular Bagroom carts
+       * appear as selectable carts.
+       */
+      if (scanLocation !== "BAGROOM") {
+        return;
+      }
+
+      const normalized =
+        normalizeCartNumber(
+          scan.cartNumber
+        );
+
+      if (normalized) {
+        carts.add(normalized);
+      }
     });
 
     if (selectedCart) {
@@ -248,91 +445,168 @@ export default function BagroomScanPage({
     }
 
     return [...carts].sort((a, b) =>
-      String(a).localeCompare(String(b), undefined, {
-        numeric: true,
-      })
+      String(a).localeCompare(
+        String(b),
+        undefined,
+        {
+          numeric: true,
+        }
+      )
     );
-  }, [flight?.cartNumbers, scans, selectedCart]);
+  }, [
+    flight?.cartNumbers,
+    scans,
+    selectedCart,
+  ]);
 
   const counterTagSet = useMemo(() => {
     return new Set(
       counterScans
         .map((scan) =>
           onlyDigits(
-            scan.tag || scan.bagTag || scan.id
+            scan.tag ||
+              scan.bagTag ||
+              scan.id
           )
         )
         .filter(isValidBagTag)
     );
   }, [counterScans]);
 
-  const bagroomTagSet = useMemo(() => {
+  /*
+   * All receiving scans count as
+   * received from Counter:
+   *
+   * - Bagroom
+   * - Oversize
+   * - Gate / Ramp
+   */
+  const receivedTagSet = useMemo(() => {
     return new Set(
       scans
         .map((scan) =>
           onlyDigits(
-            scan.tag || scan.bagTag || scan.id
+            scan.tag ||
+              scan.bagTag ||
+              scan.id
           )
         )
         .filter(isValidBagTag)
     );
   }, [scans]);
 
-  const receivedCounterScans = useMemo(() => {
-    return counterScans.filter((scan) => {
-      const tag = onlyDigits(
-        scan.tag || scan.bagTag || scan.id
-      );
+  const receivedCounterScans =
+    useMemo(() => {
+      return counterScans.filter(
+        (scan) => {
+          const tag = onlyDigits(
+            scan.tag ||
+              scan.bagTag ||
+              scan.id
+          );
 
-      return (
-        isValidBagTag(tag) &&
-        bagroomTagSet.has(tag)
+          return (
+            isValidBagTag(tag) &&
+            receivedTagSet.has(tag)
+          );
+        }
       );
-    });
-  }, [counterScans, bagroomTagSet]);
+    }, [
+      counterScans,
+      receivedTagSet,
+    ]);
 
-  const pendingCounterScans = useMemo(() => {
-    return counterScans.filter((scan) => {
-      const tag = onlyDigits(
-        scan.tag || scan.bagTag || scan.id
+  const pendingCounterScans =
+    useMemo(() => {
+      return counterScans.filter(
+        (scan) => {
+          const tag = onlyDigits(
+            scan.tag ||
+              scan.bagTag ||
+              scan.id
+          );
+
+          return (
+            isValidBagTag(tag) &&
+            !receivedTagSet.has(tag)
+          );
+        }
       );
+    }, [
+      counterScans,
+      receivedTagSet,
+    ]);
 
-      return (
-        isValidBagTag(tag) &&
-        !bagroomTagSet.has(tag)
-      );
-    });
-  }, [counterScans, bagroomTagSet]);
+  const receivedWithoutCounter =
+    useMemo(() => {
+      return scans.filter((scan) => {
+        const tag = onlyDigits(
+          scan.tag ||
+            scan.bagTag ||
+            scan.id
+        );
 
-  const bagroomWithoutCounter = useMemo(() => {
+        return (
+          isValidBagTag(tag) &&
+          !counterTagSet.has(tag)
+        );
+      });
+    }, [scans, counterTagSet]);
+
+  const groupedByReceivingArea =
+    useMemo(() => {
+      const groups = {};
+
+      for (const scan of scans) {
+        const groupName =
+          getScanGroupName(scan);
+
+        if (!groups[groupName]) {
+          groups[groupName] = [];
+        }
+
+        groups[groupName].push(scan);
+      }
+
+      return groups;
+    }, [scans]);
+
+  const bagroomScanCount = useMemo(() => {
     return scans.filter((scan) => {
-      const tag = onlyDigits(
-        scan.tag || scan.bagTag || scan.id
-      );
-
       return (
-        isValidBagTag(tag) &&
-        !counterTagSet.has(tag)
+        normalizeReceivingLocation(
+          scan.receivingLocation ||
+            scan.location
+        ) === "BAGROOM"
       );
-    });
-  }, [scans, counterTagSet]);
-
-  const groupedByCart = useMemo(() => {
-    const groups = {};
-
-    for (const scan of scans) {
-      const cart =
-        normalizeCartNumber(scan.cartNumber) ||
-        "NO CART";
-
-      if (!groups[cart]) groups[cart] = [];
-
-      groups[cart].push(scan);
-    }
-
-    return groups;
+    }).length;
   }, [scans]);
 
+  const oversizeScanCount = useMemo(() => {
+    return scans.filter((scan) => {
+      return (
+        normalizeReceivingLocation(
+          scan.receivingLocation ||
+            scan.location
+        ) === "OVERSIZE"
+      );
+    }).length;
+  }, [scans]);
+
+  const gateRampScanCount = useMemo(() => {
+    return scans.filter((scan) => {
+      return (
+        normalizeReceivingLocation(
+          scan.receivingLocation ||
+            scan.location
+        ) === "GATE"
+      );
+    }).length;
+  }, [scans]);
+
+  /*
+   * Flight subscription.
+   */
   useEffect(() => {
     if (!flightId) {
       setFlight(null);
@@ -350,6 +624,7 @@ export default function BagroomScanPage({
 
     const unsub = onSnapshot(
       flightRef,
+
       (snapshot) => {
         if (!snapshot.exists()) {
           setFlight(null);
@@ -365,13 +640,17 @@ export default function BagroomScanPage({
         setFlight(data);
 
         if (
-          typeof data.strictManifest === "boolean"
+          typeof data.strictManifest ===
+          "boolean"
         ) {
-          setStrictManifest(data.strictManifest);
+          setStrictManifest(
+            data.strictManifest
+          );
         }
 
         setFlightLoading(false);
       },
+
       (error) => {
         console.error(
           "Bagroom flight snapshot error:",
@@ -386,6 +665,13 @@ export default function BagroomScanPage({
     return () => unsub();
   }, [flightId]);
 
+  /*
+   * Receiving scans subscription.
+   *
+   * All three reception areas are saved
+   * in bagroomScans so the Counter match
+   * recognizes them as received.
+   */
   useEffect(() => {
     if (!flightId) {
       setScans([]);
@@ -395,7 +681,7 @@ export default function BagroomScanPage({
 
     setLoadingScans(true);
 
-    const bagroomRef = collection(
+    const receivingRef = collection(
       db,
       "flights",
       flightId,
@@ -403,7 +689,8 @@ export default function BagroomScanPage({
     );
 
     const unsub = onSnapshot(
-      bagroomRef,
+      receivingRef,
+
       (snapshot) => {
         const rows = snapshot.docs.map(
           (document) => ({
@@ -425,9 +712,10 @@ export default function BagroomScanPage({
         setScans(rows);
         setLoadingScans(false);
       },
+
       (error) => {
         console.error(
-          "Bagroom scans snapshot error:",
+          "Receiving scans snapshot error:",
           error
         );
 
@@ -439,6 +727,9 @@ export default function BagroomScanPage({
     return () => unsub();
   }, [flightId]);
 
+  /*
+   * Counter scans subscription.
+   */
   useEffect(() => {
     if (!flightId) {
       setCounterScans([]);
@@ -457,6 +748,7 @@ export default function BagroomScanPage({
 
     const unsub = onSnapshot(
       counterRef,
+
       (snapshot) => {
         const rows = snapshot.docs.map(
           (document) => ({
@@ -478,6 +770,7 @@ export default function BagroomScanPage({
         setCounterScans(rows);
         setLoadingCounterScans(false);
       },
+
       (error) => {
         console.error(
           "Counter scans snapshot error:",
@@ -492,11 +785,44 @@ export default function BagroomScanPage({
     return () => unsub();
   }, [flightId]);
 
+  /*
+   * Restore the saved receiving area
+   * whenever the selected flight changes.
+   */
+  useEffect(() => {
+    const savedLocation =
+      localStorage.getItem(
+        `bagroomReceivingLocation_${flightId}`
+      ) || "BAGROOM";
+
+    setReceivingLocation(
+      normalizeReceivingLocation(
+        savedLocation
+      )
+    );
+
+    const savedCart =
+      localStorage.getItem(
+        `bagroomLastRegularCart_${flightId}`
+      ) ||
+      localStorage.getItem(
+        `bagroomCart_${flightId}`
+      ) ||
+      "";
+
+    setCartNumber(savedCart);
+    setTagInput("");
+    setMsg("");
+    setErr("");
+  }, [flightId]);
+
   useEffect(() => {
     focusScanner();
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     selectedCart,
+    normalizedReceivingLocation,
     scannerMode,
     isLoadingCompleted,
   ]);
@@ -504,22 +830,23 @@ export default function BagroomScanPage({
   useEffect(() => {
     return () => {
       if (autoTimerRef.current) {
-        clearTimeout(autoTimerRef.current);
+        clearTimeout(
+          autoTimerRef.current
+        );
       }
     };
   }, []);
-
-  const ensureStatusReceiving = async () => {
+    const ensureStatusReceiving = async () => {
     if (!flight) return;
 
-    const current = normalizeStatus(
+    const currentStatus = normalizeStatus(
       flight.status
     );
 
     if (
-      current === "RECEIVING" ||
-      current === "LOADING" ||
-      current === "LOADED"
+      currentStatus === "RECEIVING" ||
+      currentStatus === "LOADING" ||
+      currentStatus === "LOADED"
     ) {
       return;
     }
@@ -528,29 +855,48 @@ export default function BagroomScanPage({
       doc(db, "flights", flightId),
       {
         status: "RECEIVING",
-        statusUpdatedAt: serverTimestamp(),
+
+        statusUpdatedAt:
+          serverTimestamp(),
+
         statusUpdatedBy: {
           userId: user?.id || null,
-          username: user?.username || null,
+          username:
+            user?.username || null,
           role: user?.role || null,
         },
       },
-      { merge: true }
+      {
+        merge: true,
+      }
     );
   };
 
   const saveCartToFlight = async () => {
-    if (!selectedCart || !flightId) return;
+    if (
+      !isRegularBagroom ||
+      !selectedCart ||
+      !flightId
+    ) {
+      return;
+    }
 
-    const existingCarts = Array.isArray(
-      flight?.cartNumbers
-    )
-      ? flight.cartNumbers
-          .map(normalizeCartNumber)
-          .filter(Boolean)
-      : [];
+    const existingCarts =
+      Array.isArray(
+        flight?.cartNumbers
+      )
+        ? flight.cartNumbers
+            .map(
+              normalizeCartNumber
+            )
+            .filter(Boolean)
+        : [];
 
-    if (existingCarts.includes(selectedCart)) {
+    if (
+      existingCarts.includes(
+        selectedCart
+      )
+    ) {
       return;
     }
 
@@ -558,500 +904,38 @@ export default function BagroomScanPage({
       ...existingCarts,
       selectedCart,
     ].sort((a, b) =>
-      String(a).localeCompare(String(b), undefined, {
-        numeric: true,
-      })
+      String(a).localeCompare(
+        String(b),
+        undefined,
+        {
+          numeric: true,
+        }
+      )
     );
 
     await setDoc(
-      doc(db, "flights", flightId),
+      doc(
+        db,
+        "flights",
+        flightId
+      ),
       {
         cartNumbers: nextCarts,
+
         cartNumbersUpdatedAt:
           serverTimestamp(),
+
         cartNumbersUpdatedBy: {
-          userId: user?.id || null,
-          username: user?.username || null,
-          role: user?.role || null,
-        },
-      },
-      { merge: true }
-    );
-  };
-
-  const validateAgainstOtherFlight = async (
-    tag
-  ) => {
-    const tagRef = doc(db, "bagTags", tag);
-    const snapshot = await getDoc(tagRef);
-
-    if (!snapshot.exists()) {
-      return {
-        ok: true,
-        firstTime: true,
-      };
-    }
-
-    const existing = snapshot.data();
-
-    if (
-      existing.flightId &&
-      existing.flightId !== flightId
-    ) {
-      return {
-        ok: false,
-        message:
-          `❌ Bag tag belongs to another flight/date.\n\n` +
-          `Current flight: ${
-            flight?.flightNumber || flightId
-          } (${flight?.flightDate || "-"})\n` +
-          `Registered flight: ${
-            existing.flightNumber ||
-            existing.flightId
-          } (${existing.flightDate || "-"})\n\n` +
-          `Do NOT accept this bag for this flight.`,
-      };
-    }
-
-    return {
-      ok: true,
-      firstTime: false,
-    };
-  };
-
-  const indexTag = async (tag) => {
-    const tagRef = doc(db, "bagTags", tag);
-    const current = await getDoc(tagRef);
-
-    const firstSeenAt = current.exists()
-      ? current.data().firstSeenAt ||
-        serverTimestamp()
-      : serverTimestamp();
-
-    await setDoc(
-      tagRef,
-      {
-        tag,
-        flightId,
-        flightNumber:
-          flight?.flightNumber || null,
-        flightDate:
-          flight?.flightDate || null,
-        gate: flight?.gate || null,
-        lastSeenAt: serverTimestamp(),
-        lastSeenLocation: "bagroom",
-        lastSeenCart: selectedCart || null,
-        lastSeenBy: {
-          userId: user?.id || null,
-          username: user?.username || null,
-          role: user?.role || null,
-        },
-        firstSeenAt,
-      },
-      { merge: true }
-    );
-  };
-
-  const saveTrackingEvent = async (tag) => {
-    const eventRef = doc(
-      db,
-      "bagTags",
-      tag,
-      "events",
-      `bagroom_${Date.now()}`
-    );
-
-    await setDoc(eventRef, {
-      type: "BAGROOM_SCAN",
-      location: "bagroom",
-      message:
-        "Bag received/scanned in Bagroom",
-      tag,
-      cartNumber: selectedCart || null,
-      flightId,
-      flightNumber:
-        flight?.flightNumber || null,
-      flightDate:
-        flight?.flightDate || null,
-      gate: flight?.gate || null,
-      createdAt: serverTimestamp(),
-      createdBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
-    });
-  };
-
-  const saveBagroomScan = async (tag) => {
-    const scanRef = doc(
-      db,
-      "flights",
-      flightId,
-      "bagroomScans",
-      tag
-    );
-
-    const existing = await getDoc(scanRef);
-
-    if (existing.exists()) {
-      popup(
-        "Duplicate scan",
-        `⚠️ Bag ${tag} was already scanned in Bagroom.`,
-        "warning"
-      );
-
-      return false;
-    }
-
-    await setDoc(scanRef, {
-      tag,
-      cartNumber: selectedCart,
-      createdAt: serverTimestamp(),
-      scannedBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
-    });
-
-    return true;
-  };
-
-  const handleScanSubmit = async (
-    forcedTag
-  ) => {
-    if (isSubmittingRef.current) return;
-
-    setMsg("");
-    setErr("");
-
-    if (isLoadingCompleted) {
-      popup(
-        "Flight locked",
-        "Aircraft loading is already completed. Bagroom scanning is locked.",
-        "warning"
-      );
-
-      setTagInput("");
-      return;
-    }
-
-    if (!selectedCart) {
-      popup(
-        "Cart required",
-        "Select or enter a cart number before scanning.",
-        "warning"
-      );
-
-      return;
-    }
-
-    const tag = onlyDigits(
-      forcedTag ?? tagInput
-    );
-
-    if (!tag) return;
-
-    if (!isValidBagTag(tag)) {
-      popup(
-        "Invalid Bag Tag",
-        `Bag tags must contain exactly ${BAG_TAG_LENGTH} digits.\n\nDetected: ${tag.length} digits`,
-        "danger"
-      );
-
-      setTagInput("");
-      return;
-    }
-
-    const now = Date.now();
-
-    if (
-      lastSubmittedTagRef.current === tag &&
-      now - lastSubmittedTimeRef.current < 1200
-    ) {
-      setTagInput("");
-      focusScanner();
-      return;
-    }
-
-    try {
-      isSubmittingRef.current = true;
-      lastSubmittedTagRef.current = tag;
-      lastSubmittedTimeRef.current = now;
-
-      if (!flight) {
-        setErr("Flight not loaded.");
-        return;
-      }
-
-      const cross =
-        await validateAgainstOtherFlight(tag);
-
-      if (!cross.ok) {
-        popup(
-          "Wrong Flight",
-          cross.message,
-          "danger"
-        );
-
-        setTagInput("");
-        return;
-      }
-
-      await saveCartToFlight();
-
-      const saved =
-        await saveBagroomScan(tag);
-
-      if (!saved) {
-        setTagInput("");
-        return;
-      }
-
-      await indexTag(tag);
-      await saveTrackingEvent(tag);
-      await ensureStatusReceiving();
-
-      localStorage.setItem(
-        `bagroomCart_${flightId}`,
-        selectedCart
-      );
-
-      setMsg(
-        `✅ ${tag} received in Cart ${selectedCart}`
-      );
-
-      setTagInput("");
-    } catch (error) {
-      console.error(
-        "Bagroom scan error:",
-        error
-      );
-
-      setErr(
-        "Scan failed. Check the connection and try again."
-      );
-    } finally {
-      isSubmittingRef.current = false;
-      focusScanner();
-    }
-  };
-
-  const scheduleAutoSubmit = (
-    rawValue
-  ) => {
-    if (autoTimerRef.current) {
-      clearTimeout(autoTimerRef.current);
-    }
-
-    const cleaned = onlyDigits(rawValue);
-
-    if (cleaned.length > BAG_TAG_LENGTH) {
-      setErr(
-        `Only ${BAG_TAG_LENGTH} digits are allowed.`
-      );
-
-      return;
-    }
-
-    if (cleaned.length !== BAG_TAG_LENGTH) {
-      return;
-    }
-
-    autoTimerRef.current = setTimeout(() => {
-      handleScanSubmit(cleaned);
-    }, AUTO_SUBMIT_IDLE_MS);
-  };
-
-  const handleChange = (event) => {
-    const rawValue = event.target.value;
-    const digits = normalizeBagTag(rawValue);
-
-    setTagInput(digits);
-    setErr("");
-
-    if (!isLoadingCompleted) {
-      scheduleAutoSubmit(rawValue);
-    }
-  };
-
-  const handleKeyDown = (event) => {
-    if (
-      event.key === "Enter" ||
-      event.key === "Tab"
-    ) {
-      event.preventDefault();
-
-      if (autoTimerRef.current) {
-        clearTimeout(autoTimerRef.current);
-      }
-
-      handleScanSubmit(tagInput);
-    }
-  };
-
-  const changeScannerMode = (
-    nextScannerMode
-  ) => {
-    setScannerMode(nextScannerMode);
-
-    localStorage.setItem(
-      "bagroomScannerMode",
-      nextScannerMode ? "scanner" : "manual"
-    );
-
-    setTagInput("");
-    setErr("");
-  };
-
-  const selectCart = (cart) => {
-    const normalized =
-      normalizeCartNumber(cart);
-
-    setCartNumber(normalized);
-
-    localStorage.setItem(
-      `bagroomCart_${flightId}`,
-      normalized
-    );
-
-    setTagInput("");
-    focusScanner();
-  };
-
-  const deleteCounterScan = async (
-    scan
-  ) => {
-    const tag = onlyDigits(
-      scan?.tag ||
-        scan?.bagTag ||
-        scan?.id
-    );
-
-    if (!tag || !canDeleteScans) return;
-
-    const confirmed = window.confirm(
-      `Delete Counter scan?\n\nBag Tag: ${tag}`
-    );
-
-    if (!confirmed) return;
-
-    try {
-      setDeletingCounterTag(tag);
-
-      await deleteDoc(
-        doc(
-          db,
-          "flights",
-          flightId,
-          "counterScans",
-          scan.id || tag
-        )
-      );
-
-      setMsg(
-        `Counter scan deleted: ${tag}`
-      );
-    } catch (error) {
-      console.error(error);
-
-      popup(
-        "Delete failed",
-        "Could not delete the Counter scan.",
-        "danger"
-      );
-    } finally {
-      setDeletingCounterTag("");
-      focusScanner();
-    }
-  };
-
-  const deleteBagroomScan = async (
-    scan
-  ) => {
-    const tag = onlyDigits(
-      scan?.tag ||
-        scan?.bagTag ||
-        scan?.id
-    );
-
-    if (!tag || !canDeleteScans) return;
-
-    const confirmed = window.confirm(
-      `Delete Bagroom scan?\n\nBag Tag: ${tag}\nCart: ${
-        scan?.cartNumber || "-"
-      }`
-    );
-
-    if (!confirmed) return;
-
-    try {
-      setDeletingBagroomTag(tag);
-
-      await deleteDoc(
-        doc(
-          db,
-          "flights",
-          flightId,
-          "bagroomScans",
-          scan.id || tag
-        )
-      );
-
-      const counterSnapshot =
-        await getDoc(
-          doc(
-            db,
-            "flights",
-            flightId,
-            "counterScans",
-            tag
-          )
-        );
-
-      await setDoc(
-        doc(db, "bagTags", tag),
-        {
-          lastSeenAt: serverTimestamp(),
-          lastSeenLocation:
-            counterSnapshot.exists()
-              ? "counter"
-              : "bagroom_scan_deleted",
-          lastSeenCart: null,
-          lastSeenBy: {
-            userId: user?.id || null,
-            username: user?.username || null,
-            role: user?.role || null,
-          },
-        },
-        { merge: true }
-      );
-
-      setMsg(
-        `Bagroom scan deleted: ${tag}`
-      );
-    } catch (error) {
-      console.error(error);
-
-      popup(
-        "Delete failed",
-        "Could not delete the Bagroom scan.",
-        "danger"
-      );
-    } finally {
-      setDeletingBagroomTag("");
-      focusScanner();
-    }
-  };
-
-  const dataLoading =
-    loadingScans ||
-    loadingCounterScans;
-
-  const pagePadding = compactScreen ? 8 : 16;
-
-  return (
+          userId:
+            user?.id || null,
+
+          username:
+            user?.username ||
+            null,
+
+          role:
+            user?.role ||
+              return (
     <div
       style={{
         background: "white",
@@ -1087,7 +971,7 @@ export default function BagroomScanPage({
                 : "1.5rem",
             }}
           >
-            Bagroom Scan
+            Baggage Receiving
           </h2>
 
           <p
@@ -1097,8 +981,8 @@ export default function BagroomScanPage({
               fontSize: "0.82rem",
             }}
           >
-            Select cart and scan a 10-digit
-            bag tag.
+            Select the receiving area and scan
+            a 10-digit bag tag.
           </p>
         </div>
 
@@ -1171,7 +1055,7 @@ export default function BagroomScanPage({
           display: "grid",
           gridTemplateColumns: compactScreen
             ? "1fr"
-            : "minmax(300px, 0.8fr) minmax(500px, 1.2fr)",
+            : "minmax(320px, 0.85fr) minmax(520px, 1.15fr)",
           gap: 12,
           alignItems: "start",
         }}
@@ -1214,96 +1098,243 @@ export default function BagroomScanPage({
               fontSize: "1rem",
             }}
           >
-            1. Select Cart
+            1. Receiving Area
           </h3>
-
-          {availableCarts.length > 0 && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(3, minmax(0, 1fr))",
-                gap: 6,
-                marginBottom: 8,
-              }}
-            >
-              {availableCarts.map((cart) => (
-                <button
-                  key={cart}
-                  type="button"
-                  onClick={() =>
-                    selectCart(cart)
-                  }
-                  disabled={isLoadingCompleted}
-                  style={{
-                    minHeight: 46,
-                    padding: "6px 4px",
-                    borderRadius: 10,
-                    border:
-                      selectedCart === cart
-                        ? "2px solid #16a34a"
-                        : "1px solid #d1d5db",
-                    background:
-                      selectedCart === cart
-                        ? "#dcfce7"
-                        : "white",
-                    color:
-                      selectedCart === cart
-                        ? "#166534"
-                        : "#111827",
-                    fontWeight: 900,
-                    fontSize: "1rem",
-                  }}
-                >
-                  {cart}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <input
-            value={cartNumber}
-            onChange={(event) =>
-              selectCart(event.target.value)
-            }
-            disabled={isLoadingCompleted}
-            placeholder="Cart number"
-            autoComplete="off"
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              minHeight: 50,
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #d1d5db",
-              background: isLoadingCompleted
-                ? "#f3f4f6"
-                : "white",
-              fontSize: "1rem",
-              fontWeight: 900,
-              textTransform: "uppercase",
-            }}
-          />
 
           <div
             style={{
-              marginTop: 8,
-              padding: 10,
-              borderRadius: 10,
-              background: selectedCart
-                ? "#dcfce7"
-                : "#fef3c7",
-              color: selectedCart
-                ? "#166534"
-                : "#92400e",
-              fontWeight: 900,
-              textAlign: "center",
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(3, minmax(0, 1fr))",
+              gap: 6,
+              marginBottom: 14,
             }}
           >
-            {selectedCart
-              ? `ACTIVE CART: ${selectedCart}`
-              : "CART REQUIRED"}
+            <LocationButton
+              label="Bagroom"
+              icon="🛄"
+              active={
+                normalizedReceivingLocation ===
+                "BAGROOM"
+              }
+              disabled={isLoadingCompleted}
+              onClick={() =>
+                selectReceivingLocation(
+                  "BAGROOM"
+                )
+              }
+            />
+
+            <LocationButton
+              label="Oversize"
+              icon="📦"
+              active={
+                normalizedReceivingLocation ===
+                "OVERSIZE"
+              }
+              disabled={isLoadingCompleted}
+              onClick={() =>
+                selectReceivingLocation(
+                  "OVERSIZE"
+                )
+              }
+            />
+
+            <LocationButton
+              label="Gate"
+              icon="🚪"
+              active={
+                normalizedReceivingLocation ===
+                "GATE"
+              }
+              disabled={isLoadingCompleted}
+              onClick={() =>
+                selectReceivingLocation(
+                  "GATE"
+                )
+              }
+            />
           </div>
+
+          <div
+            style={{
+              padding: 10,
+              borderRadius: 10,
+              border: `1px solid ${
+                normalizedReceivingLocation ===
+                "BAGROOM"
+                  ? "#bfdbfe"
+                  : normalizedReceivingLocation ===
+                      "OVERSIZE"
+                    ? "#fed7aa"
+                    : "#ddd6fe"
+              }`,
+              background:
+                normalizedReceivingLocation ===
+                "BAGROOM"
+                  ? "#eff6ff"
+                  : normalizedReceivingLocation ===
+                      "OVERSIZE"
+                    ? "#fff7ed"
+                    : "#f5f3ff",
+              color:
+                normalizedReceivingLocation ===
+                "BAGROOM"
+                  ? "#1d4ed8"
+                  : normalizedReceivingLocation ===
+                      "OVERSIZE"
+                    ? "#9a3412"
+                    : "#5b21b6",
+              textAlign: "center",
+              fontWeight: 900,
+              marginBottom: 12,
+            }}
+          >
+            {receivingLocationConfig.icon}{" "}
+            Active Area:{" "}
+            {receivingLocationConfig.label}
+          </div>
+
+          {isRegularBagroom ? (
+            <>
+              <h3
+                style={{
+                  margin: "0 0 8px",
+                  fontSize: "1rem",
+                }}
+              >
+                2. Select Cart
+              </h3>
+
+              {availableCarts.length > 0 && (
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "repeat(3, minmax(0, 1fr))",
+                    gap: 6,
+                    marginBottom: 8,
+                  }}
+                >
+                  {availableCarts.map(
+                    (cart) => (
+                      <button
+                        key={cart}
+                        type="button"
+                        onClick={() =>
+                          selectCart(cart)
+                        }
+                        disabled={
+                          isLoadingCompleted
+                        }
+                        style={{
+                          minHeight: 46,
+                          padding: "6px 4px",
+                          borderRadius: 10,
+                          border:
+                            selectedCart ===
+                            cart
+                              ? "2px solid #16a34a"
+                              : "1px solid #d1d5db",
+                          background:
+                            selectedCart ===
+                            cart
+                              ? "#dcfce7"
+                              : "white",
+                          color:
+                            selectedCart ===
+                            cart
+                              ? "#166534"
+                              : "#111827",
+                          fontWeight: 900,
+                          fontSize: "1rem",
+                          cursor:
+                            isLoadingCompleted
+                              ? "not-allowed"
+                              : "pointer",
+                        }}
+                      >
+                        {cart}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+
+              <input
+                value={cartNumber}
+                onChange={(event) =>
+                  selectCart(
+                    event.target.value
+                  )
+                }
+                disabled={isLoadingCompleted}
+                placeholder="Cart number"
+                autoComplete="off"
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  minHeight: 50,
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border:
+                    "1px solid #d1d5db",
+                  background:
+                    isLoadingCompleted
+                      ? "#f3f4f6"
+                      : "white",
+                  fontSize: "1rem",
+                  fontWeight: 900,
+                  textTransform:
+                    "uppercase",
+                }}
+              />
+
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: 10,
+                  borderRadius: 10,
+                  background: selectedCart
+                    ? "#dcfce7"
+                    : "#fef3c7",
+                  color: selectedCart
+                    ? "#166534"
+                    : "#92400e",
+                  fontWeight: 900,
+                  textAlign: "center",
+                }}
+              >
+                {selectedCart
+                  ? `ACTIVE CART: ${selectedCart}`
+                  : "CART REQUIRED"}
+              </div>
+            </>
+          ) : (
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 10,
+                background:
+                  normalizedReceivingLocation ===
+                  "OVERSIZE"
+                    ? "#ffedd5"
+                    : "#ede9fe",
+                color:
+                  normalizedReceivingLocation ===
+                  "OVERSIZE"
+                    ? "#9a3412"
+                    : "#5b21b6",
+                fontWeight: 900,
+                textAlign: "center",
+              }}
+            >
+              {normalizedReceivingLocation ===
+              "OVERSIZE"
+                ? "📦 Cart is not required for Oversize"
+                : "🚪 Receiving at Gate as Ramp"}
+            </div>
+          )}
 
           <hr
             style={{
@@ -1320,7 +1351,9 @@ export default function BagroomScanPage({
               fontSize: "1rem",
             }}
           >
-            2. Scan Bag Tag
+            {isRegularBagroom
+              ? "3. Scan Bag Tag"
+              : "2. Scan Bag Tag"}
           </h3>
 
           <input
@@ -1330,10 +1363,12 @@ export default function BagroomScanPage({
             onKeyDown={handleKeyDown}
             disabled={
               isLoadingCompleted ||
-              !selectedCart
+              !locationReady
             }
             inputMode={
-              scannerMode ? "none" : "numeric"
+              scannerMode
+                ? "none"
+                : "numeric"
             }
             pattern="[0-9]*"
             maxLength={BAG_TAG_LENGTH}
@@ -1344,7 +1379,7 @@ export default function BagroomScanPage({
             placeholder={
               isLoadingCompleted
                 ? "FLIGHT LOCKED"
-                : !selectedCart
+                : !locationReady
                   ? "SELECT CART FIRST"
                   : "SCAN 10 DIGITS"
             }
@@ -1363,7 +1398,7 @@ export default function BagroomScanPage({
                   : "2px solid #2563eb",
               background:
                 isLoadingCompleted ||
-                !selectedCart
+                !locationReady
                   ? "#f3f4f6"
                   : "white",
               color: "#111827",
@@ -1381,8 +1416,10 @@ export default function BagroomScanPage({
           <div
             style={{
               display: "flex",
-              justifyContent: "space-between",
+              justifyContent:
+                "space-between",
               marginTop: 6,
+              gap: 8,
               fontSize: "0.8rem",
             }}
           >
@@ -1420,7 +1457,7 @@ export default function BagroomScanPage({
             }
             disabled={
               isLoadingCompleted ||
-              !selectedCart ||
+              !locationReady ||
               tagInput.length !==
                 BAG_TAG_LENGTH
             }
@@ -1429,10 +1466,11 @@ export default function BagroomScanPage({
               minHeight: 54,
               marginTop: 10,
               borderRadius: 12,
-              border: "1px solid #1d4ed8",
+              border:
+                "1px solid #1d4ed8",
               background:
                 isLoadingCompleted ||
-                !selectedCart ||
+                !locationReady ||
                 tagInput.length !==
                   BAG_TAG_LENGTH
                   ? "#93c5fd"
@@ -1442,14 +1480,14 @@ export default function BagroomScanPage({
               fontSize: "1rem",
               cursor:
                 isLoadingCompleted ||
-                !selectedCart ||
+                !locationReady ||
                 tagInput.length !==
                   BAG_TAG_LENGTH
                   ? "not-allowed"
                   : "pointer",
             }}
           >
-            SAVE BAGROOM SCAN
+            SAVE {receivingLocationConfig.label.toUpperCase()} SCAN
           </button>
 
           {msg && (
@@ -1501,12 +1539,14 @@ export default function BagroomScanPage({
           style={{
             border: "1px solid #e5e7eb",
             borderRadius: 12,
-            padding: compactScreen ? 8 : 12,
+            padding: compactScreen
+              ? 8
+              : 12,
             minWidth: 0,
           }}
         >
           <h3 style={{ marginTop: 0 }}>
-            Counter → Bagroom
+            Counter → Receiving
           </h3>
 
           <div
@@ -1553,6 +1593,49 @@ export default function BagroomScanPage({
 
           <div
             style={{
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(3, minmax(0, 1fr))",
+              gap: 6,
+              marginTop: 6,
+            }}
+          >
+            <SummaryCard
+              label="Bagroom"
+              value={
+                loadingScans
+                  ? "…"
+                  : bagroomScanCount
+              }
+              background="#eff6ff"
+              color="#1d4ed8"
+            />
+
+            <SummaryCard
+              label="Oversize"
+              value={
+                loadingScans
+                  ? "…"
+                  : oversizeScanCount
+              }
+              background="#ffedd5"
+              color="#9a3412"
+            />
+
+            <SummaryCard
+              label="Gate / Ramp"
+              value={
+                loadingScans
+                  ? "…"
+                  : gateRampScanCount
+              }
+              background="#ede9fe"
+              color="#5b21b6"
+            />
+          </div>
+
+          <div
+            style={{
               marginTop: 10,
               maxHeight: compactScreen
                 ? 330
@@ -1562,62 +1645,117 @@ export default function BagroomScanPage({
           >
             {dataLoading ? (
               <p>Loading scans…</p>
-            ) : counterScans.length === 0 ? (
-              <p style={{ color: "#6b7280" }}>
+            ) : counterScans.length ===
+              0 ? (
+              <p
+                style={{
+                  color: "#6b7280",
+                }}
+              >
                 No Counter scans.
               </p>
             ) : compactScreen ? (
-              counterScans.map((scan) => {
-                const tag = onlyDigits(
-                  scan.tag ||
-                    scan.bagTag ||
-                    scan.id
-                );
+              counterScans.map(
+                (scan) => {
+                  const tag =
+                    onlyDigits(
+                      scan.tag ||
+                        scan.bagTag ||
+                        scan.id
+                    );
 
-                const received =
-                  bagroomTagSet.has(tag);
+                  const received =
+                    receivedTagSet.has(
+                      tag
+                    );
 
-                return (
-                  <ScanCard
-                    key={scan.id}
-                    tag={tag}
-                    subtitle={getBagTypeLabel(
-                      scan.bagType
-                    )}
-                    status={
-                      received
-                        ? "RECEIVED"
-                        : "PENDING"
-                    }
-                    success={received}
-                    username={
-                      scan.scannedBy?.username ||
-                      scan.createdBy?.username ||
-                      "-"
-                    }
-                    canDelete={canDeleteScans}
-                    deleting={
-                      deletingCounterTag === tag
-                    }
-                    onDelete={() =>
-                      deleteCounterScan(scan)
-                    }
-                  />
-                );
-              })
+                  const receivedScan =
+                    scans.find(
+                      (row) =>
+                        onlyDigits(
+                          row.tag ||
+                            row.bagTag ||
+                            row.id
+                        ) === tag
+                    );
+
+                  const subtitle =
+                    receivedScan
+                      ? `${getBagTypeLabel(
+                          scan.bagType
+                        )} · ${getScanLocationLabel(
+                          receivedScan
+                        )}`
+                      : getBagTypeLabel(
+                          scan.bagType
+                        );
+
+                  return (
+                    <ScanCard
+                      key={scan.id}
+                      tag={tag}
+                      subtitle={subtitle}
+                      status={
+                        received
+                          ? "RECEIVED"
+                          : "PENDING"
+                      }
+                      success={received}
+                      username={
+                        scan.scannedBy
+                          ?.username ||
+                        scan.createdBy
+                          ?.username ||
+                        "-"
+                      }
+                      canDelete={
+                        canDeleteScans
+                      }
+                      deleting={
+                        deletingCounterTag ===
+                        tag
+                      }
+                      onDelete={() =>
+                        deleteCounterScan(
+                          scan
+                        )
+                      }
+                    />
+                  );
+                }
+              )
             ) : (
-              <table style={tableStyle}>
+              <table
+                style={tableStyle}
+              >
                 <thead>
                   <tr>
-                    <th style={th}>Bag Tag</th>
-                    <th style={th}>Type</th>
-                    <th style={th}>Status</th>
-                    <th style={th}>User</th>
+                    <th style={th}>
+                      Bag Tag
+                    </th>
+
+                    <th style={th}>
+                      Type
+                    </th>
+
+                    <th style={th}>
+                      Status
+                    </th>
+
+                    <th style={th}>
+                      Last Area
+                    </th>
+
+                    <th style={th}>
+                      User
+                    </th>
+
                     {canDeleteScans && (
                       <th
                         style={{
                           ...th,
-                          textAlign: "right",
+                          textAlign:
+                            "right",
                         }}
                       >
                         Action
@@ -1627,73 +1765,101 @@ export default function BagroomScanPage({
                 </thead>
 
                 <tbody>
-                  {counterScans.map((scan) => {
-                    const tag = onlyDigits(
-                      scan.tag ||
-                        scan.bagTag ||
-                        scan.id
-                    );
+                  {counterScans.map(
+                    (scan) => {
+                      const tag =
+                        onlyDigits(
+                          scan.tag ||
+                            scan.bagTag ||
+                            scan.id
+                        );
 
-                    const received =
-                      bagroomTagSet.has(tag);
+                      const received =
+                        receivedTagSet.has(
+                          tag
+                        );
 
-                    return (
-                      <tr
-                        key={scan.id}
-                        style={{
-                          background: received
-                            ? "#f0fdf4"
-                            : "#fef2f2",
-                        }}
-                      >
-                        <td style={td}>
-                          <strong>{tag}</strong>
-                        </td>
+                      const receivedScan =
+                        scans.find(
+                          (row) =>
+                            onlyDigits(
+                              row.tag ||
+                                row.bagTag ||
+                                row.id
+                            ) === tag
+                        );
 
-                        <td style={td}>
-                          {getBagTypeLabel(
-                            scan.bagType
-                          )}
-                        </td>
+                      return (
+                        <tr
+                          key={scan.id}
+                          style={{
+                            background:
+                              received
+                                ? "#f0fdf4"
+                                : "#fef2f2",
+                          }}
+                        >
+                          <td style={td}>
+                            <strong>
+                              {tag}
+                            </strong>
+                          </td>
 
-                        <td style={td}>
-                          <StatusBadge
-                            received={received}
-                          />
-                        </td>
+                          <td style={td}>
+                            {getBagTypeLabel(
+                              scan.bagType
+                            )}
+                          </td>
 
-                        <td style={td}>
-                          {scan.scannedBy
-                            ?.username ||
-                            scan.createdBy
-                              ?.username ||
-                            "-"}
-                        </td>
-
-                        {canDeleteScans && (
-                          <td
-                            style={{
-                              ...td,
-                              textAlign:
-                                "right",
-                            }}
-                          >
-                            <DeleteButton
-                              busy={
-                                deletingCounterTag ===
-                                tag
-                              }
-                              onClick={() =>
-                                deleteCounterScan(
-                                  scan
-                                )
+                          <td style={td}>
+                            <StatusBadge
+                              received={
+                                received
                               }
                             />
                           </td>
-                        )}
-                      </tr>
-                    );
-                  })}
+
+                          <td style={td}>
+                            {receivedScan
+                              ? getScanLocationLabel(
+                                  receivedScan
+                                )
+                              : "-"}
+                          </td>
+
+                          <td style={td}>
+                            {scan.scannedBy
+                              ?.username ||
+                              scan.createdBy
+                                ?.username ||
+                              "-"}
+                          </td>
+
+                          {canDeleteScans && (
+                            <td
+                              style={{
+                                ...td,
+                                textAlign:
+                                  "right",
+                              }}
+                            >
+                              <DeleteButton
+                                busy={
+                                  deletingCounterTag ===
+                                  tag
+                                }
+                                onClick={() =>
+                                  deleteCounterScan(
+                                    scan
+                                  )
+                                }
+                              />
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    }
+                  )}
                 </tbody>
               </table>
             )}
@@ -1708,7 +1874,7 @@ export default function BagroomScanPage({
             }}
           />
 
-          <h3>Bagroom Received</h3>
+          <h3>Received Bags</h3>
 
           <div
             style={{
@@ -1719,7 +1885,7 @@ export default function BagroomScanPage({
             }}
           >
             <SummaryCard
-              label="Total"
+              label="Total Received"
               value={
                 loadingScans
                   ? "…"
@@ -1734,15 +1900,15 @@ export default function BagroomScanPage({
               value={
                 dataLoading
                   ? "…"
-                  : bagroomWithoutCounter.length
+                  : receivedWithoutCounter.length
               }
               background={
-                bagroomWithoutCounter.length
+                receivedWithoutCounter.length
                   ? "#ffedd5"
                   : "#f3f4f6"
               }
               color={
-                bagroomWithoutCounter.length
+                receivedWithoutCounter.length
                   ? "#9a3412"
                   : "#374151"
               }
@@ -1759,29 +1925,52 @@ export default function BagroomScanPage({
             }}
           >
             {loadingScans ? (
-              <p>Loading Bagroom scans…</p>
+              <p>
+                Loading receiving scans…
+              </p>
             ) : scans.length === 0 ? (
-              <p style={{ color: "#6b7280" }}>
-                No Bagroom scans.
+              <p
+                style={{
+                  color: "#6b7280",
+                }}
+              >
+                No receiving scans.
               </p>
             ) : compactScreen ? (
               scans.map((scan) => {
-                const tag = onlyDigits(
-                  scan.tag ||
-                    scan.bagTag ||
-                    scan.id
-                );
+                const tag =
+                  onlyDigits(
+                    scan.tag ||
+                      scan.bagTag ||
+                      scan.id
+                  );
 
                 const matched =
-                  counterTagSet.has(tag);
+                  counterTagSet.has(
+                    tag
+                  );
+
+                const locationLabel =
+                  getScanLocationLabel(
+                    scan
+                  );
+
+                const subtitle =
+                  normalizeReceivingLocation(
+                    scan.receivingLocation ||
+                      scan.location
+                  ) === "BAGROOM"
+                    ? `${locationLabel} · Cart ${
+                        scan.cartNumber ||
+                        "-"
+                      }`
+                    : locationLabel;
 
                 return (
                   <ScanCard
                     key={scan.id}
                     tag={tag}
-                    subtitle={`Cart ${
-                      scan.cartNumber || "-"
-                    }`}
+                    subtitle={subtitle}
                     status={
                       matched
                         ? "MATCHED"
@@ -1790,32 +1979,57 @@ export default function BagroomScanPage({
                     success={matched}
                     warning={!matched}
                     username={
-                      scan.scannedBy?.username ||
+                      scan.scannedBy
+                        ?.username ||
                       "-"
                     }
-                    canDelete={canDeleteScans}
+                    canDelete={
+                      canDeleteScans
+                    }
                     deleting={
-                      deletingBagroomTag === tag
+                      deletingBagroomTag ===
+                      tag
                     }
                     onDelete={() =>
-                      deleteBagroomScan(scan)
+                      deleteReceivingScan(
+                        scan
+                      )
                     }
                   />
                 );
               })
             ) : (
-              <table style={tableStyle}>
+              <table
+                style={tableStyle}
+              >
                 <thead>
                   <tr>
-                    <th style={th}>Bag Tag</th>
-                    <th style={th}>Cart</th>
-                    <th style={th}>Match</th>
-                    <th style={th}>User</th>
+                    <th style={th}>
+                      Bag Tag
+                    </th>
+
+                    <th style={th}>
+                      Location
+                    </th>
+
+                    <th style={th}>
+                      Cart
+                    </th>
+
+                    <th style={th}>
+                      Match
+                    </th>
+
+                    <th style={th}>
+                      User
+                    </th>
+
                     {canDeleteScans && (
                       <th
                         style={{
                           ...th,
-                          textAlign: "right",
+                          textAlign:
+                            "right",
                         }}
                       >
                         Action
@@ -1825,68 +2039,95 @@ export default function BagroomScanPage({
                 </thead>
 
                 <tbody>
-                  {scans.map((scan) => {
-                    const tag = onlyDigits(
-                      scan.tag ||
-                        scan.bagTag ||
-                        scan.id
-                    );
+                  {scans.map(
+                    (scan) => {
+                      const tag =
+                        onlyDigits(
+                          scan.tag ||
+                            scan.bagTag ||
+                            scan.id
+                        );
 
-                    const matched =
-                      counterTagSet.has(tag);
+                      const matched =
+                        counterTagSet.has(
+                          tag
+                        );
 
-                    return (
-                      <tr
-                        key={scan.id}
-                        style={{
-                          background: matched
-                            ? "#f0fdf4"
-                            : "#fff7ed",
-                        }}
-                      >
-                        <td style={td}>
-                          <strong>{tag}</strong>
-                        </td>
+                      const scanLocation =
+                        normalizeReceivingLocation(
+                          scan.receivingLocation ||
+                            scan.location
+                        );
 
-                        <td style={td}>
-                          {scan.cartNumber || "-"}
-                        </td>
+                      return (
+                        <tr
+                          key={scan.id}
+                          style={{
+                            background:
+                              matched
+                                ? "#f0fdf4"
+                                : "#fff7ed",
+                          }}
+                        >
+                          <td style={td}>
+                            <strong>
+                              {tag}
+                            </strong>
+                          </td>
 
-                        <td style={td}>
-                          <MatchBadge
-                            matched={matched}
-                          />
-                        </td>
+                          <td style={td}>
+                            {getScanLocationLabel(
+                              scan
+                            )}
+                          </td>
 
-                        <td style={td}>
-                          {scan.scannedBy
-                            ?.username || "-"}
-                        </td>
+                          <td style={td}>
+                            {scanLocation ===
+                            "BAGROOM"
+                              ? scan.cartNumber ||
+                                "-"
+                              : "N/A"}
+                          </td>
 
-                        {canDeleteScans && (
-                          <td
-                            style={{
-                              ...td,
-                              textAlign:
-                                "right",
-                            }}
-                          >
-                            <DeleteButton
-                              busy={
-                                deletingBagroomTag ===
-                                tag
-                              }
-                              onClick={() =>
-                                deleteBagroomScan(
-                                  scan
-                                )
+                          <td style={td}>
+                            <MatchBadge
+                              matched={
+                                matched
                               }
                             />
                           </td>
-                        )}
-                      </tr>
-                    );
-                  })}
+
+                          <td style={td}>
+                            {scan.scannedBy
+                              ?.username ||
+                              "-"}
+                          </td>
+
+                          {canDeleteScans && (
+                            <td
+                              style={{
+                                ...td,
+                                textAlign:
+                                  "right",
+                              }}
+                            >
+                              <DeleteButton
+                                busy={
+                                  deletingBagroomTag ===
+                                  tag
+                                }
+                                onClick={() =>
+                                  deleteReceivingScan(
+                                    scan
+                                  )
+                                }
+                              />
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    }
+                  )}
                 </tbody>
               </table>
             )}
@@ -1899,124 +2140,196 @@ export default function BagroomScanPage({
           marginTop: 12,
           border: "1px solid #e5e7eb",
           borderRadius: 12,
-          padding: compactScreen ? 8 : 12,
+          padding: compactScreen
+            ? 8
+            : 12,
           background: "#f9fafb",
         }}
       >
         <h3 style={{ marginTop: 0 }}>
-          Bags by Cart
+          Received Bags by Area
         </h3>
 
         {loadingScans ? (
           <p>Loading…</p>
         ) : scans.length === 0 ? (
-          <p style={{ color: "#6b7280" }}>
+          <p
+            style={{
+              color: "#6b7280",
+            }}
+          >
             No scans yet.
           </p>
         ) : (
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: compactScreen
-                ? "1fr"
-                : "repeat(auto-fit, minmax(260px, 1fr))",
+              gridTemplateColumns:
+                compactScreen
+                  ? "1fr"
+                  : "repeat(auto-fit, minmax(260px, 1fr))",
               gap: 8,
             }}
           >
-            {Object.keys(groupedByCart)
+            {Object.keys(
+              groupedByReceivingArea
+            )
               .sort((a, b) =>
                 String(a).localeCompare(
                   String(b),
                   undefined,
-                  { numeric: true }
+                  {
+                    numeric: true,
+                  }
                 )
               )
-              .map((cart) => (
-                <div
-                  key={cart}
-                  style={{
-                    border:
-                      "1px solid #e5e7eb",
-                    borderRadius: 10,
-                    background: "white",
-                    overflow: "hidden",
-                  }}
-                >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      selectCart(cart)
-                    }
-                    style={{
-                      width: "100%",
-                      border: "none",
-                      padding: "10px",
-                      background:
-                        selectedCart === cart
-                          ? "#166534"
-                          : "#111827",
-                      color: "white",
-                      display: "flex",
-                      justifyContent:
-                        "space-between",
-                      fontWeight: 900,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <span>Cart {cart}</span>
-                    <span>
-                      {
-                        groupedByCart[cart]
-                          .length
-                      }{" "}
-                      bags
-                    </span>
-                  </button>
+              .map((groupName) => {
+                const groupScans =
+                  groupedByReceivingArea[
+                    groupName
+                  ];
 
+                const firstScan =
+                  groupScans[0];
+
+                const scanLocation =
+                  normalizeReceivingLocation(
+                    firstScan
+                      ?.receivingLocation ||
+                      firstScan?.location
+                  );
+
+                const groupActive =
+                  scanLocation ===
+                    normalizedReceivingLocation &&
+                  (scanLocation !==
+                    "BAGROOM" ||
+                    groupName ===
+                      selectedCart);
+
+                return (
                   <div
+                    key={groupName}
                     style={{
-                      padding: 8,
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 5,
+                      border:
+                        "1px solid #e5e7eb",
+                      borderRadius: 10,
+                      background: "white",
+                      overflow: "hidden",
                     }}
                   >
-                    {groupedByCart[cart].map(
-                      (scan) => {
-                        const tag = onlyDigits(
-                          scan.tag || scan.id
-                        );
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (
+                          scanLocation ===
+                          "BAGROOM"
+                        ) {
+                          selectReceivingLocation(
+                            "BAGROOM"
+                          );
 
-                        const matched =
-                          counterTagSet.has(tag);
+                          selectCart(
+                            groupName
+                          );
+                        } else {
+                          selectReceivingLocation(
+                            scanLocation
+                          );
+                        }
+                      }}
+                      style={{
+                        width: "100%",
+                        border: "none",
+                        padding: "10px",
+                        background:
+                          groupActive
+                            ? "#166534"
+                            : scanLocation ===
+                                "OVERSIZE"
+                              ? "#9a3412"
+                              : scanLocation ===
+                                  "GATE"
+                                ? "#5b21b6"
+                                : "#111827",
+                        color: "white",
+                        display: "flex",
+                        justifyContent:
+                          "space-between",
+                        gap: 8,
+                        fontWeight: 900,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <span>
+                        {scanLocation ===
+                        "BAGROOM"
+                          ? `Cart ${groupName}`
+                          : groupName}
+                      </span>
 
-                        return (
-                          <span
-                            key={scan.id}
-                            style={{
-                              padding: "4px 7px",
-                              borderRadius: 999,
-                              background: matched
-                                ? "#dcfce7"
-                                : "#ffedd5",
-                              color: matched
-                                ? "#166534"
-                                : "#9a3412",
-                              fontFamily:
-                                "ui-monospace, monospace",
-                              fontWeight: 800,
-                              fontSize:
-                                "0.75rem",
-                            }}
-                          >
-                            {tag}
-                          </span>
-                        );
-                      }
-                    )}
+                      <span>
+                        {
+                          groupScans.length
+                        }{" "}
+                        bags
+                      </span>
+                    </button>
+
+                    <div
+                      style={{
+                        padding: 8,
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 5,
+                      }}
+                    >
+                      {groupScans.map(
+                        (scan) => {
+                          const tag =
+                            onlyDigits(
+                              scan.tag ||
+                                scan.id
+                            );
+
+                          const matched =
+                            counterTagSet.has(
+                              tag
+                            );
+
+                          return (
+                            <span
+                              key={scan.id}
+                              style={{
+                                padding:
+                                  "4px 7px",
+                                borderRadius:
+                                  999,
+                                background:
+                                  matched
+                                    ? "#dcfce7"
+                                    : "#ffedd5",
+                                color:
+                                  matched
+                                    ? "#166534"
+                                    : "#9a3412",
+                                fontFamily:
+                                  "ui-monospace, monospace",
+                                fontWeight:
+                                  800,
+                                fontSize:
+                                  "0.75rem",
+                              }}
+                            >
+                              {tag}
+                            </span>
+                          );
+                        }
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
           </div>
         )}
       </section>
@@ -2025,9 +2338,15 @@ export default function BagroomScanPage({
         open={modal.open}
         title={modal.title}
         tone={modal.tone}
-        confirmText={modal.confirmText}
-        cancelText={modal.cancelText}
-        showCancel={modal.showCancel}
+        confirmText={
+          modal.confirmText
+        }
+        cancelText={
+          modal.cancelText
+        }
+        showCancel={
+          modal.showCancel
+        }
         onConfirm={() => {
           if (
             typeof modal.onConfirm ===
@@ -2057,6 +2376,62 @@ export default function BagroomScanPage({
   );
 }
 
+function LocationButton({
+  label,
+  icon,
+  active,
+  disabled,
+  onClick,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        minHeight: 62,
+        padding: "7px 4px",
+        borderRadius: 10,
+        border: active
+          ? "2px solid #2563eb"
+          : "1px solid #d1d5db",
+        background: active
+          ? "#dbeafe"
+          : disabled
+            ? "#f3f4f6"
+            : "white",
+        color: active
+          ? "#1d4ed8"
+          : "#374151",
+        fontWeight: 900,
+        cursor: disabled
+          ? "not-allowed"
+          : "pointer",
+        opacity: disabled
+          ? 0.7
+          : 1,
+      }}
+    >
+      <div
+        style={{
+          fontSize: "1.2rem",
+        }}
+      >
+        {icon}
+      </div>
+
+      <div
+        style={{
+          marginTop: 2,
+          fontSize: "0.72rem",
+        }}
+      >
+        {label}
+      </div>
+    </button>
+  );
+}
+
 function ModeButton({
   active,
   label,
@@ -2080,6 +2455,7 @@ function ModeButton({
           ? "#1d4ed8"
           : "#374151",
         fontWeight: 900,
+        cursor: "pointer",
       }}
     >
       {label}
@@ -2102,7 +2478,8 @@ function SummaryCard({
         background,
         color,
         textAlign: "center",
-        border: "1px solid rgba(0,0,0,0.06)",
+        border:
+          "1px solid rgba(0,0,0,0.06)",
       }}
     >
       <div
@@ -2162,7 +2539,8 @@ function ScanCard({
       <div
         style={{
           display: "flex",
-          justifyContent: "space-between",
+          justifyContent:
+            "space-between",
           gap: 6,
           alignItems: "center",
         }}
@@ -2195,7 +2573,8 @@ function ScanCard({
         style={{
           marginTop: 5,
           display: "flex",
-          justifyContent: "space-between",
+          justifyContent:
+            "space-between",
           alignItems: "center",
           gap: 6,
           color: "#6b7280",
@@ -2217,7 +2596,9 @@ function ScanCard({
   );
 }
 
-function StatusBadge({ received }) {
+function StatusBadge({
+  received,
+}) {
   return (
     <span
       style={{
@@ -2234,12 +2615,16 @@ function StatusBadge({ received }) {
         fontWeight: 900,
       }}
     >
-      {received ? "RECEIVED" : "PENDING"}
+      {received
+        ? "RECEIVED"
+        : "PENDING"}
     </span>
   );
 }
 
-function MatchBadge({ matched }) {
+function MatchBadge({
+  matched,
+}) {
   return (
     <span
       style={{
@@ -2256,7 +2641,9 @@ function MatchBadge({ matched }) {
         fontWeight: 900,
       }}
     >
-      {matched ? "MATCHED" : "NO COUNTER"}
+      {matched
+        ? "MATCHED"
+        : "NO COUNTER"}
     </span>
   );
 }
@@ -2277,13 +2664,18 @@ function DeleteButton({
         minHeight: 32,
         padding: "4px 8px",
         borderRadius: 999,
-        border: "1px solid #ef4444",
+        border:
+          "1px solid #ef4444",
         background: busy
           ? "#fca5a5"
           : "#ef4444",
         color: "white",
         fontSize: "0.7rem",
         fontWeight: 900,
+        cursor: busy
+          ? "not-allowed"
+          : "pointer",
+        opacity: busy ? 0.7 : 1,
       }}
     >
       {busy ? "…" : "Delete"}
@@ -2299,7 +2691,8 @@ const tableStyle = {
 const th = {
   textAlign: "left",
   padding: "9px 7px",
-  borderBottom: "1px solid #e5e7eb",
+  borderBottom:
+    "1px solid #e5e7eb",
   fontSize: "0.72rem",
   textTransform: "uppercase",
   color: "#6b7280",
@@ -2308,7 +2701,8 @@ const th = {
 
 const td = {
   padding: "9px 7px",
-  borderBottom: "1px solid #f3f4f6",
+  borderBottom:
+    "1px solid #f3f4f6",
   color: "#111827",
   verticalAlign: "middle",
 };
