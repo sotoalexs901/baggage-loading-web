@@ -1,52 +1,149 @@
 // src/pages/BagroomScanPage.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
 } from "firebase/firestore";
+
 import { db } from "../firebase";
 import Modal from "../components/Modal.jsx";
 import { useModal } from "../components/useModal.js";
 
+const BAG_TAG_LENGTH = 10;
+const AUTO_SUBMIT_IDLE_MS = 140;
+const COMPACT_SCREEN_WIDTH = 760;
+
 function normalizeRole(role) {
-  return String(role || "").trim().toLowerCase();
+  return String(role || "")
+    .trim()
+    .toLowerCase();
 }
 
-function cleanTagValue(v) {
-  return String(v || "").replace(/[\r\n]+/g, "").trim();
+function onlyDigits(value) {
+  return String(value || "").replace(/\D+/g, "");
+}
+
+function normalizeBagTag(value) {
+  return onlyDigits(value).slice(0, BAG_TAG_LENGTH);
+}
+
+function isValidBagTag(value) {
+  return onlyDigits(value).length === BAG_TAG_LENGTH;
 }
 
 function normalizeCartNumber(value) {
-  return String(value || "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
-function normalizeStatus(s) {
-  const v = String(s || "OPEN").trim().toUpperCase();
+function normalizeStatus(status) {
+  const value = String(status || "OPEN")
+    .trim()
+    .toUpperCase();
 
-  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED"
-    ? v
+  return ["OPEN", "RECEIVING", "LOADING", "LOADED"].includes(
+    value
+  )
+    ? value
     : "OPEN";
 }
 
-const MIN_TAG_LEN = 6;
-const AUTO_SUBMIT_IDLE_MS = 90;
+function normalizeBagType(value) {
+  const type = String(value || "CHECKED_BAG")
+    .trim()
+    .toUpperCase();
 
-export default function BagroomScanPage({ flightId, user }) {
-  const role = useMemo(() => normalizeRole(user?.role), [user]);
-  const isGateController = role === "gate_controller";
+  return [
+    "CHECKED_BAG",
+    "GATE_CHECK",
+    "OVERSIZE",
+    "GATE_BAG",
+  ].includes(type)
+    ? type
+    : "CHECKED_BAG";
+}
 
-  const [flight, setFlight] = useState(null);
-  const [flightLoading, setFlightLoading] = useState(true);
+function getBagTypeLabel(value) {
+  const type = normalizeBagType(value);
 
-  const [cartNumber, setCartNumber] = useState(
-    localStorage.getItem(`bagroomCart_${flightId}`) || ""
+  if (type === "GATE_CHECK") return "Gate Check";
+  if (type === "OVERSIZE") return "Oversize";
+  if (type === "GATE_BAG") return "Gate Bag";
+
+  return "Checked Bag";
+}
+
+function useCompactScreen() {
+  const [compact, setCompact] = useState(() =>
+    typeof window !== "undefined"
+      ? window.innerWidth <= COMPACT_SCREEN_WIDTH
+      : false
   );
 
-  const selectedCart = normalizeCartNumber(cartNumber);
+  useEffect(() => {
+    const update = () => {
+      setCompact(
+        window.innerWidth <= COMPACT_SCREEN_WIDTH
+      );
+    };
+
+    window.addEventListener("resize", update);
+
+    return () => {
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
+  return compact;
+}
+
+export default function BagroomScanPage({
+  flightId,
+  user,
+}) {
+  const compactScreen = useCompactScreen();
+
+  const role = useMemo(
+    () => normalizeRole(user?.role),
+    [user?.role]
+  );
+
+  const canDeleteScans = [
+    "station_manager",
+    "duty_manager",
+    "supervisor",
+    "gate_controller",
+  ].includes(role);
+
+  const [flight, setFlight] = useState(null);
+  const [flightLoading, setFlightLoading] =
+    useState(true);
+
+  const [cartNumber, setCartNumber] = useState(
+    localStorage.getItem(`bagroomCart_${flightId}`) ||
+      ""
+  );
+
+  const selectedCart =
+    normalizeCartNumber(cartNumber);
+
+  const [scannerMode, setScannerMode] = useState(
+    () =>
+      localStorage.getItem("bagroomScannerMode") !==
+      "manual"
+  );
 
   const [tagInput, setTagInput] = useState("");
   const inputRef = useRef(null);
@@ -55,35 +152,180 @@ export default function BagroomScanPage({ flightId, user }) {
   const [err, setErr] = useState("");
 
   const [scans, setScans] = useState([]);
-  const [loadingScans, setLoadingScans] = useState(true);
+  const [loadingScans, setLoadingScans] =
+    useState(true);
 
-  const [strictManifest, setStrictManifest] = useState(false);
+  const [counterScans, setCounterScans] =
+    useState([]);
+
+  const [
+    loadingCounterScans,
+    setLoadingCounterScans,
+  ] = useState(true);
+
+  const [strictManifest, setStrictManifest] =
+    useState(false);
+
+  const [
+    deletingCounterTag,
+    setDeletingCounterTag,
+  ] = useState("");
+
+  const [
+    deletingBagroomTag,
+    setDeletingBagroomTag,
+  ] = useState("");
 
   const autoTimerRef = useRef(null);
   const isSubmittingRef = useRef(false);
+  const lastSubmittedTagRef = useRef("");
+  const lastSubmittedTimeRef = useRef(0);
 
   const { modal, show, close } = useModal();
 
-  const popup = (title, message, tone = "info") => {
+  const focusScanner = () => {
+    window.setTimeout(() => {
+      if (
+        inputRef.current &&
+        selectedCart &&
+        !isLoadingCompleted
+      ) {
+        inputRef.current.focus();
+      }
+    }, 100);
+  };
+
+  const popup = (
+    title,
+    message,
+    tone = "info"
+  ) => {
     show({
       title,
       tone,
-      content: <div style={{ whiteSpace: "pre-wrap" }}>{message}</div>,
+      content: (
+        <div style={{ whiteSpace: "pre-wrap" }}>
+          {message}
+        </div>
+      ),
       confirmText: "OK",
-      onConfirm: close,
-      onCancel: close,
+      onConfirm: () => {
+        close();
+        focusScanner();
+      },
+      onCancel: () => {
+        close();
+        focusScanner();
+      },
     });
   };
+
+  const isLoadingCompleted =
+    Boolean(flight?.aircraftLoadingCompleted) ||
+    normalizeStatus(flight?.status) === "LOADED";
+
+  const availableCarts = useMemo(() => {
+    const carts = new Set();
+
+    if (Array.isArray(flight?.cartNumbers)) {
+      flight.cartNumbers.forEach((cart) => {
+        const normalized =
+          normalizeCartNumber(cart);
+
+        if (normalized) carts.add(normalized);
+      });
+    }
+
+    scans.forEach((scan) => {
+      const normalized =
+        normalizeCartNumber(scan.cartNumber);
+
+      if (normalized) carts.add(normalized);
+    });
+
+    if (selectedCart) {
+      carts.add(selectedCart);
+    }
+
+    return [...carts].sort((a, b) =>
+      String(a).localeCompare(String(b), undefined, {
+        numeric: true,
+      })
+    );
+  }, [flight?.cartNumbers, scans, selectedCart]);
+
+  const counterTagSet = useMemo(() => {
+    return new Set(
+      counterScans
+        .map((scan) =>
+          onlyDigits(
+            scan.tag || scan.bagTag || scan.id
+          )
+        )
+        .filter(isValidBagTag)
+    );
+  }, [counterScans]);
+
+  const bagroomTagSet = useMemo(() => {
+    return new Set(
+      scans
+        .map((scan) =>
+          onlyDigits(
+            scan.tag || scan.bagTag || scan.id
+          )
+        )
+        .filter(isValidBagTag)
+    );
+  }, [scans]);
+
+  const receivedCounterScans = useMemo(() => {
+    return counterScans.filter((scan) => {
+      const tag = onlyDigits(
+        scan.tag || scan.bagTag || scan.id
+      );
+
+      return (
+        isValidBagTag(tag) &&
+        bagroomTagSet.has(tag)
+      );
+    });
+  }, [counterScans, bagroomTagSet]);
+
+  const pendingCounterScans = useMemo(() => {
+    return counterScans.filter((scan) => {
+      const tag = onlyDigits(
+        scan.tag || scan.bagTag || scan.id
+      );
+
+      return (
+        isValidBagTag(tag) &&
+        !bagroomTagSet.has(tag)
+      );
+    });
+  }, [counterScans, bagroomTagSet]);
+
+  const bagroomWithoutCounter = useMemo(() => {
+    return scans.filter((scan) => {
+      const tag = onlyDigits(
+        scan.tag || scan.bagTag || scan.id
+      );
+
+      return (
+        isValidBagTag(tag) &&
+        !counterTagSet.has(tag)
+      );
+    });
+  }, [scans, counterTagSet]);
 
   const groupedByCart = useMemo(() => {
     const groups = {};
 
     for (const scan of scans) {
-      const cart = normalizeCartNumber(scan.cartNumber) || "NO CART";
+      const cart =
+        normalizeCartNumber(scan.cartNumber) ||
+        "NO CART";
 
-      if (!groups[cart]) {
-        groups[cart] = [];
-      }
+      if (!groups[cart]) groups[cart] = [];
 
       groups[cart].push(scan);
     }
@@ -92,32 +334,50 @@ export default function BagroomScanPage({ flightId, user }) {
   }, [scans]);
 
   useEffect(() => {
-    if (!flightId) return;
+    if (!flightId) {
+      setFlight(null);
+      setFlightLoading(false);
+      return;
+    }
 
     setFlightLoading(true);
 
-    const ref = doc(db, "flights", flightId);
+    const flightRef = doc(
+      db,
+      "flights",
+      flightId
+    );
 
     const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        if (!snap.exists()) {
+      flightRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
           setFlight(null);
           setFlightLoading(false);
           return;
         }
 
-        const data = { id: snap.id, ...snap.data() };
+        const data = {
+          id: snapshot.id,
+          ...snapshot.data(),
+        };
+
         setFlight(data);
 
-        if (typeof data.strictManifest === "boolean") {
+        if (
+          typeof data.strictManifest === "boolean"
+        ) {
           setStrictManifest(data.strictManifest);
         }
 
         setFlightLoading(false);
       },
-      (e) => {
-        console.error("Bagroom flight snapshot error:", e);
+      (error) => {
+        console.error(
+          "Bagroom flight snapshot error:",
+          error
+        );
+
         setFlight(null);
         setFlightLoading(false);
       }
@@ -127,31 +387,50 @@ export default function BagroomScanPage({ flightId, user }) {
   }, [flightId]);
 
   useEffect(() => {
-    if (!flightId) return;
+    if (!flightId) {
+      setScans([]);
+      setLoadingScans(false);
+      return;
+    }
 
     setLoadingScans(true);
 
-    const ref = collection(db, "flights", flightId, "bagroomScans");
+    const bagroomRef = collection(
+      db,
+      "flights",
+      flightId,
+      "bagroomScans"
+    );
 
     const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const rows = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
+      bagroomRef,
+      (snapshot) => {
+        const rows = snapshot.docs.map(
+          (document) => ({
+            id: document.id,
+            ...document.data(),
+          })
+        );
 
         rows.sort((a, b) => {
-          const ta = a.createdAt?.seconds || 0;
-          const tb = b.createdAt?.seconds || 0;
-          return tb - ta;
+          const timeA =
+            a.createdAt?.seconds || 0;
+
+          const timeB =
+            b.createdAt?.seconds || 0;
+
+          return timeB - timeA;
         });
 
         setScans(rows);
         setLoadingScans(false);
       },
-      (e) => {
-        console.error("Bagroom scans snapshot error:", e);
+      (error) => {
+        console.error(
+          "Bagroom scans snapshot error:",
+          error
+        );
+
         setScans([]);
         setLoadingScans(false);
       }
@@ -161,8 +440,66 @@ export default function BagroomScanPage({ flightId, user }) {
   }, [flightId]);
 
   useEffect(() => {
-    if (inputRef.current) inputRef.current.focus();
-  }, []);
+    if (!flightId) {
+      setCounterScans([]);
+      setLoadingCounterScans(false);
+      return;
+    }
+
+    setLoadingCounterScans(true);
+
+    const counterRef = collection(
+      db,
+      "flights",
+      flightId,
+      "counterScans"
+    );
+
+    const unsub = onSnapshot(
+      counterRef,
+      (snapshot) => {
+        const rows = snapshot.docs.map(
+          (document) => ({
+            id: document.id,
+            ...document.data(),
+          })
+        );
+
+        rows.sort((a, b) => {
+          const timeA =
+            a.createdAt?.seconds || 0;
+
+          const timeB =
+            b.createdAt?.seconds || 0;
+
+          return timeB - timeA;
+        });
+
+        setCounterScans(rows);
+        setLoadingCounterScans(false);
+      },
+      (error) => {
+        console.error(
+          "Counter scans snapshot error:",
+          error
+        );
+
+        setCounterScans([]);
+        setLoadingCounterScans(false);
+      }
+    );
+
+    return () => unsub();
+  }, [flightId]);
+
+  useEffect(() => {
+    focusScanner();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedCart,
+    scannerMode,
+    isLoadingCompleted,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -172,17 +509,20 @@ export default function BagroomScanPage({ flightId, user }) {
     };
   }, []);
 
-  const isLoadingCompleted =
-    Boolean(flight?.aircraftLoadingCompleted) ||
-    normalizeStatus(flight?.status) === "LOADED";
-
   const ensureStatusReceiving = async () => {
     if (!flight) return;
 
-    const current = normalizeStatus(flight.status);
+    const current = normalizeStatus(
+      flight.status
+    );
 
-    if (current === "LOADING" || current === "LOADED") return;
-    if (current === "RECEIVING") return;
+    if (
+      current === "RECEIVING" ||
+      current === "LOADING" ||
+      current === "LOADED"
+    ) {
+      return;
+    }
 
     await setDoc(
       doc(db, "flights", flightId),
@@ -202,21 +542,33 @@ export default function BagroomScanPage({ flightId, user }) {
   const saveCartToFlight = async () => {
     if (!selectedCart || !flightId) return;
 
-    const existingCarts = Array.isArray(flight?.cartNumbers)
-      ? flight.cartNumbers.map(normalizeCartNumber).filter(Boolean)
+    const existingCarts = Array.isArray(
+      flight?.cartNumbers
+    )
+      ? flight.cartNumbers
+          .map(normalizeCartNumber)
+          .filter(Boolean)
       : [];
 
-    if (existingCarts.includes(selectedCart)) return;
+    if (existingCarts.includes(selectedCart)) {
+      return;
+    }
 
-    const nextCarts = [...existingCarts, selectedCart].sort((a, b) =>
-      String(a).localeCompare(String(b), undefined, { numeric: true })
+    const nextCarts = [
+      ...existingCarts,
+      selectedCart,
+    ].sort((a, b) =>
+      String(a).localeCompare(String(b), undefined, {
+        numeric: true,
+      })
     );
 
     await setDoc(
       doc(db, "flights", flightId),
       {
         cartNumbers: nextCarts,
-        cartNumbersUpdatedAt: serverTimestamp(),
+        cartNumbersUpdatedAt:
+          serverTimestamp(),
         cartNumbersUpdatedBy: {
           userId: user?.id || null,
           username: user?.username || null,
@@ -227,42 +579,65 @@ export default function BagroomScanPage({ flightId, user }) {
     );
   };
 
-  const validateAgainstManifest = async () => {
-    return { ok: true };
-  };
-
-  const validateAgainstOtherFlight = async (tag) => {
+  const validateAgainstOtherFlight = async (
+    tag
+  ) => {
     const tagRef = doc(db, "bagTags", tag);
-    const snap = await getDoc(tagRef);
+    const snapshot = await getDoc(tagRef);
 
-    if (!snap.exists()) return { ok: true, firstTime: true };
+    if (!snapshot.exists()) {
+      return {
+        ok: true,
+        firstTime: true,
+      };
+    }
 
-    const existing = snap.data();
+    const existing = snapshot.data();
 
-    if (existing.flightId && existing.flightId !== flightId) {
+    if (
+      existing.flightId &&
+      existing.flightId !== flightId
+    ) {
       return {
         ok: false,
         message:
           `❌ Bag tag belongs to another flight/date.\n\n` +
-          `Current flight: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
-          `Registered flight: ${existing.flightNumber || existing.flightId} (${existing.flightDate || "-"})\n\n` +
+          `Current flight: ${
+            flight?.flightNumber || flightId
+          } (${flight?.flightDate || "-"})\n` +
+          `Registered flight: ${
+            existing.flightNumber ||
+            existing.flightId
+          } (${existing.flightDate || "-"})\n\n` +
           `Do NOT accept this bag for this flight.`,
       };
     }
 
-    return { ok: true, firstTime: false };
+    return {
+      ok: true,
+      firstTime: false,
+    };
   };
 
   const indexTag = async (tag) => {
-    const ref = doc(db, "bagTags", tag);
+    const tagRef = doc(db, "bagTags", tag);
+    const current = await getDoc(tagRef);
+
+    const firstSeenAt = current.exists()
+      ? current.data().firstSeenAt ||
+        serverTimestamp()
+      : serverTimestamp();
 
     await setDoc(
-      ref,
+      tagRef,
       {
         tag,
         flightId,
-        flightNumber: flight?.flightNumber || null,
-        flightDate: flight?.flightDate || null,
+        flightNumber:
+          flight?.flightNumber || null,
+        flightDate:
+          flight?.flightDate || null,
+        gate: flight?.gate || null,
         lastSeenAt: serverTimestamp(),
         lastSeenLocation: "bagroom",
         lastSeenCart: selectedCart || null,
@@ -271,7 +646,7 @@ export default function BagroomScanPage({ flightId, user }) {
           username: user?.username || null,
           role: user?.role || null,
         },
-        firstSeenAt: serverTimestamp(),
+        firstSeenAt,
       },
       { merge: true }
     );
@@ -289,12 +664,15 @@ export default function BagroomScanPage({ flightId, user }) {
     await setDoc(eventRef, {
       type: "BAGROOM_SCAN",
       location: "bagroom",
-      message: "Bag received/scanned in Bagroom",
+      message:
+        "Bag received/scanned in Bagroom",
       tag,
       cartNumber: selectedCart || null,
       flightId,
-      flightNumber: flight?.flightNumber || null,
-      flightDate: flight?.flightDate || null,
+      flightNumber:
+        flight?.flightNumber || null,
+      flightDate:
+        flight?.flightDate || null,
       gate: flight?.gate || null,
       createdAt: serverTimestamp(),
       createdBy: {
@@ -304,20 +682,29 @@ export default function BagroomScanPage({ flightId, user }) {
       },
     });
   };
-    const saveBagroomScan = async (tag) => {
-    const ref = doc(db, "flights", flightId, "bagroomScans", tag);
-    const existing = await getDoc(ref);
+
+  const saveBagroomScan = async (tag) => {
+    const scanRef = doc(
+      db,
+      "flights",
+      flightId,
+      "bagroomScans",
+      tag
+    );
+
+    const existing = await getDoc(scanRef);
 
     if (existing.exists()) {
       popup(
         "Duplicate scan",
-        "⚠️ Bag already scanned in Bagroom.",
+        `⚠️ Bag ${tag} was already scanned in Bagroom.`,
         "warning"
       );
+
       return false;
     }
 
-    await setDoc(ref, {
+    await setDoc(scanRef, {
       tag,
       cartNumber: selectedCart,
       createdAt: serverTimestamp(),
@@ -331,7 +718,9 @@ export default function BagroomScanPage({ flightId, user }) {
     return true;
   };
 
-  const handleScanSubmit = async (forcedTag) => {
+  const handleScanSubmit = async (
+    forcedTag
+  ) => {
     if (isSubmittingRef.current) return;
 
     setMsg("");
@@ -339,10 +728,11 @@ export default function BagroomScanPage({ flightId, user }) {
 
     if (isLoadingCompleted) {
       popup(
-        "Locked",
-        "⚠️ Aircraft loading is already completed for this flight. Bagroom scanning is locked.",
+        "Flight locked",
+        "Aircraft loading is already completed. Bagroom scanning is locked.",
         "warning"
       );
+
       setTagInput("");
       return;
     }
@@ -350,56 +740,77 @@ export default function BagroomScanPage({ flightId, user }) {
     if (!selectedCart) {
       popup(
         "Cart required",
-        "Please enter or select a cart number before scanning bags.",
+        "Select or enter a cart number before scanning.",
         "warning"
       );
+
       return;
     }
 
-    const tag = cleanTagValue(forcedTag ?? tagInput);
+    const tag = onlyDigits(
+      forcedTag ?? tagInput
+    );
 
     if (!tag) return;
 
-    if (tag.length < MIN_TAG_LEN) return;
+    if (!isValidBagTag(tag)) {
+      popup(
+        "Invalid Bag Tag",
+        `Bag tags must contain exactly ${BAG_TAG_LENGTH} digits.\n\nDetected: ${tag.length} digits`,
+        "danger"
+      );
+
+      setTagInput("");
+      return;
+    }
+
+    const now = Date.now();
+
+    if (
+      lastSubmittedTagRef.current === tag &&
+      now - lastSubmittedTimeRef.current < 1200
+    ) {
+      setTagInput("");
+      focusScanner();
+      return;
+    }
 
     try {
       isSubmittingRef.current = true;
+      lastSubmittedTagRef.current = tag;
+      lastSubmittedTimeRef.current = now;
 
       if (!flight) {
         setErr("Flight not loaded.");
         return;
       }
 
-      const manifest = await validateAgainstManifest(tag);
-
-      if (!manifest.ok) {
-        popup("Not in Manifest", manifest.message, "danger");
-        setTagInput("");
-        return;
-      }
-
-      const cross = await validateAgainstOtherFlight(tag);
+      const cross =
+        await validateAgainstOtherFlight(tag);
 
       if (!cross.ok) {
-        popup("Wrong Flight", cross.message, "danger");
+        popup(
+          "Wrong Flight",
+          cross.message,
+          "danger"
+        );
+
         setTagInput("");
         return;
       }
 
       await saveCartToFlight();
 
-      const ok = await saveBagroomScan(tag);
+      const saved =
+        await saveBagroomScan(tag);
 
-      if (!ok) {
+      if (!saved) {
         setTagInput("");
         return;
       }
 
       await indexTag(tag);
-
-      // ⭐ NUEVO TRACKING
       await saveTrackingEvent(tag);
-
       await ensureStatusReceiving();
 
       localStorage.setItem(
@@ -407,257 +818,1208 @@ export default function BagroomScanPage({ flightId, user }) {
         selectedCart
       );
 
-      setMsg(`Scanned ✅ Cart ${selectedCart} · ${tag}`);
-      setTagInput("");
+      setMsg(
+        `✅ ${tag} received in Cart ${selectedCart}`
+      );
 
-      if (inputRef.current) {
-        inputRef.current.focus();
-      }
-    } catch (e) {
-      console.error(e);
-      setErr("Scan failed. Check connection.");
+      setTagInput("");
+    } catch (error) {
+      console.error(
+        "Bagroom scan error:",
+        error
+      );
+
+      setErr(
+        "Scan failed. Check the connection and try again."
+      );
     } finally {
       isSubmittingRef.current = false;
+      focusScanner();
     }
   };
 
-  const scheduleAutoSubmit = (nextValue) => {
+  const scheduleAutoSubmit = (
+    rawValue
+  ) => {
     if (autoTimerRef.current) {
       clearTimeout(autoTimerRef.current);
     }
 
-    const cleaned = cleanTagValue(nextValue);
+    const cleaned = onlyDigits(rawValue);
 
-    if (
-      /[\r\n]/.test(String(nextValue || "")) &&
-      cleaned.length >= MIN_TAG_LEN
-    ) {
-      handleScanSubmit(cleaned);
+    if (cleaned.length > BAG_TAG_LENGTH) {
+      setErr(
+        `Only ${BAG_TAG_LENGTH} digits are allowed.`
+      );
+
+      return;
+    }
+
+    if (cleaned.length !== BAG_TAG_LENGTH) {
       return;
     }
 
     autoTimerRef.current = setTimeout(() => {
-      if (cleaned.length >= MIN_TAG_LEN) {
-        handleScanSubmit(cleaned);
-      }
+      handleScanSubmit(cleaned);
     }, AUTO_SUBMIT_IDLE_MS);
   };
 
-  const handleChange = (e) => {
-    const value = e.target.value;
+  const handleChange = (event) => {
+    const rawValue = event.target.value;
+    const digits = normalizeBagTag(rawValue);
 
-    setTagInput(value);
+    setTagInput(digits);
+    setErr("");
 
     if (!isLoadingCompleted) {
-      scheduleAutoSubmit(value);
+      scheduleAutoSubmit(rawValue);
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === "Tab") {
-      e.preventDefault();
-      handleScanSubmit();
+  const handleKeyDown = (event) => {
+    if (
+      event.key === "Enter" ||
+      event.key === "Tab"
+    ) {
+      event.preventDefault();
+
+      if (autoTimerRef.current) {
+        clearTimeout(autoTimerRef.current);
+      }
+
+      handleScanSubmit(tagInput);
     }
   };
+
+  const changeScannerMode = (
+    nextScannerMode
+  ) => {
+    setScannerMode(nextScannerMode);
+
+    localStorage.setItem(
+      "bagroomScannerMode",
+      nextScannerMode ? "scanner" : "manual"
+    );
+
+    setTagInput("");
+    setErr("");
+  };
+
+  const selectCart = (cart) => {
+    const normalized =
+      normalizeCartNumber(cart);
+
+    setCartNumber(normalized);
+
+    localStorage.setItem(
+      `bagroomCart_${flightId}`,
+      normalized
+    );
+
+    setTagInput("");
+    focusScanner();
+  };
+
+  const deleteCounterScan = async (
+    scan
+  ) => {
+    const tag = onlyDigits(
+      scan?.tag ||
+        scan?.bagTag ||
+        scan?.id
+    );
+
+    if (!tag || !canDeleteScans) return;
+
+    const confirmed = window.confirm(
+      `Delete Counter scan?\n\nBag Tag: ${tag}`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingCounterTag(tag);
+
+      await deleteDoc(
+        doc(
+          db,
+          "flights",
+          flightId,
+          "counterScans",
+          scan.id || tag
+        )
+      );
+
+      setMsg(
+        `Counter scan deleted: ${tag}`
+      );
+    } catch (error) {
+      console.error(error);
+
+      popup(
+        "Delete failed",
+        "Could not delete the Counter scan.",
+        "danger"
+      );
+    } finally {
+      setDeletingCounterTag("");
+      focusScanner();
+    }
+  };
+
+  const deleteBagroomScan = async (
+    scan
+  ) => {
+    const tag = onlyDigits(
+      scan?.tag ||
+        scan?.bagTag ||
+        scan?.id
+    );
+
+    if (!tag || !canDeleteScans) return;
+
+    const confirmed = window.confirm(
+      `Delete Bagroom scan?\n\nBag Tag: ${tag}\nCart: ${
+        scan?.cartNumber || "-"
+      }`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingBagroomTag(tag);
+
+      await deleteDoc(
+        doc(
+          db,
+          "flights",
+          flightId,
+          "bagroomScans",
+          scan.id || tag
+        )
+      );
+
+      const counterSnapshot =
+        await getDoc(
+          doc(
+            db,
+            "flights",
+            flightId,
+            "counterScans",
+            tag
+          )
+        );
+
+      await setDoc(
+        doc(db, "bagTags", tag),
+        {
+          lastSeenAt: serverTimestamp(),
+          lastSeenLocation:
+            counterSnapshot.exists()
+              ? "counter"
+              : "bagroom_scan_deleted",
+          lastSeenCart: null,
+          lastSeenBy: {
+            userId: user?.id || null,
+            username: user?.username || null,
+            role: user?.role || null,
+          },
+        },
+        { merge: true }
+      );
+
+      setMsg(
+        `Bagroom scan deleted: ${tag}`
+      );
+    } catch (error) {
+      console.error(error);
+
+      popup(
+        "Delete failed",
+        "Could not delete the Bagroom scan.",
+        "danger"
+      );
+    } finally {
+      setDeletingBagroomTag("");
+      focusScanner();
+    }
+  };
+
+  const dataLoading =
+    loadingScans ||
+    loadingCounterScans;
+
+  const pagePadding = compactScreen ? 8 : 16;
 
   return (
-    
-    <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+    <div
+      style={{
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: compactScreen ? 8 : 12,
+        padding: pagePadding,
+        fontSize: compactScreen
+          ? "14px"
+          : "16px",
+      }}
+      onClick={() => {
+        if (scannerMode) {
+          focusScanner();
+        }
+      }}
+    >
+      <header
+        style={{
+          display: "flex",
+          flexDirection: compactScreen
+            ? "column"
+            : "row",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
         <div>
-          <h2 style={{ margin: 0 }}>Bagroom Scan</h2>
-          <p style={{ marginTop: 6, color: "#6b7280", fontSize: "0.9rem" }}>
-            Enter the cart number, then scan bags loaded into that cart.
+          <h2
+            style={{
+              margin: 0,
+              fontSize: compactScreen
+                ? "1.35rem"
+                : "1.5rem",
+            }}
+          >
+            Bagroom Scan
+          </h2>
+
+          <p
+            style={{
+              margin: "4px 0 0",
+              color: "#6b7280",
+              fontSize: "0.82rem",
+            }}
+          >
+            Select cart and scan a 10-digit
+            bag tag.
           </p>
-
-          {isLoadingCompleted && (
-            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
-              ✅ Loading Completed (Locked)
-            </p>
-          )}
         </div>
 
-        <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
+        <div
+          style={{
+            padding: compactScreen ? 8 : 0,
+            borderRadius: 8,
+            background: compactScreen
+              ? "#f9fafb"
+              : "transparent",
+            fontSize: "0.82rem",
+          }}
+        >
           <div>
-            Flight: <strong>{flightLoading ? "…" : flight?.flightNumber || flightId}</strong>
+            Flight:{" "}
+            <strong>
+              {flightLoading
+                ? "…"
+                : flight?.flightNumber ||
+                  flightId}
+            </strong>
           </div>
-          <div style={{ color: "#6b7280" }}>
-            Date: <strong>{flightLoading ? "…" : flight?.flightDate || "-"}</strong>
+
+          <div>
+            Date:{" "}
+            <strong>
+              {flightLoading
+                ? "…"
+                : flight?.flightDate || "-"}
+            </strong>
+          </div>
+
+          <div>
+            Gate:{" "}
+            <strong>
+              {flightLoading
+                ? "…"
+                : flight?.gate || "-"}
+            </strong>
           </div>
         </div>
-      </div>
+      </header>
 
-      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
+      {isLoadingCompleted && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 10,
+            borderRadius: 10,
+            background: "#dcfce7",
+            color: "#166534",
+            fontWeight: 900,
+            textAlign: "center",
+          }}
+        >
+          ✅ FLIGHT LOADED — SCANNING LOCKED
+        </div>
+      )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 }}>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
-          <h3 style={{ marginTop: 0 }}>Cart Number</h3>
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid #e5e7eb",
+          margin: "12px 0",
+        }}
+      />
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: compactScreen
+            ? "1fr"
+            : "minmax(300px, 0.8fr) minmax(500px, 1.2fr)",
+          gap: 12,
+          alignItems: "start",
+        }}
+      >
+        <section
+          style={{
+            border: "1px solid #dbeafe",
+            borderRadius: 12,
+            padding: compactScreen ? 10 : 14,
+            background: "#f8fafc",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              marginBottom: 12,
+            }}
+          >
+            <ModeButton
+              active={scannerMode}
+              label="Scanner"
+              onClick={() =>
+                changeScannerMode(true)
+              }
+            />
+
+            <ModeButton
+              active={!scannerMode}
+              label="Manual"
+              onClick={() =>
+                changeScannerMode(false)
+              }
+            />
+          </div>
+
+          <h3
+            style={{
+              margin: "0 0 8px",
+              fontSize: "1rem",
+            }}
+          >
+            1. Select Cart
+          </h3>
+
+          {availableCarts.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(3, minmax(0, 1fr))",
+                gap: 6,
+                marginBottom: 8,
+              }}
+            >
+              {availableCarts.map((cart) => (
+                <button
+                  key={cart}
+                  type="button"
+                  onClick={() =>
+                    selectCart(cart)
+                  }
+                  disabled={isLoadingCompleted}
+                  style={{
+                    minHeight: 46,
+                    padding: "6px 4px",
+                    borderRadius: 10,
+                    border:
+                      selectedCart === cart
+                        ? "2px solid #16a34a"
+                        : "1px solid #d1d5db",
+                    background:
+                      selectedCart === cart
+                        ? "#dcfce7"
+                        : "white",
+                    color:
+                      selectedCart === cart
+                        ? "#166534"
+                        : "#111827",
+                    fontWeight: 900,
+                    fontSize: "1rem",
+                  }}
+                >
+                  {cart}
+                </button>
+              ))}
+            </div>
+          )}
 
           <input
             value={cartNumber}
-            onChange={(e) => {
-              const value = normalizeCartNumber(e.target.value);
-              setCartNumber(value);
-              localStorage.setItem(`bagroomCart_${flightId}`, value);
-            }}
+            onChange={(event) =>
+              selectCart(event.target.value)
+            }
             disabled={isLoadingCompleted}
-            placeholder="Enter cart number, e.g. 1, 2, 3, BULK"
+            placeholder="Cart number"
+            autoComplete="off"
             style={{
               width: "100%",
-              padding: "12px",
-              borderRadius: 12,
+              boxSizing: "border-box",
+              minHeight: 50,
+              padding: "10px 12px",
+              borderRadius: 10,
               border: "1px solid #d1d5db",
-              background: isLoadingCompleted ? "#f3f4f6" : "white",
-              fontWeight: 800,
+              background: isLoadingCompleted
+                ? "#f3f4f6"
+                : "white",
+              fontSize: "1rem",
+              fontWeight: 900,
+              textTransform: "uppercase",
             }}
           />
 
           <div
             style={{
-              marginTop: 10,
+              marginTop: 8,
               padding: 10,
-              borderRadius: 12,
-              border: "1px solid #e5e7eb",
-              background: selectedCart ? "#DCFCE7" : "#FEF3C7",
-              color: selectedCart ? "#166534" : "#92400E",
+              borderRadius: 10,
+              background: selectedCart
+                ? "#dcfce7"
+                : "#fef3c7",
+              color: selectedCart
+                ? "#166534"
+                : "#92400e",
               fontWeight: 900,
+              textAlign: "center",
             }}
           >
-            {selectedCart ? `Active Cart: ${selectedCart}` : "Cart number required before scanning."}
+            {selectedCart
+              ? `ACTIVE CART: ${selectedCart}`
+              : "CART REQUIRED"}
           </div>
 
-          <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
+          <hr
+            style={{
+              border: "none",
+              borderTop:
+                "1px solid #e5e7eb",
+              margin: "14px 0",
+            }}
+          />
 
-          <h3>Scan Bag</h3>
+          <h3
+            style={{
+              margin: "0 0 8px",
+              fontSize: "1rem",
+            }}
+          >
+            2. Scan Bag Tag
+          </h3>
 
           <input
             ref={inputRef}
             value={tagInput}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            disabled={isLoadingCompleted || !selectedCart}
+            disabled={
+              isLoadingCompleted ||
+              !selectedCart
+            }
+            inputMode={
+              scannerMode ? "none" : "numeric"
+            }
+            pattern="[0-9]*"
+            maxLength={BAG_TAG_LENGTH}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             placeholder={
               isLoadingCompleted
-                ? "Loading completed (locked)"
+                ? "FLIGHT LOCKED"
                 : !selectedCart
-                  ? "Enter cart number first"
-                  : "Scan bag tag…"
+                  ? "SELECT CART FIRST"
+                  : "SCAN 10 DIGITS"
             }
             style={{
               width: "100%",
-              padding: "12px",
+              boxSizing: "border-box",
+              minHeight: compactScreen
+                ? 62
+                : 54,
+              padding: "10px 12px",
               borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: isLoadingCompleted || !selectedCart ? "#f3f4f6" : "white",
+              border:
+                tagInput.length ===
+                BAG_TAG_LENGTH
+                  ? "3px solid #16a34a"
+                  : "2px solid #2563eb",
+              background:
+                isLoadingCompleted ||
+                !selectedCart
+                  ? "#f3f4f6"
+                  : "white",
+              color: "#111827",
+              fontSize: compactScreen
+                ? "1.45rem"
+                : "1.2rem",
+              fontWeight: 900,
+              textAlign: "center",
+              letterSpacing: "0.08em",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             }}
           />
 
-          <button
-            onClick={() => handleScanSubmit()}
-            disabled={isLoadingCompleted || !selectedCart}
+          <div
             style={{
-              width: "100%",
-              marginTop: 10,
-              padding: "10px",
-              borderRadius: 12,
-              border: "1px solid #1d4ed8",
-              background: isLoadingCompleted || !selectedCart ? "#93c5fd" : "#2563eb",
-              color: "white",
-              fontWeight: 800,
-              cursor: isLoadingCompleted || !selectedCart ? "not-allowed" : "pointer",
+              display: "flex",
+              justifyContent: "space-between",
+              marginTop: 6,
+              fontSize: "0.8rem",
             }}
           >
-            Add Scan
+            <span
+              style={{
+                color: scannerMode
+                  ? "#2563eb"
+                  : "#6b7280",
+                fontWeight: 800,
+              }}
+            >
+              {scannerMode
+                ? "Hardware scanner active"
+                : "Manual keyboard active"}
+            </span>
+
+            <strong
+              style={{
+                color:
+                  tagInput.length ===
+                  BAG_TAG_LENGTH
+                    ? "#16a34a"
+                    : "#6b7280",
+              }}
+            >
+              {tagInput.length}/
+              {BAG_TAG_LENGTH}
+            </strong>
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              handleScanSubmit()
+            }
+            disabled={
+              isLoadingCompleted ||
+              !selectedCart ||
+              tagInput.length !==
+                BAG_TAG_LENGTH
+            }
+            style={{
+              width: "100%",
+              minHeight: 54,
+              marginTop: 10,
+              borderRadius: 12,
+              border: "1px solid #1d4ed8",
+              background:
+                isLoadingCompleted ||
+                !selectedCart ||
+                tagInput.length !==
+                  BAG_TAG_LENGTH
+                  ? "#93c5fd"
+                  : "#2563eb",
+              color: "white",
+              fontWeight: 900,
+              fontSize: "1rem",
+              cursor:
+                isLoadingCompleted ||
+                !selectedCart ||
+                tagInput.length !==
+                  BAG_TAG_LENGTH
+                  ? "not-allowed"
+                  : "pointer",
+            }}
+          >
+            SAVE BAGROOM SCAN
           </button>
 
-          {strictManifest ? (
-            <p style={{ marginTop: 8, fontSize: "0.8rem", color: "#b91c1c", fontWeight: 900 }}>
+          {msg && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: 10,
+                borderRadius: 10,
+                background: "#dcfce7",
+                color: "#166534",
+                fontWeight: 900,
+                textAlign: "center",
+              }}
+            >
+              {msg}
+            </div>
+          )}
+
+          {err && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: 10,
+                borderRadius: 10,
+                background: "#fee2e2",
+                color: "#991b1b",
+                fontWeight: 900,
+                textAlign: "center",
+              }}
+            >
+              {err}
+            </div>
+          )}
+
+          {strictManifest && (
+            <p
+              style={{
+                color: "#b91c1c",
+                fontSize: "0.78rem",
+                fontWeight: 900,
+              }}
+            >
               ⚠️ Strict Manifest ON
             </p>
-          ) : (
-            <p style={{ marginTop: 8, fontSize: "0.8rem", color: "#6b7280" }}>
-              Manifest not required yet. Bagroom can scan before manifest upload.
-            </p>
           )}
+        </section>
 
-          {msg && <p style={{ marginTop: 8, color: "#16a34a", fontWeight: 800 }}>{msg}</p>}
-          {err && <p style={{ marginTop: 8, color: "#b91c1c", fontWeight: 800 }}>{err}</p>}
-        </div>
+        <section
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 12,
+            padding: compactScreen ? 8 : 12,
+            minWidth: 0,
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>
+            Counter → Bagroom
+          </h3>
 
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <h3 style={{ marginTop: 0 }}>Bagroom Scans</h3>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(3, minmax(0, 1fr))",
+              gap: 6,
+            }}
+          >
+            <SummaryCard
+              label="Counter"
+              value={
+                loadingCounterScans
+                  ? "…"
+                  : counterScans.length
+              }
+              background="#eff6ff"
+              color="#1d4ed8"
+            />
 
-          <p style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-            Total scanned: <strong>{loadingScans ? "…" : scans.length}</strong>
-          </p>
+            <SummaryCard
+              label="Received"
+              value={
+                dataLoading
+                  ? "…"
+                  : receivedCounterScans.length
+              }
+              background="#dcfce7"
+              color="#166534"
+            />
 
-          {selectedCart && (
-            <p style={{ color: "#374151", fontSize: "0.85rem" }}>
-              Current cart: <strong>{selectedCart}</strong>
-            </p>
-          )}
+            <SummaryCard
+              label="Pending"
+              value={
+                dataLoading
+                  ? "…"
+                  : pendingCounterScans.length
+              }
+              background="#fee2e2"
+              color="#991b1b"
+            />
+          </div>
 
-          <div style={{ maxHeight: 420, overflow: "auto", marginTop: 8 }}>
-            {loadingScans ? (
-              <p style={{ color: "#6b7280" }}>Loading…</p>
-            ) : scans.length === 0 ? (
-              <p style={{ color: "#6b7280" }}>No scans yet.</p>
+          <div
+            style={{
+              marginTop: 10,
+              maxHeight: compactScreen
+                ? 330
+                : 430,
+              overflow: "auto",
+            }}
+          >
+            {dataLoading ? (
+              <p>Loading scans…</p>
+            ) : counterScans.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>
+                No Counter scans.
+              </p>
+            ) : compactScreen ? (
+              counterScans.map((scan) => {
+                const tag = onlyDigits(
+                  scan.tag ||
+                    scan.bagTag ||
+                    scan.id
+                );
+
+                const received =
+                  bagroomTagSet.has(tag);
+
+                return (
+                  <ScanCard
+                    key={scan.id}
+                    tag={tag}
+                    subtitle={getBagTypeLabel(
+                      scan.bagType
+                    )}
+                    status={
+                      received
+                        ? "RECEIVED"
+                        : "PENDING"
+                    }
+                    success={received}
+                    username={
+                      scan.scannedBy?.username ||
+                      scan.createdBy?.username ||
+                      "-"
+                    }
+                    canDelete={canDeleteScans}
+                    deleting={
+                      deletingCounterTag === tag
+                    }
+                    onDelete={() =>
+                      deleteCounterScan(scan)
+                    }
+                  />
+                );
+              })
             ) : (
-              Object.keys(groupedByCart)
-                .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }))
-                .map((cart) => (
-                  <div key={cart} style={{ marginBottom: 14 }}>
-                    <div
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 10,
-                        background: "#111827",
-                        color: "white",
-                        fontWeight: 900,
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
-                    >
-                      <span>Cart {cart}</span>
-                      <span>{groupedByCart[cart].length} bags</span>
-                    </div>
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={th}>Bag Tag</th>
+                    <th style={th}>Type</th>
+                    <th style={th}>Status</th>
+                    <th style={th}>User</th>
+                    {canDeleteScans && (
+                      <th
+                        style={{
+                          ...th,
+                          textAlign: "right",
+                        }}
+                      >
+                        Action
+                      </th>
+                    )}
+                  </tr>
+                </thead>
 
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead>
-                        <tr style={{ background: "#f9fafb" }}>
-                          <th style={th}>Tag</th>
-                          <th style={th}>Cart</th>
-                          <th style={{ ...th, textAlign: "right" }}>User</th>
-                        </tr>
-                      </thead>
+                <tbody>
+                  {counterScans.map((scan) => {
+                    const tag = onlyDigits(
+                      scan.tag ||
+                        scan.bagTag ||
+                        scan.id
+                    );
 
-                      <tbody>
-                        {groupedByCart[cart].map((s) => (
-                          <tr key={s.id}>
-                            <td style={td}>
-                              <strong>{s.tag}</strong>
-                            </td>
-                            <td style={td}>{s.cartNumber || "-"}</td>
-                            <td style={{ ...td, textAlign: "right", color: "#6b7280" }}>
-                              {s.scannedBy?.username || "-"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))
+                    const received =
+                      bagroomTagSet.has(tag);
+
+                    return (
+                      <tr
+                        key={scan.id}
+                        style={{
+                          background: received
+                            ? "#f0fdf4"
+                            : "#fef2f2",
+                        }}
+                      >
+                        <td style={td}>
+                          <strong>{tag}</strong>
+                        </td>
+
+                        <td style={td}>
+                          {getBagTypeLabel(
+                            scan.bagType
+                          )}
+                        </td>
+
+                        <td style={td}>
+                          <StatusBadge
+                            received={received}
+                          />
+                        </td>
+
+                        <td style={td}>
+                          {scan.scannedBy
+                            ?.username ||
+                            scan.createdBy
+                              ?.username ||
+                            "-"}
+                        </td>
+
+                        {canDeleteScans && (
+                          <td
+                            style={{
+                              ...td,
+                              textAlign:
+                                "right",
+                            }}
+                          >
+                            <DeleteButton
+                              busy={
+                                deletingCounterTag ===
+                                tag
+                              }
+                              onClick={() =>
+                                deleteCounterScan(
+                                  scan
+                                )
+                              }
+                            />
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             )}
           </div>
 
-          {!isGateController && (
-            <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-              Tip: scans save automatically after the scanner finishes.
-            </p>
-          )}
-        </div>
+          <hr
+            style={{
+              border: "none",
+              borderTop:
+                "1px solid #e5e7eb",
+              margin: "14px 0",
+            }}
+          />
+
+          <h3>Bagroom Received</h3>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(2, minmax(0, 1fr))",
+              gap: 6,
+            }}
+          >
+            <SummaryCard
+              label="Total"
+              value={
+                loadingScans
+                  ? "…"
+                  : scans.length
+              }
+              background="#dcfce7"
+              color="#166534"
+            />
+
+            <SummaryCard
+              label="No Counter"
+              value={
+                dataLoading
+                  ? "…"
+                  : bagroomWithoutCounter.length
+              }
+              background={
+                bagroomWithoutCounter.length
+                  ? "#ffedd5"
+                  : "#f3f4f6"
+              }
+              color={
+                bagroomWithoutCounter.length
+                  ? "#9a3412"
+                  : "#374151"
+              }
+            />
+          </div>
+
+          <div
+            style={{
+              marginTop: 10,
+              maxHeight: compactScreen
+                ? 330
+                : 430,
+              overflow: "auto",
+            }}
+          >
+            {loadingScans ? (
+              <p>Loading Bagroom scans…</p>
+            ) : scans.length === 0 ? (
+              <p style={{ color: "#6b7280" }}>
+                No Bagroom scans.
+              </p>
+            ) : compactScreen ? (
+              scans.map((scan) => {
+                const tag = onlyDigits(
+                  scan.tag ||
+                    scan.bagTag ||
+                    scan.id
+                );
+
+                const matched =
+                  counterTagSet.has(tag);
+
+                return (
+                  <ScanCard
+                    key={scan.id}
+                    tag={tag}
+                    subtitle={`Cart ${
+                      scan.cartNumber || "-"
+                    }`}
+                    status={
+                      matched
+                        ? "MATCHED"
+                        : "NO COUNTER"
+                    }
+                    success={matched}
+                    warning={!matched}
+                    username={
+                      scan.scannedBy?.username ||
+                      "-"
+                    }
+                    canDelete={canDeleteScans}
+                    deleting={
+                      deletingBagroomTag === tag
+                    }
+                    onDelete={() =>
+                      deleteBagroomScan(scan)
+                    }
+                  />
+                );
+              })
+            ) : (
+              <table style={tableStyle}>
+                <thead>
+                  <tr>
+                    <th style={th}>Bag Tag</th>
+                    <th style={th}>Cart</th>
+                    <th style={th}>Match</th>
+                    <th style={th}>User</th>
+                    {canDeleteScans && (
+                      <th
+                        style={{
+                          ...th,
+                          textAlign: "right",
+                        }}
+                      >
+                        Action
+                      </th>
+                    )}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {scans.map((scan) => {
+                    const tag = onlyDigits(
+                      scan.tag ||
+                        scan.bagTag ||
+                        scan.id
+                    );
+
+                    const matched =
+                      counterTagSet.has(tag);
+
+                    return (
+                      <tr
+                        key={scan.id}
+                        style={{
+                          background: matched
+                            ? "#f0fdf4"
+                            : "#fff7ed",
+                        }}
+                      >
+                        <td style={td}>
+                          <strong>{tag}</strong>
+                        </td>
+
+                        <td style={td}>
+                          {scan.cartNumber || "-"}
+                        </td>
+
+                        <td style={td}>
+                          <MatchBadge
+                            matched={matched}
+                          />
+                        </td>
+
+                        <td style={td}>
+                          {scan.scannedBy
+                            ?.username || "-"}
+                        </td>
+
+                        {canDeleteScans && (
+                          <td
+                            style={{
+                              ...td,
+                              textAlign:
+                                "right",
+                            }}
+                          >
+                            <DeleteButton
+                              busy={
+                                deletingBagroomTag ===
+                                tag
+                              }
+                              onClick={() =>
+                                deleteBagroomScan(
+                                  scan
+                                )
+                              }
+                            />
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </section>
       </div>
+
+      <section
+        style={{
+          marginTop: 12,
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          padding: compactScreen ? 8 : 12,
+          background: "#f9fafb",
+        }}
+      >
+        <h3 style={{ marginTop: 0 }}>
+          Bags by Cart
+        </h3>
+
+        {loadingScans ? (
+          <p>Loading…</p>
+        ) : scans.length === 0 ? (
+          <p style={{ color: "#6b7280" }}>
+            No scans yet.
+          </p>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: compactScreen
+                ? "1fr"
+                : "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {Object.keys(groupedByCart)
+              .sort((a, b) =>
+                String(a).localeCompare(
+                  String(b),
+                  undefined,
+                  { numeric: true }
+                )
+              )
+              .map((cart) => (
+                <div
+                  key={cart}
+                  style={{
+                    border:
+                      "1px solid #e5e7eb",
+                    borderRadius: 10,
+                    background: "white",
+                    overflow: "hidden",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      selectCart(cart)
+                    }
+                    style={{
+                      width: "100%",
+                      border: "none",
+                      padding: "10px",
+                      background:
+                        selectedCart === cart
+                          ? "#166534"
+                          : "#111827",
+                      color: "white",
+                      display: "flex",
+                      justifyContent:
+                        "space-between",
+                      fontWeight: 900,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span>Cart {cart}</span>
+                    <span>
+                      {
+                        groupedByCart[cart]
+                          .length
+                      }{" "}
+                      bags
+                    </span>
+                  </button>
+
+                  <div
+                    style={{
+                      padding: 8,
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: 5,
+                    }}
+                  >
+                    {groupedByCart[cart].map(
+                      (scan) => {
+                        const tag = onlyDigits(
+                          scan.tag || scan.id
+                        );
+
+                        const matched =
+                          counterTagSet.has(tag);
+
+                        return (
+                          <span
+                            key={scan.id}
+                            style={{
+                              padding: "4px 7px",
+                              borderRadius: 999,
+                              background: matched
+                                ? "#dcfce7"
+                                : "#ffedd5",
+                              color: matched
+                                ? "#166534"
+                                : "#9a3412",
+                              fontFamily:
+                                "ui-monospace, monospace",
+                              fontWeight: 800,
+                              fontSize:
+                                "0.75rem",
+                            }}
+                          >
+                            {tag}
+                          </span>
+                        );
+                      }
+                    )}
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+      </section>
 
       <Modal
         open={modal.open}
@@ -667,12 +2029,26 @@ export default function BagroomScanPage({ flightId, user }) {
         cancelText={modal.cancelText}
         showCancel={modal.showCancel}
         onConfirm={() => {
-          if (typeof modal.onConfirm === "function") modal.onConfirm();
-          else close();
+          if (
+            typeof modal.onConfirm ===
+            "function"
+          ) {
+            modal.onConfirm();
+          } else {
+            close();
+            focusScanner();
+          }
         }}
         onCancel={() => {
-          if (typeof modal.onCancel === "function") modal.onCancel();
-          else close();
+          if (
+            typeof modal.onCancel ===
+            "function"
+          ) {
+            modal.onCancel();
+          } else {
+            close();
+            focusScanner();
+          }
         }}
       >
         {modal.content}
@@ -681,17 +2057,258 @@ export default function BagroomScanPage({ flightId, user }) {
   );
 }
 
+function ModeButton({
+  active,
+  label,
+  onClick,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        flex: 1,
+        minHeight: 44,
+        borderRadius: 10,
+        border: active
+          ? "2px solid #2563eb"
+          : "1px solid #d1d5db",
+        background: active
+          ? "#dbeafe"
+          : "white",
+        color: active
+          ? "#1d4ed8"
+          : "#374151",
+        fontWeight: 900,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  background,
+  color,
+}) {
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        padding: "9px 4px",
+        borderRadius: 10,
+        background,
+        color,
+        textAlign: "center",
+        border: "1px solid rgba(0,0,0,0.06)",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.68rem",
+          fontWeight: 900,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontSize: "1.25rem",
+          fontWeight: 900,
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function ScanCard({
+  tag,
+  subtitle,
+  status,
+  success,
+  warning,
+  username,
+  canDelete,
+  deleting,
+  onDelete,
+}) {
+  const background = success
+    ? "#f0fdf4"
+    : warning
+      ? "#fff7ed"
+      : "#fef2f2";
+
+  const color = success
+    ? "#166534"
+    : warning
+      ? "#9a3412"
+      : "#991b1b";
+
+  return (
+    <div
+      style={{
+        marginBottom: 6,
+        padding: 9,
+        borderRadius: 10,
+        background,
+        border: `1px solid ${color}33`,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 6,
+          alignItems: "center",
+        }}
+      >
+        <strong
+          style={{
+            fontFamily:
+              "ui-monospace, monospace",
+            fontSize: "0.95rem",
+          }}
+        >
+          {tag}
+        </strong>
+
+        <span
+          style={{
+            padding: "3px 7px",
+            borderRadius: 999,
+            background: "white",
+            color,
+            fontSize: "0.65rem",
+            fontWeight: 900,
+          }}
+        >
+          {status}
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 5,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 6,
+          color: "#6b7280",
+          fontSize: "0.75rem",
+        }}
+      >
+        <span>
+          {subtitle} · {username}
+        </span>
+
+        {canDelete && (
+          <DeleteButton
+            busy={deleting}
+            onClick={onDelete}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ received }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        padding: "4px 7px",
+        borderRadius: 999,
+        background: received
+          ? "#dcfce7"
+          : "#fee2e2",
+        color: received
+          ? "#166534"
+          : "#991b1b",
+        fontSize: "0.68rem",
+        fontWeight: 900,
+      }}
+    >
+      {received ? "RECEIVED" : "PENDING"}
+    </span>
+  );
+}
+
+function MatchBadge({ matched }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        padding: "4px 7px",
+        borderRadius: 999,
+        background: matched
+          ? "#dcfce7"
+          : "#ffedd5",
+        color: matched
+          ? "#166534"
+          : "#9a3412",
+        fontSize: "0.68rem",
+        fontWeight: 900,
+      }}
+    >
+      {matched ? "MATCHED" : "NO COUNTER"}
+    </span>
+  );
+}
+
+function DeleteButton({
+  busy,
+  onClick,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      disabled={busy}
+      style={{
+        minHeight: 32,
+        padding: "4px 8px",
+        borderRadius: 999,
+        border: "1px solid #ef4444",
+        background: busy
+          ? "#fca5a5"
+          : "#ef4444",
+        color: "white",
+        fontSize: "0.7rem",
+        fontWeight: 900,
+      }}
+    >
+      {busy ? "…" : "Delete"}
+    </button>
+  );
+}
+
+const tableStyle = {
+  width: "100%",
+  borderCollapse: "collapse",
+};
+
 const th = {
   textAlign: "left",
-  padding: "10px 8px",
+  padding: "9px 7px",
   borderBottom: "1px solid #e5e7eb",
-  fontSize: "0.8rem",
+  fontSize: "0.72rem",
   textTransform: "uppercase",
   color: "#6b7280",
+  whiteSpace: "nowrap",
 };
 
 const td = {
-  padding: "10px 8px",
+  padding: "9px 7px",
   borderBottom: "1px solid #f3f4f6",
   color: "#111827",
+  verticalAlign: "middle",
 };
