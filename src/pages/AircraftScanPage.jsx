@@ -1,65 +1,475 @@
 // src/pages/AircraftScanPage.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
 import {
+  addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
-  deleteDoc,
-  addDoc,
 } from "firebase/firestore";
-import { db, storage } from "../firebase";
-import Modal from "../components/Modal.jsx";
-import { useModal } from "../components/useModal.js";
+
+import {
+  getDownloadURL,
+  ref as sRef,
+  uploadBytes,
+} from "firebase/storage";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { ref as sRef, uploadBytes, getDownloadURL } from "firebase/storage";
+
+import { db, storage } from "../firebase";
+
+import Modal from "../components/Modal.jsx";
+import { useModal } from "../components/useModal.js";
+
+const BAG_TAG_LENGTH = 10;
+const AUTO_SUBMIT_IDLE_MS = 100;
 
 function normalizeRole(role) {
-  return String(role || "").trim().toLowerCase();
+  return String(role || "")
+    .trim()
+    .toLowerCase();
 }
 
-function cleanTagValue(v) {
-  return String(v || "").replace(/[\r\n]+/g, "").trim();
+function onlyDigits(value) {
+  return String(value || "").replace(
+    /\D/g,
+    ""
+  );
 }
 
-function normalizeStatus(s) {
-  const v = String(s || "OPEN").trim().toUpperCase();
+function normalizeBagTag(value) {
+  return onlyDigits(value).slice(
+    0,
+    BAG_TAG_LENGTH
+  );
+}
 
-  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED"
-    ? v
+function isValidBagTag(value) {
+  return (
+    /^\d+$/.test(String(value || "")) &&
+    String(value).length === BAG_TAG_LENGTH
+  );
+}
+
+function cleanTagValue(value) {
+  return normalizeBagTag(value);
+}
+
+function normalizeStatus(status) {
+  const value = String(
+    status || "OPEN"
+  )
+    .trim()
+    .toUpperCase();
+
+  return [
+    "OPEN",
+    "RECEIVING",
+    "LOADING",
+    "LOADED",
+  ].includes(value)
+    ? value
     : "OPEN";
 }
 
-function safeStr(v, fallback = "-") {
-  const s = String(v ?? "").trim();
-  return s ? s : fallback;
+function safeStr(value, fallback = "-") {
+  const text = String(value ?? "").trim();
+
+  return text || fallback;
 }
 
 function normalizeBagType(value) {
-  const v = String(value || "CHECKED_BAG").trim().toUpperCase();
+  const type = String(
+    value || "CHECKED_BAG"
+  )
+    .trim()
+    .toUpperCase();
 
-  return v === "CHECKED_BAG" || v === "GATE_CHECK" || v === "OVERSIZE"
-    ? v
+  return [
+    "CHECKED_BAG",
+    "GATE_CHECK",
+    "OVERSIZE",
+  ].includes(type)
+    ? type
     : "CHECKED_BAG";
 }
 
 function getBagTypeLabel(value) {
-  const v = normalizeBagType(value);
+  const type = normalizeBagType(value);
 
-  if (v === "GATE_CHECK") return "Gate Check";
-  if (v === "OVERSIZE") return "Oversize";
+  if (type === "GATE_CHECK") {
+    return "Gate Check";
+  }
+
+  if (type === "OVERSIZE") {
+    return "Oversize";
+  }
+
   return "Checked Bag";
 }
 
-const MIN_TAG_LEN = 6;
-const AUTO_SUBMIT_IDLE_MS = 90;
+function normalizeReceivingLocation(
+  value
+) {
+  const location = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s/-]+/g, "_");
 
-export default function AircraftScanPage({ flightId, user }) {
-  const role = useMemo(() => normalizeRole(user?.role), [user]);
+  if (
+    [
+      "GATE",
+      "RAMP",
+      "GATE_RAMP",
+      "GATERAMP",
+    ].includes(location)
+  ) {
+    return "GATE";
+  }
+
+  if (location === "OVERSIZE") {
+    return "OVERSIZE";
+  }
+
+  if (
+    [
+      "BAGROOM",
+      "BAG_ROOM",
+      "BAGGAGE_ROOM",
+    ].includes(location)
+  ) {
+    return "BAGROOM";
+  }
+
+  if (location === "COUNTER") {
+    return "COUNTER";
+  }
+
+  if (location === "AIRCRAFT") {
+    return "AIRCRAFT";
+  }
+
+  if (location === "OFFLOADED") {
+    return "OFFLOADED";
+  }
+
+  return "UNKNOWN";
+}
+
+function getReceivingLocationLabel(
+  value
+) {
+  const location =
+    normalizeReceivingLocation(value);
+
+  if (location === "BAGROOM") {
+    return "Bagroom";
+  }
+
+  if (location === "OVERSIZE") {
+    return "Oversize";
+  }
+
+  if (location === "GATE") {
+    return "Gate / Ramp";
+  }
+
+  if (location === "COUNTER") {
+    return "Counter";
+  }
+
+  if (location === "AIRCRAFT") {
+    return "Aircraft";
+  }
+
+  if (location === "OFFLOADED") {
+    return "Offloaded";
+  }
+
+  return "Unknown";
+}
+
+function getLocationIcon(value) {
+  const location =
+    normalizeReceivingLocation(value);
+
+  if (location === "BAGROOM") {
+    return "🛄";
+  }
+
+  if (location === "OVERSIZE") {
+    return "📦";
+  }
+
+  if (location === "GATE") {
+    return "🚪";
+  }
+
+  if (location === "COUNTER") {
+    return "🎫";
+  }
+
+  if (location === "AIRCRAFT") {
+    return "✈️";
+  }
+
+  if (location === "OFFLOADED") {
+    return "⬇️";
+  }
+
+  return "⚠️";
+}
+
+function isValidReceivingLocation(
+  value
+) {
+  return [
+    "BAGROOM",
+    "OVERSIZE",
+    "GATE",
+  ].includes(
+    normalizeReceivingLocation(value)
+  );
+}
+
+function getTimestampMilliseconds(
+  value
+) {
+  if (!value) {
+    return 0;
+  }
+
+  if (
+    typeof value.toMillis === "function"
+  ) {
+    return value.toMillis();
+  }
+
+  if (
+    typeof value.seconds === "number"
+  ) {
+    return value.seconds * 1000;
+  }
+
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  const parsed = new Date(
+    value
+  ).getTime();
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : 0;
+}
+
+function formatTime(value) {
+  const milliseconds =
+    getTimestampMilliseconds(value);
+
+  if (!milliseconds) {
+    return "-";
+  }
+
+  return new Date(
+    milliseconds
+  ).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDateTime(value) {
+  const milliseconds =
+    getTimestampMilliseconds(value);
+
+  if (!milliseconds) {
+    return "-";
+  }
+
+  return new Date(
+    milliseconds
+  ).toLocaleString([], {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getPreviousLocationFromScan(
+  scan
+) {
+  if (!scan) {
+    return null;
+  }
+
+  const location =
+    normalizeReceivingLocation(
+      scan.receivingLocation ||
+        scan.location ||
+        scan.trackingLocation
+    );
+
+  return {
+    location,
+    locationLabel:
+      scan.locationLabel ||
+      getReceivingLocationLabel(
+        location
+      ),
+
+    cartNumber:
+      location === "BAGROOM"
+        ? String(
+            scan.cartNumber || ""
+          ).trim() || null
+        : null,
+
+    scannedAt:
+      scan.createdAt ||
+      scan.scannedAt ||
+      null,
+
+    scannedBy:
+      scan.scannedBy ||
+      scan.createdBy ||
+      null,
+
+    source:
+      "bagroomScans",
+  };
+}
+
+function getPreviousLocationFromTag(
+  data
+) {
+  if (!data) {
+    return null;
+  }
+
+  const location =
+    normalizeReceivingLocation(
+      data.receivingLocation ||
+        data.lastSeenLocation ||
+        data.location
+    );
+
+  return {
+    location,
+
+    locationLabel:
+      data.locationLabel ||
+      getReceivingLocationLabel(
+        location
+      ),
+
+    cartNumber:
+      location === "BAGROOM"
+        ? String(
+            data.cartNumber || ""
+          ).trim() || null
+        : null,
+
+    scannedAt:
+      data.lastSeenAt ||
+      data.updatedAt ||
+      null,
+
+    scannedBy:
+      data.lastSeenBy ||
+      data.updatedBy ||
+      null,
+
+    source:
+      "bagTags",
+  };
+}
+
+function getPreviousLocationDetails(
+  previousLocation
+) {
+  if (!previousLocation) {
+    return "No previous location";
+  }
+
+  const label =
+    previousLocation.locationLabel ||
+    getReceivingLocationLabel(
+      previousLocation.location
+    );
+
+  if (
+    normalizeReceivingLocation(
+      previousLocation.location
+    ) === "BAGROOM"
+  ) {
+    return previousLocation.cartNumber
+      ? `${label} · Cart ${previousLocation.cartNumber}`
+      : `${label} · No Cart`;
+  }
+
+  return label;
+}
+
+function useCompactScreen() {
+  const [compact, setCompact] =
+    useState(() => {
+      if (
+        typeof window === "undefined"
+      ) {
+        return false;
+      }
+
+      return window.innerWidth <= 760;
+    });
+
+  useEffect(() => {
+    const update = () => {
+      setCompact(
+        window.innerWidth <= 760
+      );
+    };
+
+    window.addEventListener(
+      "resize",
+      update
+    );
+
+    return () => {
+      window.removeEventListener(
+        "resize",
+        update
+      );
+    };
+  }, []);
+
+  return compact;
+}
+
+export default function AircraftScanPage({
+  flightId,
+  user,
+}) {
+  const compactScreen =
+    useCompactScreen();
+
+  const role = useMemo(
+    () => normalizeRole(user?.role),
+    [user]
+  );
 
   const canCompleteLoading =
     role === "supervisor" ||
@@ -71,44 +481,163 @@ export default function AircraftScanPage({ flightId, user }) {
     role === "duty_manager" ||
     role === "station_manager";
 
-  const [flight, setFlight] = useState(null);
-  const [flightLoading, setFlightLoading] = useState(true);
+  const [
+    flight,
+    setFlight,
+  ] = useState(null);
 
-  const [zone, setZone] = useState(1);
-  const [tagInput, setTagInput] = useState("");
+  const [
+    flightLoading,
+    setFlightLoading,
+  ] = useState(true);
+
+  const [zone, setZone] =
+    useState(1);
+
+  const [
+    scannerMode,
+    setScannerMode,
+  ] = useState(() => {
+    return (
+      localStorage.getItem(
+        "aircraftScannerMode"
+      ) !== "manual"
+    );
+  });
+
+  const [
+    tagInput,
+    setTagInput,
+  ] = useState("");
+
   const inputRef = useRef(null);
 
-  const [msg, setMsg] = useState("");
-  const [err, setErr] = useState("");
+  const [msg, setMsg] =
+    useState("");
 
-  const [scans, setScans] = useState([]);
-  const [loadingScans, setLoadingScans] = useState(true);
+  const [err, setErr] =
+    useState("");
 
-  const [bagroomTotal, setBagroomTotal] = useState(0);
-  const [loadingBagroomTotal, setLoadingBagroomTotal] = useState(true);
+  const [
+    scans,
+    setScans,
+  ] = useState([]);
 
-  const [strictManifest, setStrictManifest] = useState(false);
+  const [
+    loadingScans,
+    setLoadingScans,
+  ] = useState(true);
 
-  const [completing, setCompleting] = useState(false);
-  const [completeMsg, setCompleteMsg] = useState("");
+  const [
+    receivingScans,
+    setReceivingScans,
+  ] = useState([]);
 
-  const [exporting, setExporting] = useState(false);
-  const [reopening, setReopening] = useState(false);
-  const [offloadingTag, setOffloadingTag] = useState("");
+  const [
+    loadingReceivingScans,
+    setLoadingReceivingScans,
+  ] = useState(true);
 
-  const autoTimerRef = useRef(null);
-  const isSubmittingRef = useRef(false);
+  const [
+    strictManifest,
+    setStrictManifest,
+  ] = useState(false);
 
-  const { modal, show, close } = useModal();
+  const [
+    completing,
+    setCompleting,
+  ] = useState(false);
 
-  const popup = (title, message, tone = "info") => {
+  const [
+    completeMsg,
+    setCompleteMsg,
+  ] = useState("");
+
+  const [
+    exporting,
+    setExporting,
+  ] = useState(false);
+
+  const [
+    reopening,
+    setReopening,
+  ] = useState(false);
+
+  const [
+    offloadingTag,
+    setOffloadingTag,
+  ] = useState("");
+
+  const [
+    submittingTag,
+    setSubmittingTag,
+  ] = useState("");
+
+  const [
+    lastLoadedBag,
+    setLastLoadedBag,
+  ] = useState(null);
+
+  const autoTimerRef =
+    useRef(null);
+
+  const isSubmittingRef =
+    useRef(false);
+
+  const lastSubmittedTagRef =
+    useRef("");
+
+  const lastSubmittedTimeRef =
+    useRef(0);
+
+  const { modal, show, close } =
+    useModal();
+
+  const focusScanner = (
+    delay = 100
+  ) => {
+    window.setTimeout(() => {
+      if (
+        inputRef.current &&
+        !inputRef.current.disabled
+      ) {
+        inputRef.current.focus({
+          preventScroll: true,
+        });
+      }
+    }, delay);
+  };
+
+  const popup = (
+    title,
+    message,
+    tone = "info"
+  ) => {
     show({
       title,
       tone,
-      content: <div style={{ whiteSpace: "pre-wrap" }}>{message}</div>,
+
+      content: (
+        <div
+          style={{
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {message}
+        </div>
+      ),
+
       confirmText: "OK",
-      onConfirm: close,
-      onCancel: close,
+
+      onConfirm: () => {
+        close();
+        focusScanner();
+      },
+
+      onCancel: () => {
+        close();
+        focusScanner();
+      },
     });
   };
 
@@ -127,18 +656,34 @@ export default function AircraftScanPage({ flightId, user }) {
       showCancel: true,
       confirmText,
       cancelText: "Cancel",
+
       content: (
         <div>
-          <div style={{ whiteSpace: "pre-wrap", marginBottom: 10 }}>
+          <div
+            style={{
+              whiteSpace:
+                "pre-wrap",
+
+              marginBottom:
+                10,
+            }}
+          >
             {message}
           </div>
 
           <label
             style={{
-              display: "block",
-              fontSize: "0.85rem",
-              color: "#374151",
-              marginBottom: 6,
+              display:
+                "block",
+
+              fontSize:
+                "0.85rem",
+
+              color:
+                "#374151",
+
+              marginBottom:
+                6,
             }}
           >
             Reason required
@@ -148,25 +693,50 @@ export default function AircraftScanPage({ flightId, user }) {
             autoFocus
             rows={4}
             placeholder="Explain the reason..."
-            onChange={(e) => {
-              reasonValue = e.target.value;
+            onChange={(event) => {
+              reasonValue =
+                event.target.value;
             }}
             style={{
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              resize: "vertical",
+              width:
+                "100%",
+
+              boxSizing:
+                "border-box",
+
+              padding:
+                "10px 12px",
+
+              borderRadius:
+                12,
+
+              border:
+                "1px solid #d1d5db",
+
+              resize:
+                "vertical",
             }}
           />
         </div>
       ),
-      onCancel: close,
+
+      onCancel: () => {
+        close();
+        focusScanner();
+      },
+
       onConfirm: async () => {
-        const reason = String(reasonValue || "").trim();
+        const reason = String(
+          reasonValue || ""
+        ).trim();
 
         if (!reason) {
-          popup("Reason required", "Please enter a reason before continuing.", "warning");
+          popup(
+            "Reason required",
+            "Please enter a reason before continuing.",
+            "warning"
+          );
+
           return;
         }
 
@@ -175,667 +745,1878 @@ export default function AircraftScanPage({ flightId, user }) {
       },
     });
   };
-    useEffect(() => {
-    if (!flightId) return;
+
+  /*
+   * Flight subscription.
+   */
+  useEffect(() => {
+    if (!flightId) {
+      setFlight(null);
+      setFlightLoading(false);
+      return undefined;
+    }
 
     setFlightLoading(true);
 
-    const ref = doc(db, "flights", flightId);
+    const flightRef = doc(
+      db,
+      "flights",
+      flightId
+    );
 
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        if (!snap.exists()) {
+    const unsubscribe = onSnapshot(
+      flightRef,
+      (snapshot) => {
+        if (!snapshot.exists()) {
           setFlight(null);
           setFlightLoading(false);
           return;
         }
 
-        const data = { id: snap.id, ...snap.data() };
+        const data = {
+          id: snapshot.id,
+          ...snapshot.data(),
+        };
+
         setFlight(data);
 
-        if (typeof data.strictManifest === "boolean") {
-          setStrictManifest(data.strictManifest);
+        if (
+          typeof data.strictManifest ===
+          "boolean"
+        ) {
+          setStrictManifest(
+            data.strictManifest
+          );
         }
 
         setFlightLoading(false);
       },
-      (e) => {
-        console.error("AircraftScanPage flight snapshot error:", e);
+      (error) => {
+        console.error(
+          "AircraftScanPage flight snapshot error:",
+          error
+        );
+
         setFlight(null);
         setFlightLoading(false);
       }
     );
 
-    return () => unsub();
+    return () => unsubscribe();
   }, [flightId]);
 
+  /*
+   * Aircraft scans subscription.
+   */
   useEffect(() => {
-    if (!flightId) return;
+    if (!flightId) {
+      setScans([]);
+      setLoadingScans(false);
+      return undefined;
+    }
 
     setLoadingScans(true);
 
-    const ref = collection(db, "flights", flightId, "aircraftScans");
+    const aircraftScansRef =
+      collection(
+        db,
+        "flights",
+        flightId,
+        "aircraftScans"
+      );
 
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const unsubscribe = onSnapshot(
+      aircraftScansRef,
+      (snapshot) => {
+        const rows =
+          snapshot.docs.map(
+            (document) => ({
+              id: document.id,
+              ...document.data(),
+            })
+          );
 
         rows.sort((a, b) => {
-          const ta = a.createdAt?.seconds || 0;
-          const tb = b.createdAt?.seconds || 0;
-          return tb - ta;
+          const timeA =
+            getTimestampMilliseconds(
+              a.createdAt
+            );
+
+          const timeB =
+            getTimestampMilliseconds(
+              b.createdAt
+            );
+
+          return timeB - timeA;
         });
 
         setScans(rows);
         setLoadingScans(false);
       },
-      (e) => {
-        console.error("AircraftScanPage scans snapshot error:", e);
+      (error) => {
+        console.error(
+          "AircraftScanPage scans snapshot error:",
+          error
+        );
+
         setScans([]);
         setLoadingScans(false);
       }
     );
 
-    return () => unsub();
+    return () => unsubscribe();
   }, [flightId]);
 
+  /*
+   * All receiving scans:
+   * Bagroom, Oversize, and Gate / Ramp.
+   */
   useEffect(() => {
-    if (!flightId) return;
+    if (!flightId) {
+      setReceivingScans([]);
+      setLoadingReceivingScans(false);
+      return undefined;
+    }
 
-    setLoadingBagroomTotal(true);
+    setLoadingReceivingScans(true);
 
-    const ref = collection(db, "flights", flightId, "bagroomScans");
+    const receivingRef = collection(
+      db,
+      "flights",
+      flightId,
+      "bagroomScans"
+    );
 
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        setBagroomTotal(snap.size);
-        setLoadingBagroomTotal(false);
+    const unsubscribe = onSnapshot(
+      receivingRef,
+      (snapshot) => {
+        const rows =
+          snapshot.docs.map(
+            (document) => ({
+              id: document.id,
+              ...document.data(),
+            })
+          );
+
+        rows.sort((a, b) => {
+          const timeA =
+            getTimestampMilliseconds(
+              a.createdAt ||
+                a.scannedAt
+            );
+
+          const timeB =
+            getTimestampMilliseconds(
+              b.createdAt ||
+                b.scannedAt
+            );
+
+          return timeB - timeA;
+        });
+
+        setReceivingScans(rows);
+        setLoadingReceivingScans(
+          false
+        );
       },
-      (e) => {
-        console.error("AircraftScanPage bagroom total error:", e);
-        setBagroomTotal(0);
-        setLoadingBagroomTotal(false);
+      (error) => {
+        console.error(
+          "AircraftScanPage receiving scans error:",
+          error
+        );
+
+        setReceivingScans([]);
+        setLoadingReceivingScans(
+          false
+        );
       }
     );
 
-    return () => unsub();
+    return () => unsubscribe();
   }, [flightId]);
 
+  /*
+   * Focus scanner when the page opens.
+   */
   useEffect(() => {
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
+    focusScanner(250);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /*
+   * Refocus when zone or scanner mode changes.
+   */
+  useEffect(() => {
+    focusScanner(150);
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zone, scannerMode]);
+
+  /*
+   * Clear pending scanner timer.
+   */
   useEffect(() => {
     return () => {
-      if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
+      if (autoTimerRef.current) {
+        window.clearTimeout(
+          autoTimerRef.current
+        );
+      }
     };
   }, []);
 
   const isLoadingCompleted =
-    Boolean(flight?.aircraftLoadingCompleted) ||
-    normalizeStatus(flight?.status) === "LOADED";
+    Boolean(
+      flight?.aircraftLoadingCompleted
+    ) ||
+    normalizeStatus(
+      flight?.status
+    ) === "LOADED";
+
+  const bagroomTotal =
+    receivingScans.length;
 
   const missingNow =
-    typeof flight?.checkedBagsTotal === "number"
-      ? Math.max(0, flight.checkedBagsTotal - scans.length)
+    typeof flight?.checkedBagsTotal ===
+    "number"
+      ? Math.max(
+          0,
+          flight.checkedBagsTotal -
+            scans.length
+        )
       : null;
 
-  const bagTypeCounts = useMemo(() => {
-    const counts = {
-      CHECKED_BAG: 0,
-      GATE_CHECK: 0,
-      OVERSIZE: 0,
-    };
+  const bagTypeCounts =
+    useMemo(() => {
+      const counts = {
+        CHECKED_BAG: 0,
+        GATE_CHECK: 0,
+        OVERSIZE: 0,
+      };
 
-    for (const scan of scans) {
-      const type = normalizeBagType(scan.bagType);
-      counts[type] += 1;
-    }
+      for (const scan of scans) {
+        const type =
+          normalizeBagType(
+            scan.bagType
+          );
 
-    return counts;
+        counts[type] += 1;
+      }
+
+      return counts;
+    }, [scans]);
+
+  const receivingScanByTag =
+    useMemo(() => {
+      const map = new Map();
+
+      for (const scan of receivingScans) {
+        const tag =
+          normalizeBagTag(
+            scan.tag ||
+              scan.bagTag ||
+              scan.id
+          );
+
+        if (tag) {
+          map.set(tag, scan);
+        }
+      }
+
+      return map;
+    }, [receivingScans]);
+
+  const loadedTagSet = useMemo(() => {
+    return new Set(
+      scans
+        .map((scan) =>
+          normalizeBagTag(
+            scan.tag ||
+              scan.id
+          )
+        )
+        .filter(Boolean)
+    );
   }, [scans]);
 
-  const ensureStatusLoading = async () => {
-    if (!flight) return;
+  const pendingReceivingScans =
+    useMemo(() => {
+      return receivingScans
+        .filter((scan) => {
+          const tag =
+            normalizeBagTag(
+              scan.tag ||
+                scan.bagTag ||
+                scan.id
+            );
 
-    const current = normalizeStatus(flight.status);
+          return (
+            tag &&
+            !loadedTagSet.has(tag)
+          );
+        })
+        .sort((a, b) => {
+          const timeA =
+            getTimestampMilliseconds(
+              a.createdAt ||
+                a.scannedAt
+            );
 
-    if (current === "LOADED") return;
-    if (current === "LOADING") return;
+          const timeB =
+            getTimestampMilliseconds(
+              b.createdAt ||
+                b.scannedAt
+            );
+
+          return timeB - timeA;
+        });
+    }, [
+      receivingScans,
+      loadedTagSet,
+    ]);
+
+  const lastFivePendingBags =
+    useMemo(() => {
+      return pendingReceivingScans.slice(
+        0,
+        5
+      );
+    }, [pendingReceivingScans]);
+
+  const lastFiveLoadedBags =
+    useMemo(() => {
+      return scans.slice(0, 5);
+    }, [scans]);
+    const ensureStatusLoading = async () => {
+    if (!flight) {
+      return;
+    }
+
+    const current =
+      normalizeStatus(
+        flight.status
+      );
+
+    if (
+      current === "LOADED" ||
+      current === "LOADING"
+    ) {
+      return;
+    }
 
     await setDoc(
-      doc(db, "flights", flightId),
+      doc(
+        db,
+        "flights",
+        flightId
+      ),
       {
         status: "LOADING",
-        statusUpdatedAt: serverTimestamp(),
+
+        statusUpdatedAt:
+          serverTimestamp(),
+
         statusUpdatedBy: {
-          userId: user?.id || null,
-          username: user?.username || null,
-          role: user?.role || null,
+          userId:
+            user?.id || null,
+
+          username:
+            user?.username || null,
+
+          role:
+            user?.role || null,
         },
       },
-      { merge: true }
-    );
-  };
-
-  const validateAgainstOtherFlight = async (tag) => {
-    const tagRef = doc(db, "bagTags", tag);
-    const snap = await getDoc(tagRef);
-
-    if (!snap.exists()) return { ok: true, firstTime: true };
-
-    const existing = snap.data();
-
-    if (existing.flightId && existing.flightId !== flightId) {
-      return {
-        ok: false,
-        message:
-          `❌ Bag tag belongs to a different flight/date.\n\n` +
-          `Current: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
-          `Registered: ${existing.flightNumber || existing.flightId} (${existing.flightDate || "-"})\n\n` +
-          `Do NOT load this bag on this aircraft.`,
-      };
-    }
-
-    return { ok: true, firstTime: false };
-  };
-
-  const validateAgainstManifest = async (tag) => {
-    if (!strictManifest) return { ok: true };
-
-    const allowRef = doc(db, "flights", flightId, "allowedBagTags", tag);
-    const allowSnap = await getDoc(allowRef);
-
-    if (!allowSnap.exists()) {
-      return {
-        ok: false,
-        message:
-          `❌ Bag tag NOT found in this flight manifest.\n\n` +
-          `Flight: ${flight?.flightNumber || flightId} (${flight?.flightDate || "-"})\n` +
-          `Tag: ${tag}\n\n` +
-          `Check tag / passenger list. Do NOT load.`,
-      };
-    }
-
-    return { ok: true };
-  };
-  const getBagTypeInfo = async (tag) => {
-  const tagSnap = await getDoc(doc(db, "bagTags", tag));
-
-  if (tagSnap.exists()) {
-    const data = tagSnap.data();
-
-    if (data.bagType) {
-      return {
-        bagType: normalizeBagType(data.bagType),
-        bagTypeLabel: data.bagTypeLabel || getBagTypeLabel(data.bagType),
-      };
-    }
-  }
-
-  const counterSnap = await getDoc(
-    doc(db, "flights", flightId, "counterScans", tag)
-  );
-
-  if (counterSnap.exists()) {
-    const data = counterSnap.data();
-
-    return {
-      bagType: normalizeBagType(data.bagType),
-      bagTypeLabel: data.bagTypeLabel || getBagTypeLabel(data.bagType),
-    };
-  }
-
-  return {
-    bagType: "CHECKED_BAG",
-    bagTypeLabel: "Checked Bag",
-  };
-};
-
-  const indexTagToThisFlight = async (tag, zoneNum, typeInfo) => {
-    const tagRef = doc(db, "bagTags", tag);
-
-    await setDoc(
-      tagRef,
       {
-        tag,
-        flightId,
-        flightNumber: flight?.flightNumber || null,
-        flightDate: flight?.flightDate || null,
-        gate: flight?.gate || null,
-        bagType: typeInfo?.bagType || "CHECKED_BAG",
-        bagTypeLabel: typeInfo?.bagTypeLabel || "Checked Bag",
-        lastSeenAt: serverTimestamp(),
-        lastSeenLocation: "aircraft",
-        lastSeenZone: zoneNum ?? null,
-        lastSeenBy: {
-          userId: user?.id || null,
-          username: user?.username || null,
-          role: user?.role || null,
-        },
-        firstSeenAt: serverTimestamp(),
-      },
-      { merge: true }
+        merge: true,
+      }
     );
   };
 
-  const saveTrackingEvent = async ({
-    type,
-    tag,
-    zoneNum = null,
-    reason = null,
-    bagType = "CHECKED_BAG",
-    bagTypeLabel = "Checked Bag",
-  }) => {
-    const eventRef = doc(
-      db,
-      "bagTags",
-      tag,
-      "events",
-      `${String(type).toLowerCase()}_${Date.now()}`
-    );
-
-    await setDoc(eventRef, {
-      type,
-      location: type === "OFFLOAD_BAG" ? "offloaded" : "aircraft",
-      message:
-        type === "AIRCRAFT_LOAD"
-          ? `Bag loaded on aircraft · ${bagTypeLabel}`
-          : `Bag offloaded from aircraft · ${bagTypeLabel}`,
-      tag,
-      zone: zoneNum,
-      bagType,
-      bagTypeLabel,
-      reason,
-      flightId,
-      flightNumber: flight?.flightNumber || null,
-      flightDate: flight?.flightDate || null,
-      gate: flight?.gate || null,
-      createdAt: serverTimestamp(),
-      createdBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
-    });
-  };
-
-const saveAircraftScan = async (tag, zoneNum) => {
-  const scanRef = doc(db, "flights", flightId, "aircraftScans", tag);
-  const existing = await getDoc(scanRef);
-  const typeInfo = await getBagTypeInfo(tag);
-
-  if (existing.exists()) {
-    const prev = existing.data();
-
-    await setDoc(
-      scanRef,
-      {
-        bagType: typeInfo.bagType,
-        bagTypeLabel: typeInfo.bagTypeLabel,
-      },
-      { merge: true }
-    );
-
-    popup(
-      "Duplicate scan",
-      `⚠️ Already scanned in Aircraft.\nZone: ${prev.zone ?? "-"}\nType updated: ${typeInfo.bagTypeLabel}`,
-      "warning"
-    );
-
-    return { ok: false, typeInfo };
-  }
-
-  await setDoc(scanRef, {
-    tag,
-    zone: zoneNum,
-    bagType: typeInfo.bagType,
-    bagTypeLabel: typeInfo.bagTypeLabel,
-    createdAt: serverTimestamp(),
-    scannedBy: {
-      userId: user?.id || null,
-      username: user?.username || null,
-      role: user?.role || null,
-    },
-  });
-
-  return { ok: true, typeInfo };
-};
-
-  const saveActionReport = async ({
-    type,
-    reason,
-    tag = null,
-    zoneNum = null,
-    extra = {},
-  }) => {
-    await addDoc(collection(db, "flights", flightId, "reports"), {
-      type,
-      reason,
-      tag,
-      zone: zoneNum,
-      createdAt: serverTimestamp(),
-      createdBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
-      flightSnapshot: {
-        flightNumber: flight?.flightNumber || null,
-        flightDate: flight?.flightDate || null,
-        gate: flight?.gate || null,
-        aircraftType: flight?.aircraftType || null,
-        status: flight?.status || null,
-      },
-      ...extra,
-    });
-  };
-
-  const handleReopenFlight = async () => {
-    if (!canReopenOrOffload) {
-      popup("No permission", "You don't have permission to reopen this flight.", "warning");
-      return;
-    }
-
-    if (!isLoadingCompleted) {
-      popup("Not completed", "This flight is already open for loading.", "info");
-      return;
-    }
-
-    promptReason({
-      title: "Reopen Flight",
-      tone: "warning",
-      confirmText: "Reopen Flight",
-      message:
-        `You are about to reopen this flight for loading.\n\n` +
-        `Flight: ${flight?.flightNumber || flightId}\n` +
-        `Date: ${flight?.flightDate || "-"}\n\n` +
-        `Please enter the reason.`,
-      onConfirm: async (reason) => {
-        try {
-          setReopening(true);
-          setErr("");
-          setMsg("");
-
-          await saveActionReport({
-            type: "REOPEN_FLIGHT",
-            reason,
-            extra: {
-              previousStatus: flight?.status || null,
-              previousAircraftLoadingCompleted: Boolean(flight?.aircraftLoadingCompleted),
-              previousAircraftLoadedBags: flight?.aircraftLoadedBags ?? null,
-            },
-          });
-
-          await setDoc(
-            doc(db, "flights", flightId),
-            {
-              status: "LOADING",
-              aircraftLoadingCompleted: false,
-              aircraftLoadingCompletedAt: null,
-              aircraftLoadingCompletedBy: null,
-              reopenedAt: serverTimestamp(),
-              reopenedReason: reason,
-              reopenedBy: {
-                userId: user?.id || null,
-                username: user?.username || null,
-                role: user?.role || null,
-              },
-              statusUpdatedAt: serverTimestamp(),
-              statusUpdatedBy: {
-                userId: user?.id || null,
-                username: user?.username || null,
-                role: user?.role || null,
-              },
-            },
-            { merge: true }
-          );
-
-          setMsg("✅ Flight reopened. Reason saved in reports.");
-        } catch (e) {
-          console.error(e);
-          setErr("Could not reopen flight. Check Firestore rules/connection.");
-        } finally {
-          setReopening(false);
-        }
-      },
-    });
-  };
-    const handleOffloadBag = async (scan) => {
-    if (!canReopenOrOffload) {
-      popup("No permission", "You don't have permission to offload bags.", "warning");
-      return;
-    }
-
-    const tag = String(scan?.tag || scan?.id || "").trim();
-    const zoneNum = scan?.zone ?? null;
-    const bagType = normalizeBagType(scan?.bagType);
-    const bagTypeLabel = scan?.bagTypeLabel || getBagTypeLabel(scan?.bagType);
-
-    if (!tag) return;
-
-    promptReason({
-      title: "Offload Bag",
-      tone: "danger",
-      confirmText: "Offload Bag",
-      message:
-        `You are about to offload this bag from aircraft.\n\n` +
-        `Bag Tag: ${tag}\n` +
-        `Type: ${bagTypeLabel}\n` +
-        `Zone: ${zoneNum ?? "-"}\n\n` +
-        `Please enter the reason.`,
-      onConfirm: async (reason) => {
-        try {
-          setOffloadingTag(tag);
-          setErr("");
-          setMsg("");
-
-          await saveActionReport({
-            type: "OFFLOAD_BAG",
-            reason,
-            tag,
-            zoneNum,
-            extra: {
-              bagType,
-              bagTypeLabel,
-              previousScan: scan || null,
-            },
-          });
-
-          await deleteDoc(doc(db, "flights", flightId, "aircraftScans", tag));
-
-          await setDoc(
-            doc(db, "bagTags", tag),
-            {
-              tag,
-              flightId,
-              flightNumber: flight?.flightNumber || null,
-              flightDate: flight?.flightDate || null,
-              gate: flight?.gate || null,
-              bagType,
-              bagTypeLabel,
-              lastSeenAt: serverTimestamp(),
-              lastSeenLocation: "offloaded",
-              lastSeenZone: zoneNum,
-              lastSeenBy: {
-                userId: user?.id || null,
-                username: user?.username || null,
-                role: user?.role || null,
-              },
-              offloadedAt: serverTimestamp(),
-              offloadedReason: reason,
-              offloadedBy: {
-                userId: user?.id || null,
-                username: user?.username || null,
-                role: user?.role || null,
-              },
-            },
-            { merge: true }
-          );
-
-          await saveTrackingEvent({
-            type: "OFFLOAD_BAG",
-            tag,
-            zoneNum,
-            reason,
-            bagType,
-            bagTypeLabel,
-          });
-
-          if (isLoadingCompleted) {
-            await setDoc(
-              doc(db, "flights", flightId),
-              {
-                status: "LOADING",
-                aircraftLoadingCompleted: false,
-                aircraftLoadingCompletedAt: null,
-                aircraftLoadingCompletedBy: null,
-                statusUpdatedAt: serverTimestamp(),
-                statusUpdatedBy: {
-                  userId: user?.id || null,
-                  username: user?.username || null,
-                  role: user?.role || null,
-                },
-              },
-              { merge: true }
-            );
-          }
-
-          setMsg(`✅ Bag offloaded: ${tag} · ${bagTypeLabel}. Reason saved in reports/tracking.`);
-        } catch (e) {
-          console.error(e);
-          setErr("Could not offload bag. Check Firestore rules/connection.");
-        } finally {
-          setOffloadingTag("");
-        }
-      },
-    });
-  };
-
-  const handleScanSubmit = async (forcedTag) => {
-    if (isSubmittingRef.current) return;
-
-    setMsg("");
-    setErr("");
-    setCompleteMsg("");
-
-    if (isLoadingCompleted) {
-      popup(
-        "Locked",
-        "⚠️ Loading is already completed for this flight. Reopen flight first.",
-        "warning"
+  const validateAgainstOtherFlight =
+    async (tag) => {
+      const tagRef = doc(
+        db,
+        "bagTags",
+        tag
       );
-      setTagInput("");
-      return;
-    }
 
-    const tag = cleanTagValue(forcedTag ?? tagInput);
-    if (!tag) return;
-    if (tag.length < MIN_TAG_LEN) return;
+      const snapshot =
+        await getDoc(tagRef);
 
-    const zoneNum = Number(zone);
-
-    try {
-      isSubmittingRef.current = true;
-
-      if (!flight) {
-        setErr("Flight not loaded yet. Try again.");
-        return;
+      if (!snapshot.exists()) {
+        return {
+          ok: true,
+          firstTime: true,
+          tagData: null,
+        };
       }
 
-      const m = await validateAgainstManifest(tag);
-      if (!m.ok) {
-        popup("Not in manifest", m.message, "danger");
-        setTagInput("");
-        return;
+      const existing =
+        snapshot.data();
+
+      if (
+        existing.flightId &&
+        existing.flightId !== flightId
+      ) {
+        return {
+          ok: false,
+
+          message:
+            `❌ Bag tag belongs to a different flight/date.\n\n` +
+            `Current: ${
+              flight?.flightNumber ||
+              flightId
+            } (${
+              flight?.flightDate ||
+              "-"
+            })\n` +
+            `Registered: ${
+              existing.flightNumber ||
+              existing.flightId
+            } (${
+              existing.flightDate ||
+              "-"
+            })\n\n` +
+            `Do NOT load this bag on this aircraft.`,
+        };
       }
 
-      const cross = await validateAgainstOtherFlight(tag);
-      if (!cross.ok) {
-        popup("Wrong flight/date", cross.message, "danger");
-        setTagInput("");
-        return;
-      }
-
-      const result = await saveAircraftScan(tag, zoneNum);
-      if (!result.ok) {
-        setTagInput("");
-        return;
-      }
-
-      const typeInfo = result.typeInfo || {
-        bagType: "CHECKED_BAG",
-        bagTypeLabel: "Checked Bag",
+      return {
+        ok: true,
+        firstTime: false,
+        tagData: existing,
       };
+    };
 
-      await indexTagToThisFlight(tag, zoneNum, typeInfo);
+  const validateAgainstManifest =
+    async (tag) => {
+      if (!strictManifest) {
+        return {
+          ok: true,
+        };
+      }
 
-      await saveTrackingEvent({
-        type: "AIRCRAFT_LOAD",
+      const allowRef = doc(
+        db,
+        "flights",
+        flightId,
+        "allowedBagTags",
+        tag
+      );
+
+      const allowSnapshot =
+        await getDoc(allowRef);
+
+      if (!allowSnapshot.exists()) {
+        return {
+          ok: false,
+
+          message:
+            `❌ Bag tag NOT found in this flight manifest.\n\n` +
+            `Flight: ${
+              flight?.flightNumber ||
+              flightId
+            } (${
+              flight?.flightDate ||
+              "-"
+            })\n` +
+            `Tag: ${tag}\n\n` +
+            `Check tag / passenger list. Do NOT load.`,
+        };
+      }
+
+      return {
+        ok: true,
+      };
+    };
+
+  const getBagTypeInfo =
+    async (tag) => {
+      const tagSnapshot =
+        await getDoc(
+          doc(
+            db,
+            "bagTags",
+            tag
+          )
+        );
+
+      if (tagSnapshot.exists()) {
+        const data =
+          tagSnapshot.data();
+
+        if (data.bagType) {
+          return {
+            bagType:
+              normalizeBagType(
+                data.bagType
+              ),
+
+            bagTypeLabel:
+              data.bagTypeLabel ||
+              getBagTypeLabel(
+                data.bagType
+              ),
+          };
+        }
+      }
+
+      const counterSnapshot =
+        await getDoc(
+          doc(
+            db,
+            "flights",
+            flightId,
+            "counterScans",
+            tag
+          )
+        );
+
+      if (
+        counterSnapshot.exists()
+      ) {
+        const data =
+          counterSnapshot.data();
+
+        return {
+          bagType:
+            normalizeBagType(
+              data.bagType
+            ),
+
+          bagTypeLabel:
+            data.bagTypeLabel ||
+            getBagTypeLabel(
+              data.bagType
+            ),
+        };
+      }
+
+      return {
+        bagType:
+          "CHECKED_BAG",
+
+        bagTypeLabel:
+          "Checked Bag",
+      };
+    };
+
+  const getPreviousLocation =
+    async (tag, tagData = null) => {
+      const localReceivingScan =
+        receivingScanByTag.get(tag);
+
+      if (localReceivingScan) {
+        const previous =
+          getPreviousLocationFromScan(
+            localReceivingScan
+          );
+
+        return {
+          ...previous,
+
+          validReceivingLocation:
+            isValidReceivingLocation(
+              previous?.location
+            ),
+
+          found:
+            true,
+        };
+      }
+
+      let resolvedTagData =
+        tagData;
+
+      if (!resolvedTagData) {
+        const tagSnapshot =
+          await getDoc(
+            doc(
+              db,
+              "bagTags",
+              tag
+            )
+          );
+
+        if (
+          tagSnapshot.exists()
+        ) {
+          resolvedTagData =
+            tagSnapshot.data();
+        }
+      }
+
+      if (resolvedTagData) {
+        const previous =
+          getPreviousLocationFromTag(
+            resolvedTagData
+          );
+
+        return {
+          ...previous,
+
+          validReceivingLocation:
+            isValidReceivingLocation(
+              previous?.location
+            ),
+
+          found:
+            true,
+        };
+      }
+
+      const counterSnapshot =
+        await getDoc(
+          doc(
+            db,
+            "flights",
+            flightId,
+            "counterScans",
+            tag
+          )
+        );
+
+      if (
+        counterSnapshot.exists()
+      ) {
+        const counterData =
+          counterSnapshot.data();
+
+        return {
+          location:
+            "COUNTER",
+
+          locationLabel:
+            "Counter",
+
+          cartNumber:
+            null,
+
+          scannedAt:
+            counterData.createdAt ||
+            counterData.scannedAt ||
+            null,
+
+          scannedBy:
+            counterData.scannedBy ||
+            counterData.createdBy ||
+            null,
+
+          source:
+            "counterScans",
+
+          validReceivingLocation:
+            false,
+
+          found:
+            true,
+        };
+      }
+
+      return {
+        location:
+          "UNKNOWN",
+
+        locationLabel:
+          "No Recorded Location",
+
+        cartNumber:
+          null,
+
+        scannedAt:
+          null,
+
+        scannedBy:
+          null,
+
+        source:
+          null,
+
+        validReceivingLocation:
+          false,
+
+        found:
+          false,
+      };
+    };
+
+  const indexTagToThisFlight =
+    async (
+      tag,
+      zoneNum,
+      typeInfo,
+      previousLocation
+    ) => {
+      const tagRef = doc(
+        db,
+        "bagTags",
+        tag
+      );
+
+      await setDoc(
+        tagRef,
+        {
+          tag,
+
+          flightId,
+
+          flightNumber:
+            flight?.flightNumber ||
+            null,
+
+          flightDate:
+            flight?.flightDate ||
+            null,
+
+          gate:
+            flight?.gate || null,
+
+          bagType:
+            typeInfo?.bagType ||
+            "CHECKED_BAG",
+
+          bagTypeLabel:
+            typeInfo?.bagTypeLabel ||
+            "Checked Bag",
+
+          previousLocation:
+            previousLocation?.location ||
+            "UNKNOWN",
+
+          previousLocationLabel:
+            previousLocation?.locationLabel ||
+            "Unknown",
+
+          previousCartNumber:
+            previousLocation?.cartNumber ||
+            null,
+
+          previousLocationAt:
+            previousLocation?.scannedAt ||
+            null,
+
+          previousLocationBy:
+            previousLocation?.scannedBy ||
+            null,
+
+          lastSeenAt:
+            serverTimestamp(),
+
+          lastSeenLocation:
+            "aircraft",
+
+          lastSeenZone:
+            zoneNum ?? null,
+
+          lastSeenBy: {
+            userId:
+              user?.id || null,
+
+            username:
+              user?.username || null,
+
+            role:
+              user?.role || null,
+          },
+
+          firstSeenAt:
+            serverTimestamp(),
+        },
+        {
+          merge: true,
+        }
+      );
+    };
+
+  const saveTrackingEvent =
+    async ({
+      type,
+      tag,
+      zoneNum = null,
+      reason = null,
+      bagType = "CHECKED_BAG",
+      bagTypeLabel = "Checked Bag",
+      previousLocation = null,
+    }) => {
+      const eventRef = doc(
+        db,
+        "bagTags",
         tag,
-        zoneNum,
-        bagType: typeInfo.bagType,
-        bagTypeLabel: typeInfo.bagTypeLabel,
+        "events",
+        `${String(type).toLowerCase()}_${Date.now()}`
+      );
+
+      await setDoc(
+        eventRef,
+        {
+          type,
+
+          location:
+            type === "OFFLOAD_BAG"
+              ? "offloaded"
+              : "aircraft",
+
+          message:
+            type === "AIRCRAFT_LOAD"
+              ? `Bag loaded on aircraft · ${bagTypeLabel}`
+              : `Bag offloaded from aircraft · ${bagTypeLabel}`,
+
+          tag,
+
+          zone:
+            zoneNum,
+
+          bagType,
+
+          bagTypeLabel,
+
+          reason,
+
+          previousLocation:
+            previousLocation?.location ||
+            null,
+
+          previousLocationLabel:
+            previousLocation?.locationLabel ||
+            null,
+
+          previousCartNumber:
+            previousLocation?.cartNumber ||
+            null,
+
+          previousLocationAt:
+            previousLocation?.scannedAt ||
+            null,
+
+          previousLocationBy:
+            previousLocation?.scannedBy ||
+            null,
+
+          previousLocationValid:
+            Boolean(
+              previousLocation?.validReceivingLocation
+            ),
+
+          flightId,
+
+          flightNumber:
+            flight?.flightNumber ||
+            null,
+
+          flightDate:
+            flight?.flightDate ||
+            null,
+
+          gate:
+            flight?.gate || null,
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy: {
+            userId:
+              user?.id || null,
+
+            username:
+              user?.username || null,
+
+            role:
+              user?.role || null,
+          },
+        }
+      );
+    };
+
+  const saveAircraftScan =
+    async (
+      tag,
+      zoneNum,
+      previousLocation
+    ) => {
+      const scanRef = doc(
+        db,
+        "flights",
+        flightId,
+        "aircraftScans",
+        tag
+      );
+
+      const existing =
+        await getDoc(scanRef);
+
+      const typeInfo =
+        await getBagTypeInfo(tag);
+
+      if (existing.exists()) {
+        const previousScan =
+          existing.data();
+
+        await setDoc(
+          scanRef,
+          {
+            bagType:
+              typeInfo.bagType,
+
+            bagTypeLabel:
+              typeInfo.bagTypeLabel,
+          },
+          {
+            merge: true,
+          }
+        );
+
+        popup(
+          "Duplicate scan",
+          `⚠️ Already scanned in Aircraft.\n\n` +
+            `Bag Tag: ${tag}\n` +
+            `Zone: ${
+              previousScan.zone ??
+              "-"
+            }\n` +
+            `Previous Location: ${
+              previousScan.previousLocationLabel ||
+              getReceivingLocationLabel(
+                previousScan.previousLocation
+              )
+            }\n` +
+            `Type updated: ${typeInfo.bagTypeLabel}`,
+          "warning"
+        );
+
+        return {
+          ok: false,
+          typeInfo,
+        };
+      }
+
+      await setDoc(
+        scanRef,
+        {
+          tag,
+
+          zone:
+            zoneNum,
+
+          bagType:
+            typeInfo.bagType,
+
+          bagTypeLabel:
+            typeInfo.bagTypeLabel,
+
+          previousLocation:
+            previousLocation?.location ||
+            "UNKNOWN",
+
+          previousLocationLabel:
+            previousLocation?.locationLabel ||
+            "Unknown",
+
+          previousCartNumber:
+            previousLocation?.cartNumber ||
+            null,
+
+          previousLocationAt:
+            previousLocation?.scannedAt ||
+            null,
+
+          previousLocationBy:
+            previousLocation?.scannedBy ||
+            null,
+
+          previousLocationSource:
+            previousLocation?.source ||
+            null,
+
+          previousLocationValid:
+            Boolean(
+              previousLocation?.validReceivingLocation
+            ),
+
+          previousLocationDetails:
+            getPreviousLocationDetails(
+              previousLocation
+            ),
+
+          createdAt:
+            serverTimestamp(),
+
+          scannedBy: {
+            userId:
+              user?.id || null,
+
+            username:
+              user?.username || null,
+
+            role:
+              user?.role || null,
+          },
+        }
+      );
+
+      return {
+        ok: true,
+        typeInfo,
+      };
+    };
+
+  const saveActionReport =
+    async ({
+      type,
+      reason,
+      tag = null,
+      zoneNum = null,
+      extra = {},
+    }) => {
+      await addDoc(
+        collection(
+          db,
+          "flights",
+          flightId,
+          "reports"
+        ),
+        {
+          type,
+
+          reason,
+
+          tag,
+
+          zone:
+            zoneNum,
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy: {
+            userId:
+              user?.id || null,
+
+            username:
+              user?.username || null,
+
+            role:
+              user?.role || null,
+          },
+
+          flightSnapshot: {
+            flightNumber:
+              flight?.flightNumber ||
+              null,
+
+            flightDate:
+              flight?.flightDate ||
+              null,
+
+            gate:
+              flight?.gate || null,
+
+            aircraftType:
+              flight?.aircraftType ||
+              null,
+
+            status:
+              flight?.status || null,
+          },
+
+          ...extra,
+        }
+      );
+    };
+
+  const handleReopenFlight =
+    async () => {
+      if (!canReopenOrOffload) {
+        popup(
+          "No permission",
+          "You don't have permission to reopen this flight.",
+          "warning"
+        );
+
+        return;
+      }
+
+      if (!isLoadingCompleted) {
+        popup(
+          "Not completed",
+          "This flight is already open for loading.",
+          "info"
+        );
+
+        return;
+      }
+
+      promptReason({
+        title:
+          "Reopen Flight",
+
+        tone:
+          "warning",
+
+        confirmText:
+          "Reopen Flight",
+
+        message:
+          `You are about to reopen this flight for loading.\n\n` +
+          `Flight: ${
+            flight?.flightNumber ||
+            flightId
+          }\n` +
+          `Date: ${
+            flight?.flightDate ||
+            "-"
+          }\n\n` +
+          `Please enter the reason.`,
+
+        onConfirm:
+          async (reason) => {
+            try {
+              setReopening(true);
+              setErr("");
+              setMsg("");
+
+              await saveActionReport({
+                type:
+                  "REOPEN_FLIGHT",
+
+                reason,
+
+                extra: {
+                  previousStatus:
+                    flight?.status ||
+                    null,
+
+                  previousAircraftLoadingCompleted:
+                    Boolean(
+                      flight?.aircraftLoadingCompleted
+                    ),
+
+                  previousAircraftLoadedBags:
+                    flight?.aircraftLoadedBags ??
+                    null,
+                },
+              });
+
+              await setDoc(
+                doc(
+                  db,
+                  "flights",
+                  flightId
+                ),
+                {
+                  status:
+                    "LOADING",
+
+                  aircraftLoadingCompleted:
+                    false,
+
+                  aircraftLoadingCompletedAt:
+                    null,
+
+                  aircraftLoadingCompletedBy:
+                    null,
+
+                  reopenedAt:
+                    serverTimestamp(),
+
+                  reopenedReason:
+                    reason,
+
+                  reopenedBy: {
+                    userId:
+                      user?.id ||
+                      null,
+
+                    username:
+                      user?.username ||
+                      null,
+
+                    role:
+                      user?.role ||
+                      null,
+                  },
+
+                  statusUpdatedAt:
+                    serverTimestamp(),
+
+                  statusUpdatedBy: {
+                    userId:
+                      user?.id ||
+                      null,
+
+                    username:
+                      user?.username ||
+                      null,
+
+                    role:
+                      user?.role ||
+                      null,
+                  },
+                },
+                {
+                  merge: true,
+                }
+              );
+
+              setMsg(
+                "✅ Flight reopened. Reason saved in reports."
+              );
+
+              focusScanner();
+            } catch (error) {
+              console.error(error);
+
+              setErr(
+                "Could not reopen flight. Check Firestore rules/connection."
+              );
+            } finally {
+              setReopening(false);
+            }
+          },
       });
+    };
 
-      await ensureStatusLoading();
+  const handleOffloadBag =
+    async (scan) => {
+      if (!canReopenOrOffload) {
+        popup(
+          "No permission",
+          "You don't have permission to offload bags.",
+          "warning"
+        );
 
-      setMsg(`Scanned ✅ Tag: ${tag} · ${typeInfo.bagTypeLabel} · Zone ${zoneNum}`);
+        return;
+      }
+
+      const tag =
+        normalizeBagTag(
+          scan?.tag ||
+            scan?.id
+        );
+
+      const zoneNum =
+        scan?.zone ?? null;
+
+      const bagType =
+        normalizeBagType(
+          scan?.bagType
+        );
+
+      const bagTypeLabel =
+        scan?.bagTypeLabel ||
+        getBagTypeLabel(
+          scan?.bagType
+        );
+
+      if (!tag) {
+        return;
+      }
+
+      promptReason({
+        title:
+          "Offload Bag",
+
+        tone:
+          "danger",
+
+        confirmText:
+          "Offload Bag",
+
+        message:
+          `You are about to offload this bag from aircraft.\n\n` +
+          `Bag Tag: ${tag}\n` +
+          `Type: ${bagTypeLabel}\n` +
+          `Zone: ${
+            zoneNum ?? "-"
+          }\n\n` +
+          `Please enter the reason.`,
+
+        onConfirm:
+          async (reason) => {
+            try {
+              setOffloadingTag(
+                tag
+              );
+
+              setErr("");
+              setMsg("");
+
+              await saveActionReport({
+                type:
+                  "OFFLOAD_BAG",
+
+                reason,
+
+                tag,
+
+                zoneNum,
+
+                extra: {
+                  bagType,
+
+                  bagTypeLabel,
+
+                  previousScan:
+                    scan || null,
+                },
+              });
+
+              await deleteDoc(
+                doc(
+                  db,
+                  "flights",
+                  flightId,
+                  "aircraftScans",
+                  tag
+                )
+              );
+
+              await setDoc(
+                doc(
+                  db,
+                  "bagTags",
+                  tag
+                ),
+                {
+                  tag,
+
+                  flightId,
+
+                  flightNumber:
+                    flight?.flightNumber ||
+                    null,
+
+                  flightDate:
+                    flight?.flightDate ||
+                    null,
+
+                  gate:
+                    flight?.gate ||
+                    null,
+
+                  bagType,
+
+                  bagTypeLabel,
+
+                  lastSeenAt:
+                    serverTimestamp(),
+
+                  lastSeenLocation:
+                    "offloaded",
+
+                  lastSeenZone:
+                    zoneNum,
+
+                  lastSeenBy: {
+                    userId:
+                      user?.id ||
+                      null,
+
+                    username:
+                      user?.username ||
+                      null,
+
+                    role:
+                      user?.role ||
+                      null,
+                  },
+
+                  offloadedAt:
+                    serverTimestamp(),
+
+                  offloadedReason:
+                    reason,
+
+                  offloadedBy: {
+                    userId:
+                      user?.id ||
+                      null,
+
+                    username:
+                      user?.username ||
+                      null,
+
+                    role:
+                      user?.role ||
+                      null,
+                  },
+                },
+                {
+                  merge: true,
+                }
+              );
+
+              await saveTrackingEvent({
+                type:
+                  "OFFLOAD_BAG",
+
+                tag,
+
+                zoneNum,
+
+                reason,
+
+                bagType,
+
+                bagTypeLabel,
+
+                previousLocation: {
+                  location:
+                    scan.previousLocation ||
+                    "UNKNOWN",
+
+                  locationLabel:
+                    scan.previousLocationLabel ||
+                    "Unknown",
+
+                  cartNumber:
+                    scan.previousCartNumber ||
+                    null,
+
+                  scannedAt:
+                    scan.previousLocationAt ||
+                    null,
+
+                  scannedBy:
+                    scan.previousLocationBy ||
+                    null,
+
+                  validReceivingLocation:
+                    Boolean(
+                      scan.previousLocationValid
+                    ),
+                },
+              });
+
+              if (isLoadingCompleted) {
+                await setDoc(
+                  doc(
+                    db,
+                    "flights",
+                    flightId
+                  ),
+                  {
+                    status:
+                      "LOADING",
+
+                    aircraftLoadingCompleted:
+                      false,
+
+                    aircraftLoadingCompletedAt:
+                      null,
+
+                    aircraftLoadingCompletedBy:
+                      null,
+
+                    statusUpdatedAt:
+                      serverTimestamp(),
+
+                    statusUpdatedBy: {
+                      userId:
+                        user?.id ||
+                        null,
+
+                      username:
+                        user?.username ||
+                        null,
+
+                      role:
+                        user?.role ||
+                        null,
+                    },
+                  },
+                  {
+                    merge: true,
+                  }
+                );
+              }
+
+              setMsg(
+                `✅ Bag offloaded: ${tag} · ${bagTypeLabel}. Reason saved in reports/tracking.`
+              );
+
+              focusScanner();
+            } catch (error) {
+              console.error(error);
+
+              setErr(
+                "Could not offload bag. Check Firestore rules/connection."
+              );
+            } finally {
+              setOffloadingTag("");
+            }
+          },
+      });
+    };
+
+  const handleScanSubmit =
+    async (
+      forcedTag = tagInput
+    ) => {
+      if (
+        isSubmittingRef.current
+      ) {
+        return;
+      }
+
+      setMsg("");
+      setErr("");
+      setCompleteMsg("");
+
+      if (isLoadingCompleted) {
+        popup(
+          "Locked",
+          "⚠️ Loading is already completed for this flight. Reopen flight first.",
+          "warning"
+        );
+
+        setTagInput("");
+        return;
+      }
+
+      const tag =
+        normalizeBagTag(
+          forcedTag
+        );
+
+      if (
+        !isValidBagTag(tag)
+      ) {
+        if (tag) {
+          setErr(
+            `Bag tag must contain exactly ${BAG_TAG_LENGTH} digits.`
+          );
+        }
+
+        setTagInput(tag);
+        focusScanner();
+
+        return;
+      }
+
+      const now =
+        Date.now();
+
+      if (
+        lastSubmittedTagRef.current ===
+          tag &&
+        now -
+          lastSubmittedTimeRef.current <
+          1200
+      ) {
+        setTagInput("");
+        focusScanner();
+        return;
+      }
+
+      const zoneNum =
+        Number(zone);
+
+      try {
+        isSubmittingRef.current =
+          true;
+
+        lastSubmittedTagRef.current =
+          tag;
+
+        lastSubmittedTimeRef.current =
+          now;
+
+        setSubmittingTag(tag);
+
+        if (autoTimerRef.current) {
+          window.clearTimeout(
+            autoTimerRef.current
+          );
+
+          autoTimerRef.current =
+            null;
+        }
+
+        if (!flight) {
+          setErr(
+            "Flight not loaded yet. Try again."
+          );
+
+          return;
+        }
+
+        const manifestResult =
+          await validateAgainstManifest(
+            tag
+          );
+
+        if (!manifestResult.ok) {
+          popup(
+            "Not in manifest",
+            manifestResult.message,
+            "danger"
+          );
+
+          setTagInput("");
+          return;
+        }
+
+        const flightResult =
+          await validateAgainstOtherFlight(
+            tag
+          );
+
+        if (!flightResult.ok) {
+          popup(
+            "Wrong flight/date",
+            flightResult.message,
+            "danger"
+          );
+
+          setTagInput("");
+          return;
+        }
+
+        const previousLocation =
+          await getPreviousLocation(
+            tag,
+            flightResult.tagData
+          );
+
+        const result =
+          await saveAircraftScan(
+            tag,
+            zoneNum,
+            previousLocation
+          );
+
+        if (!result.ok) {
+          setTagInput("");
+          return;
+        }
+
+        const typeInfo =
+          result.typeInfo || {
+            bagType:
+              "CHECKED_BAG",
+
+            bagTypeLabel:
+              "Checked Bag",
+          };
+
+        await indexTagToThisFlight(
+          tag,
+          zoneNum,
+          typeInfo,
+          previousLocation
+        );
+
+        await saveTrackingEvent({
+          type:
+            "AIRCRAFT_LOAD",
+
+          tag,
+
+          zoneNum,
+
+          bagType:
+            typeInfo.bagType,
+
+          bagTypeLabel:
+            typeInfo.bagTypeLabel,
+
+          previousLocation,
+        });
+
+        await ensureStatusLoading();
+
+        const loadedBag = {
+          tag,
+
+          zone:
+            zoneNum,
+
+          bagType:
+            typeInfo.bagType,
+
+          bagTypeLabel:
+            typeInfo.bagTypeLabel,
+
+          previousLocation:
+            previousLocation.location,
+
+          previousLocationLabel:
+            previousLocation.locationLabel,
+
+          previousCartNumber:
+            previousLocation.cartNumber,
+
+          previousLocationAt:
+            previousLocation.scannedAt,
+
+          previousLocationBy:
+            previousLocation.scannedBy,
+
+          previousLocationValid:
+            previousLocation.validReceivingLocation,
+        };
+
+        setLastLoadedBag(
+          loadedBag
+        );
+
+        const previousDetails =
+          getPreviousLocationDetails(
+            previousLocation
+          );
+
+        if (
+          previousLocation.validReceivingLocation
+        ) {
+          setMsg(
+            `✅ ${tag} loaded · ${typeInfo.bagTypeLabel} · Zone ${zoneNum} · From ${previousDetails}`
+          );
+        } else {
+          setErr(
+            `⚠️ ${tag} loaded in Zone ${zoneNum}, but its last recorded location was ${previousDetails}. Please verify.`
+          );
+        }
+
+        setTagInput("");
+      } catch (error) {
+        console.error(error);
+
+        setErr(
+          "Scan failed. Check Firestore rules/connection."
+        );
+
+        setTagInput("");
+      } finally {
+        isSubmittingRef.current =
+          false;
+
+        setSubmittingTag("");
+
+        focusScanner(120);
+      }
+    };
+
+  const scheduleAutoSubmit =
+    (nextValue) => {
+      if (autoTimerRef.current) {
+        window.clearTimeout(
+          autoTimerRef.current
+        );
+      }
+
+      const cleaned =
+        normalizeBagTag(
+          nextValue
+        );
+
+      if (
+        cleaned.length !==
+        BAG_TAG_LENGTH
+      ) {
+        autoTimerRef.current =
+          null;
+
+        return;
+      }
+
+      autoTimerRef.current =
+        window.setTimeout(() => {
+          autoTimerRef.current =
+            null;
+
+          handleScanSubmit(
+            cleaned
+          );
+        }, AUTO_SUBMIT_IDLE_MS);
+    };
+
+  const handleChange =
+    (event) => {
+      const cleaned =
+        normalizeBagTag(
+          event.target.value
+        );
+
+      setTagInput(cleaned);
+      setMsg("");
+      setErr("");
+
+      if (
+        scannerMode &&
+        !isLoadingCompleted
+      ) {
+        scheduleAutoSubmit(
+          cleaned
+        );
+      }
+    };
+
+  const handleKeyDown =
+    (event) => {
+      if (
+        event.key !== "Enter" &&
+        event.key !== "Tab"
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (autoTimerRef.current) {
+        window.clearTimeout(
+          autoTimerRef.current
+        );
+
+        autoTimerRef.current =
+          null;
+      }
+
+      handleScanSubmit(
+        event.currentTarget.value
+      );
+    };
+
+  const changeScannerMode =
+    (enabled) => {
+      setScannerMode(enabled);
+
+      localStorage.setItem(
+        "aircraftScannerMode",
+        enabled
+          ? "scanner"
+          : "manual"
+      );
+
       setTagInput("");
+      setErr("");
+      setMsg("");
 
-      if (inputRef.current) inputRef.current.focus();
-    } catch (e) {
-      console.error(e);
-      setErr("Scan failed. Check Firestore rules/connection.");
-    } finally {
-      isSubmittingRef.current = false;
-    }
-  };
-
-  const scheduleAutoSubmit = (nextValue) => {
-    if (autoTimerRef.current) clearTimeout(autoTimerRef.current);
-
-    const cleaned = cleanTagValue(nextValue);
-
-    if (/[\r\n]/.test(String(nextValue || "")) && cleaned.length >= MIN_TAG_LEN) {
-      handleScanSubmit(cleaned);
-      return;
-    }
-
-    autoTimerRef.current = setTimeout(() => {
-      if (cleaned.length >= MIN_TAG_LEN) handleScanSubmit(cleaned);
-    }, AUTO_SUBMIT_IDLE_MS);
-  };
-
-  const handleChange = (e) => {
-    const v = e.target.value;
-    setTagInput(v);
-
-    if (!isLoadingCompleted) {
-      scheduleAutoSubmit(v);
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" || e.key === "Tab") {
-      e.preventDefault();
-      handleScanSubmit();
-    }
-  };
+      focusScanner(150);
+    };
     const computeZones = (rows) => {
-    const z = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    const zones = {
+      1: 0,
+      2: 0,
+      3: 0,
+      4: 0,
+    };
 
-    for (const r of rows) {
-      const zn = Number(r.zone);
-      if (zn >= 1 && zn <= 4) z[zn] += 1;
+    for (const row of rows) {
+      const zoneNumber = Number(
+        row.zone
+      );
+
+      if (
+        zoneNumber >= 1 &&
+        zoneNumber <= 4
+      ) {
+        zones[zoneNumber] += 1;
+      }
     }
 
-    return z;
+    return zones;
   };
 
   const computeBagTypes = (rows) => {
@@ -845,555 +2626,2712 @@ const saveAircraftScan = async (tag, zoneNum) => {
       OVERSIZE: 0,
     };
 
-    for (const r of rows) {
-      const type = normalizeBagType(r.bagType);
+    for (const row of rows) {
+      const type =
+        normalizeBagType(
+          row.bagType
+        );
+
       counts[type] += 1;
     }
 
     return counts;
   };
 
-  const buildPdf = ({ flightDoc, aircraftRows, bagroomCount }) => {
+  const buildPdf = ({
+    flightDoc,
+    aircraftRows,
+    receivingCount,
+  }) => {
     const pdf = new jsPDF();
 
-    const flightNumber = safeStr(flightDoc?.flightNumber, flightId);
-    const flightDate = safeStr(flightDoc?.flightDate, "-");
-    const gate = safeStr(flightDoc?.gate, "-");
-    const aircraftType = safeStr(flightDoc?.aircraftType, "-");
-    const status = safeStr(flightDoc?.status, "OPEN");
-    const gateController = safeStr(flightDoc?.gateControllerOnDuty, "-");
+    const flightNumber =
+      safeStr(
+        flightDoc?.flightNumber,
+        flightId
+      );
+
+    const flightDate =
+      safeStr(
+        flightDoc?.flightDate,
+        "-"
+      );
+
+    const gate =
+      safeStr(
+        flightDoc?.gate,
+        "-"
+      );
+
+    const aircraftType =
+      safeStr(
+        flightDoc?.aircraftType,
+        "-"
+      );
+
+    const status =
+      safeStr(
+        flightDoc?.status,
+        "OPEN"
+      );
+
+    const gateController =
+      safeStr(
+        flightDoc?.gateControllerOnDuty,
+        "-"
+      );
 
     const supervisorOnDuty =
-      safeStr(flightDoc?.statusUpdatedBy?.username, "") ||
-      safeStr(flightDoc?.gateTotalUpdatedBy?.username, "") ||
+      safeStr(
+        flightDoc?.statusUpdatedBy
+          ?.username,
+        ""
+      ) ||
+      safeStr(
+        flightDoc?.gateTotalUpdatedBy
+          ?.username,
+        ""
+      ) ||
       "-";
 
-    const rampSupervisor = safeStr(user?.username, "-");
+    const rampSupervisor =
+      safeStr(
+        user?.username,
+        "-"
+      );
 
     const gateTotal =
-      typeof flightDoc?.checkedBagsTotal === "number"
+      typeof flightDoc
+        ?.checkedBagsTotal ===
+      "number"
         ? flightDoc.checkedBagsTotal
         : null;
 
-    const aircraftTotal = aircraftRows.length;
-    const zones = computeZones(aircraftRows);
-    const bagTypes = computeBagTypes(aircraftRows);
+    const aircraftTotal =
+      aircraftRows.length;
+
+    const zones =
+      computeZones(
+        aircraftRows
+      );
+
+    const bagTypes =
+      computeBagTypes(
+        aircraftRows
+      );
 
     const missing =
-      gateTotal === null ? "—" : String(Math.max(0, gateTotal - aircraftTotal));
+      gateTotal === null
+        ? "—"
+        : String(
+            Math.max(
+              0,
+              gateTotal -
+                aircraftTotal
+            )
+          );
 
     pdf.setFontSize(14);
-    pdf.text("Baggage Loading Control System (BLCS)", 14, 16);
+
+    pdf.text(
+      "Baggage Loading Control System (BLCS)",
+      14,
+      16
+    );
 
     pdf.setFontSize(11);
-    pdf.text(`Flight: ${flightNumber}`, 14, 26);
-    pdf.text(`Date: ${flightDate}`, 14, 32);
-    pdf.text(`Gate: ${gate}`, 14, 38);
-    pdf.text(`Aircraft: ${aircraftType}`, 14, 44);
-    pdf.text(`Status: ${status}`, 14, 50);
 
-    pdf.text(`Supervisor on Duty: ${supervisorOnDuty}`, 110, 26);
-    pdf.text(`Gate Controller on Duty: ${gateController}`, 110, 32);
-    pdf.text(`Ramp Supervisor: ${rampSupervisor}`, 110, 38);
+    pdf.text(
+      `Flight: ${flightNumber}`,
+      14,
+      26
+    );
+
+    pdf.text(
+      `Date: ${flightDate}`,
+      14,
+      32
+    );
+
+    pdf.text(
+      `Gate: ${gate}`,
+      14,
+      38
+    );
+
+    pdf.text(
+      `Aircraft: ${aircraftType}`,
+      14,
+      44
+    );
+
+    pdf.text(
+      `Status: ${status}`,
+      14,
+      50
+    );
+
+    pdf.text(
+      `Supervisor on Duty: ${supervisorOnDuty}`,
+      110,
+      26
+    );
+
+    pdf.text(
+      `Gate Controller on Duty: ${gateController}`,
+      110,
+      32
+    );
+
+    pdf.text(
+      `Ramp Supervisor: ${rampSupervisor}`,
+      110,
+      38
+    );
 
     autoTable(pdf, {
       startY: 58,
-      head: [["Metric", "Value"]],
-      body: [
-        ["Gate checked total", gateTotal === null ? "—" : String(gateTotal)],
-        ["Bagroom scanned", String(bagroomCount)],
-        ["Aircraft scanned", String(aircraftTotal)],
-        ["Checked Bags loaded", String(bagTypes.CHECKED_BAG)],
-        ["Gate Checks loaded", String(bagTypes.GATE_CHECK)],
-        ["Oversize loaded", String(bagTypes.OVERSIZE)],
-        ["Zone 1", String(zones[1])],
-        ["Zone 2", String(zones[2])],
-        ["Zone 3", String(zones[3])],
-        ["Zone 4", String(zones[4])],
-        ["Missing to load", missing],
+
+      head: [
+        [
+          "Metric",
+          "Value",
+        ],
       ],
-      styles: { fontSize: 10 },
-      headStyles: { fillColor: [240, 240, 240] },
+
+      body: [
+        [
+          "Gate checked total",
+          gateTotal === null
+            ? "—"
+            : String(
+                gateTotal
+              ),
+        ],
+
+        [
+          "Receiving scanned",
+          String(
+            receivingCount
+          ),
+        ],
+
+        [
+          "Aircraft scanned",
+          String(
+            aircraftTotal
+          ),
+        ],
+
+        [
+          "Checked Bags loaded",
+          String(
+            bagTypes.CHECKED_BAG
+          ),
+        ],
+
+        [
+          "Gate Checks loaded",
+          String(
+            bagTypes.GATE_CHECK
+          ),
+        ],
+
+        [
+          "Oversize loaded",
+          String(
+            bagTypes.OVERSIZE
+          ),
+        ],
+
+        [
+          "Zone 1",
+          String(
+            zones[1]
+          ),
+        ],
+
+        [
+          "Zone 2",
+          String(
+            zones[2]
+          ),
+        ],
+
+        [
+          "Zone 3",
+          String(
+            zones[3]
+          ),
+        ],
+
+        [
+          "Zone 4",
+          String(
+            zones[4]
+          ),
+        ],
+
+        [
+          "Missing to load",
+          missing,
+        ],
+      ],
+
+      styles: {
+        fontSize: 10,
+      },
+
+      headStyles: {
+        fillColor: [
+          240,
+          240,
+          240,
+        ],
+      },
     });
 
-    const tags = aircraftRows
-      .slice()
-      .sort((a, b) => String(a.tag).localeCompare(String(b.tag)))
-      .map((r) => [
-        String(r.tag),
-        r.bagTypeLabel || getBagTypeLabel(r.bagType),
-        `Z${r.zone ?? "-"}`,
-        r.scannedBy?.username || "-",
-      ]);
+    const tags =
+      aircraftRows
+        .slice()
+        .sort((a, b) =>
+          String(
+            a.tag || a.id
+          ).localeCompare(
+            String(
+              b.tag || b.id
+            )
+          )
+        )
+        .map((row) => {
+          const previousLocation =
+            row.previousLocationLabel ||
+            getReceivingLocationLabel(
+              row.previousLocation
+            );
+
+          const previousDetails =
+            normalizeReceivingLocation(
+              row.previousLocation
+            ) === "BAGROOM" &&
+            row.previousCartNumber
+              ? `${previousLocation} / Cart ${row.previousCartNumber}`
+              : previousLocation;
+
+          return [
+            String(
+              row.tag ||
+                row.id
+            ),
+
+            row.bagTypeLabel ||
+              getBagTypeLabel(
+                row.bagType
+              ),
+
+            previousDetails,
+
+            formatDateTime(
+              row.previousLocationAt
+            ),
+
+            `Z${
+              row.zone ??
+              "-"
+            }`,
+
+            row.scannedBy
+              ?.username ||
+              "-",
+          ];
+        });
 
     autoTable(pdf, {
-      startY: pdf.lastAutoTable.finalY + 8,
-      head: [["Bag Tag", "Type", "Zone", "Scanned By"]],
-      body: tags,
-      styles: { fontSize: 9 },
-      headStyles: { fillColor: [240, 240, 240] },
+      startY:
+        pdf.lastAutoTable
+          .finalY + 8,
+
+      head: [
+        [
+          "Bag Tag",
+          "Type",
+          "Previous Location",
+          "Previous Time",
+          "Zone",
+          "Loaded By",
+        ],
+      ],
+
+      body:
+        tags,
+
+      styles: {
+        fontSize: 8,
+      },
+
+      headStyles: {
+        fillColor: [
+          240,
+          240,
+          240,
+        ],
+      },
+
+      columnStyles: {
+        0: {
+          cellWidth: 28,
+        },
+
+        1: {
+          cellWidth: 25,
+        },
+
+        2: {
+          cellWidth: 38,
+        },
+
+        3: {
+          cellWidth: 34,
+        },
+
+        4: {
+          cellWidth: 14,
+        },
+
+        5: {
+          cellWidth: 30,
+        },
+      },
     });
 
     pdf.setFontSize(9);
+
     pdf.text(
       `Generated: ${new Date().toLocaleString()}`,
       14,
-      pdf.lastAutoTable.finalY + 10
+      pdf.lastAutoTable
+        .finalY + 10
     );
 
     return pdf;
   };
 
-  const uploadPdfToStorage = async (pdfDoc) => {
-    const flightNumber = safeStr(flight?.flightNumber, flightId);
-    const flightDate = safeStr(flight?.flightDate, "unknown-date");
-    const stamp = new Date().toISOString().replaceAll(":", "-").slice(0, 19);
+  const uploadPdfToStorage =
+    async (pdfDocument) => {
+      const flightNumber =
+        safeStr(
+          flight?.flightNumber,
+          flightId
+        );
 
-    const fileName = `BLCS_${flightNumber}_${flightDate}_${stamp}.pdf`;
-    const path = `flights/${flightId}/reports/${fileName}`;
+      const flightDate =
+        safeStr(
+          flight?.flightDate,
+          "unknown-date"
+        );
 
-    const r = sRef(storage, path);
-    const blob = pdfDoc.output("blob");
-
-    await uploadBytes(r, blob, {
-      contentType: "application/pdf",
-      customMetadata: {
-        flightId: String(flightId),
-        flightNumber: String(flightNumber),
-        flightDate: String(flightDate),
-        generatedBy: String(user?.username || ""),
-      },
-    });
-
-    const url = await getDownloadURL(r);
-    return { path, url, fileName };
-  };
-
-  const exportReportPdf = async () => {
-    if (!flight) {
-      popup("Error", "Flight not loaded yet.", "danger");
-      return;
-    }
-
-    try {
-      setExporting(true);
-      setErr("");
-      setMsg("");
-      setCompleteMsg("");
-
-      const pdfDoc = buildPdf({
-        flightDoc: flight,
-        aircraftRows: scans,
-        bagroomCount: loadingBagroomTotal ? 0 : bagroomTotal,
-      });
-
-      const downloadName = `BLCS_${safeStr(
-        flight.flightNumber,
-        flightId
-      )}_${safeStr(flight.flightDate, "date")}.pdf`;
-
-      pdfDoc.save(downloadName);
-
-      const uploaded = await uploadPdfToStorage(pdfDoc);
-
-      await setDoc(
-        doc(db, "flights", flightId, "reports", uploaded.fileName),
-        {
-          type: "PDF_REPORT",
-          createdAt: serverTimestamp(),
-          createdBy: {
-            userId: user?.id || null,
-            username: user?.username || null,
-            role: user?.role || null,
-          },
-          fileName: uploaded.fileName,
-          storagePath: uploaded.path,
-          downloadUrl: uploaded.url,
-          snapshot: {
-            gateTotal:
-              typeof flight?.checkedBagsTotal === "number"
-                ? flight.checkedBagsTotal
-                : null,
-            bagroomTotal: loadingBagroomTotal ? null : bagroomTotal,
-            aircraftTotal: scans.length,
-            bagTypes: bagTypeCounts,
-          },
-        },
-        { merge: true }
-      );
-
-      setMsg("✅ PDF exported and saved to flight reports.");
-    } catch (e) {
-      console.error(e);
-      setErr("Failed to export PDF. Check Storage rules/connection.");
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const handleLoadingCompleted = async () => {
-    setCompleteMsg("");
-
-    if (!flight) {
-      popup("Error", "Flight not loaded yet.", "danger");
-      return;
-    }
-
-    const checkedTotal = flight.checkedBagsTotal;
-
-    if (typeof checkedTotal !== "number") {
-      popup(
-        "Gate total missing",
-        "⚠️ Gate checked bags total not entered.\n\nGate Controller must enter total checked bags before completing loading.",
-        "warning"
-      );
-      return;
-    }
-
-    const aircraftTotal = scans.length;
-    const missing = checkedTotal - aircraftTotal;
-
-    if (missing > 0) {
-      popup(
-        "Missing bags",
-        `❌ LOADING NOT COMPLETED\n\nChecked bags: ${checkedTotal}\nLoaded: ${aircraftTotal}\nMissing: ${missing}`,
-        "danger"
-      );
-      return;
-    }
-
-    show({
-      title: "All bags loaded",
-      tone: "success",
-      showCancel: true,
-      confirmText: "Mark Completed",
-      cancelText: "Not yet",
-      content: (
-        <div style={{ whiteSpace: "pre-wrap" }}>
-          {`✅ ALL BAGS LOADED\n\nChecked bags: ${checkedTotal}\nLoaded on aircraft: ${aircraftTotal}\n\nChecked Bags: ${bagTypeCounts.CHECKED_BAG}\nGate Checks: ${bagTypeCounts.GATE_CHECK}\nOversize: ${bagTypeCounts.OVERSIZE}\n\nMark loading completed and generate report PDF?`}
-        </div>
-      ),
-      onCancel: close,
-      onConfirm: async () => {
-        close();
-
-        try {
-          setCompleting(true);
-
-          await setDoc(
-            doc(db, "flights", flightId),
-            {
-              aircraftLoadingCompleted: true,
-              aircraftLoadingCompletedAt: serverTimestamp(),
-              aircraftLoadedBags: aircraftTotal,
-              aircraftLoadedBagTypes: bagTypeCounts,
-              aircraftLoadingCompletedBy: {
-                userId: user?.id || null,
-                username: user?.username || null,
-                role: user?.role || null,
-              },
-              rampSupervisorOnDuty: user?.username || null,
-              status: "LOADED",
-              statusUpdatedAt: serverTimestamp(),
-              statusUpdatedBy: {
-                userId: user?.id || null,
-                username: user?.username || null,
-                role: user?.role || null,
-              },
-            },
-            { merge: true }
+      const timestamp =
+        new Date()
+          .toISOString()
+          .replaceAll(
+            ":",
+            "-"
+          )
+          .slice(
+            0,
+            19
           );
 
-          await saveActionReport({
-            type: "LOADING_COMPLETED",
-            reason: "Aircraft loading completed.",
-            extra: {
-              aircraftLoadedBags: aircraftTotal,
-              gateCheckedTotal: checkedTotal,
-              aircraftLoadedBagTypes: bagTypeCounts,
-            },
+      const fileName =
+        `BLCS_${flightNumber}_${flightDate}_${timestamp}.pdf`;
+
+      const storagePath =
+        `flights/${flightId}/reports/${fileName}`;
+
+      const storageReference =
+        sRef(
+          storage,
+          storagePath
+        );
+
+      const blob =
+        pdfDocument.output(
+          "blob"
+        );
+
+      await uploadBytes(
+        storageReference,
+        blob,
+        {
+          contentType:
+            "application/pdf",
+
+          customMetadata: {
+            flightId:
+              String(
+                flightId
+              ),
+
+            flightNumber:
+              String(
+                flightNumber
+              ),
+
+            flightDate:
+              String(
+                flightDate
+              ),
+
+            generatedBy:
+              String(
+                user?.username ||
+                  ""
+              ),
+          },
+        }
+      );
+
+      const downloadUrl =
+        await getDownloadURL(
+          storageReference
+        );
+
+      return {
+        path:
+          storagePath,
+
+        url:
+          downloadUrl,
+
+        fileName,
+      };
+    };
+
+  const exportReportPdf =
+    async () => {
+      if (!flight) {
+        popup(
+          "Error",
+          "Flight not loaded yet.",
+          "danger"
+        );
+
+        return;
+      }
+
+      try {
+        setExporting(true);
+        setErr("");
+        setMsg("");
+        setCompleteMsg("");
+
+        const pdfDocument =
+          buildPdf({
+            flightDoc:
+              flight,
+
+            aircraftRows:
+              scans,
+
+            receivingCount:
+              loadingReceivingScans
+                ? 0
+                : bagroomTotal,
           });
 
-          await exportReportPdf();
+        const downloadName =
+          `BLCS_${safeStr(
+            flight.flightNumber,
+            flightId
+          )}_${safeStr(
+            flight.flightDate,
+            "date"
+          )}.pdf`;
 
-          setCompleteMsg("✅ Aircraft loading completed successfully. Report saved.");
-        } catch (e) {
-          console.error(e);
-          popup("Error", "Failed to mark loading completed / export PDF.", "danger");
-        } finally {
-          setCompleting(false);
+        pdfDocument.save(
+          downloadName
+        );
+
+        const uploaded =
+          await uploadPdfToStorage(
+            pdfDocument
+          );
+
+        await setDoc(
+          doc(
+            db,
+            "flights",
+            flightId,
+            "reports",
+            uploaded.fileName
+          ),
+          {
+            type:
+              "PDF_REPORT",
+
+            createdAt:
+              serverTimestamp(),
+
+            createdBy: {
+              userId:
+                user?.id ||
+                null,
+
+              username:
+                user?.username ||
+                null,
+
+              role:
+                user?.role ||
+                null,
+            },
+
+            fileName:
+              uploaded.fileName,
+
+            storagePath:
+              uploaded.path,
+
+            downloadUrl:
+              uploaded.url,
+
+            snapshot: {
+              gateTotal:
+                typeof flight
+                  ?.checkedBagsTotal ===
+                "number"
+                  ? flight.checkedBagsTotal
+                  : null,
+
+              receivingTotal:
+                loadingReceivingScans
+                  ? null
+                  : bagroomTotal,
+
+              aircraftTotal:
+                scans.length,
+
+              pendingReceivingTotal:
+                pendingReceivingScans.length,
+
+              bagTypes:
+                bagTypeCounts,
+            },
+          },
+          {
+            merge: true,
+          }
+        );
+
+        setMsg(
+          "✅ PDF exported and saved to flight reports."
+        );
+
+        focusScanner();
+      } catch (error) {
+        console.error(error);
+
+        setErr(
+          "Failed to export PDF. Check Storage rules/connection."
+        );
+      } finally {
+        setExporting(false);
+      }
+    };
+
+  const handleLoadingCompleted =
+    async () => {
+      setCompleteMsg("");
+
+      if (!flight) {
+        popup(
+          "Error",
+          "Flight not loaded yet.",
+          "danger"
+        );
+
+        return;
+      }
+
+      const checkedTotal =
+        flight.checkedBagsTotal;
+
+      if (
+        typeof checkedTotal !==
+        "number"
+      ) {
+        popup(
+          "Gate total missing",
+          "⚠️ Gate checked bags total not entered.\n\nGate Controller must enter total checked bags before completing loading.",
+          "warning"
+        );
+
+        return;
+      }
+
+      const aircraftTotal =
+        scans.length;
+
+      const missing =
+        checkedTotal -
+        aircraftTotal;
+
+      if (missing > 0) {
+        popup(
+          "Missing bags",
+          `❌ LOADING NOT COMPLETED\n\n` +
+            `Checked bags: ${checkedTotal}\n` +
+            `Loaded: ${aircraftTotal}\n` +
+            `Missing: ${missing}\n\n` +
+            `Receiving pending: ${pendingReceivingScans.length}`,
+          "danger"
+        );
+
+        return;
+      }
+
+      if (
+        pendingReceivingScans.length >
+        0
+      ) {
+        popup(
+          "Bags still pending",
+          `⚠️ There are ${pendingReceivingScans.length} bags received but not scanned on the aircraft.\n\n` +
+            `Review the pending bag locations before completing loading.`,
+          "warning"
+        );
+
+        return;
+      }
+
+      show({
+        title:
+          "All bags loaded",
+
+        tone:
+          "success",
+
+        showCancel:
+          true,
+
+        confirmText:
+          "Mark Completed",
+
+        cancelText:
+          "Not yet",
+
+        content: (
+          <div
+            style={{
+              whiteSpace:
+                "pre-wrap",
+            }}
+          >
+            {`✅ ALL BAGS LOADED\n\n` +
+              `Checked bags: ${checkedTotal}\n` +
+              `Loaded on aircraft: ${aircraftTotal}\n\n` +
+              `Checked Bags: ${bagTypeCounts.CHECKED_BAG}\n` +
+              `Gate Checks: ${bagTypeCounts.GATE_CHECK}\n` +
+              `Oversize: ${bagTypeCounts.OVERSIZE}\n\n` +
+              `Mark loading completed and generate report PDF?`}
+          </div>
+        ),
+
+        onCancel: () => {
+          close();
+          focusScanner();
+        },
+
+        onConfirm:
+          async () => {
+            close();
+
+            try {
+              setCompleting(true);
+
+              await setDoc(
+                doc(
+                  db,
+                  "flights",
+                  flightId
+                ),
+                {
+                  aircraftLoadingCompleted:
+                    true,
+
+                  aircraftLoadingCompletedAt:
+                    serverTimestamp(),
+
+                  aircraftLoadedBags:
+                    aircraftTotal,
+
+                  aircraftLoadedBagTypes:
+                    bagTypeCounts,
+
+                  aircraftLoadingCompletedBy:
+                    {
+                      userId:
+                        user?.id ||
+                        null,
+
+                      username:
+                        user?.username ||
+                        null,
+
+                      role:
+                        user?.role ||
+                        null,
+                    },
+
+                  rampSupervisorOnDuty:
+                    user?.username ||
+                    null,
+
+                  status:
+                    "LOADED",
+
+                  statusUpdatedAt:
+                    serverTimestamp(),
+
+                  statusUpdatedBy:
+                    {
+                      userId:
+                        user?.id ||
+                        null,
+
+                      username:
+                        user?.username ||
+                        null,
+
+                      role:
+                        user?.role ||
+                        null,
+                    },
+                },
+                {
+                  merge: true,
+                }
+              );
+
+              await saveActionReport({
+                type:
+                  "LOADING_COMPLETED",
+
+                reason:
+                  "Aircraft loading completed.",
+
+                extra: {
+                  aircraftLoadedBags:
+                    aircraftTotal,
+
+                  gateCheckedTotal:
+                    checkedTotal,
+
+                  aircraftLoadedBagTypes:
+                    bagTypeCounts,
+
+                  receivingTotal:
+                    bagroomTotal,
+
+                  pendingReceivingTotal:
+                    pendingReceivingScans.length,
+                },
+              });
+
+              await exportReportPdf();
+
+              setCompleteMsg(
+                "✅ Aircraft loading completed successfully. Report saved."
+              );
+            } catch (error) {
+              console.error(error);
+
+              popup(
+                "Error",
+                "Failed to mark loading completed / export PDF.",
+                "danger"
+              );
+            } finally {
+              setCompleting(false);
+            }
+          },
+      });
+    };
+
+  const lastLoadedLocation =
+    lastLoadedBag
+      ? {
+          location:
+            lastLoadedBag.previousLocation,
+
+          locationLabel:
+            lastLoadedBag.previousLocationLabel,
+
+          cartNumber:
+            lastLoadedBag.previousCartNumber,
+
+          scannedAt:
+            lastLoadedBag.previousLocationAt,
+
+          scannedBy:
+            lastLoadedBag.previousLocationBy,
+
+          validReceivingLocation:
+            lastLoadedBag.previousLocationValid,
         }
-      },
-    });
-  };
+      : null;
 
-  return (
-    <div style={{ background: "white", border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+  const scannerDisabled =
+    isLoadingCompleted ||
+    submittingTag !== "";
+
+  const scannerPlaceholder =
+    isLoadingCompleted
+      ? "LOADING COMPLETED"
+      : scannerMode
+        ? "SCAN 10 DIGITS"
+        : "ENTER 10 DIGITS";
+
+  const pageGridColumns =
+    compactScreen
+      ? "1fr"
+      : "minmax(280px, 0.8fr) minmax(420px, 1.4fr)";
+
+  const pendingCardBackground =
+    pendingReceivingScans.length >
+    0
+      ? "#fff7ed"
+      : "#f0fdf4";
+
+  const pendingCardColor =
+    pendingReceivingScans.length >
+    0
+      ? "#9a3412"
+      : "#166534";
+
+  const renderPreviousLocationCard =
+    (scan) => {
+      const location =
+        normalizeReceivingLocation(
+          scan.previousLocation
+        );
+
+      const valid =
+        Boolean(
+          scan.previousLocationValid
+        );
+
+      const locationLabel =
+        scan.previousLocationLabel ||
+        getReceivingLocationLabel(
+          location
+        );
+
+      const locationDetails =
+        location === "BAGROOM" &&
+        scan.previousCartNumber
+          ? `${locationLabel} · Cart ${scan.previousCartNumber}`
+          : locationLabel;
+
+      const previousUser =
+        scan.previousLocationBy
+          ?.username ||
+        scan.previousLocationBy
+          ?.fullName ||
+        "-";
+
+      return (
+        <div
+          style={{
+            marginTop:
+              5,
+
+            padding:
+              8,
+
+            borderRadius:
+              9,
+
+            background:
+              valid
+                ? "#eff6ff"
+                : "#fef2f2",
+
+            border:
+              valid
+                ? "1px solid #bfdbfe"
+                : "1px solid #fecaca",
+          }}
+        >
+          <div
+            style={{
+              display:
+                "flex",
+
+              justifyContent:
+                "space-between",
+
+              gap:
+                8,
+
+              alignItems:
+                "center",
+            }}
+          >
+            <strong
+              style={{
+                color:
+                  valid
+                    ? "#1d4ed8"
+                    : "#991b1b",
+
+                fontSize:
+                  "0.78rem",
+              }}
+            >
+              {getLocationIcon(
+                location
+              )}{" "}
+              {locationDetails}
+            </strong>
+
+            <span
+              style={{
+                color:
+                  "#6b7280",
+
+                fontSize:
+                  "0.72rem",
+              }}
+            >
+              {formatTime(
+                scan.previousLocationAt
+              )}
+            </span>
+          </div>
+
+          <div
+            style={{
+              marginTop:
+                3,
+
+              color:
+                "#6b7280",
+
+              fontSize:
+                "0.72rem",
+            }}
+          >
+            Previous scan by{" "}
+            <strong>
+              {previousUser}
+            </strong>
+          </div>
+
+          {!valid && (
+            <div
+              style={{
+                marginTop:
+                  4,
+
+                color:
+                  "#991b1b",
+
+                fontSize:
+                  "0.72rem",
+
+                fontWeight:
+                  900,
+              }}
+            >
+              ⚠️ Bag did not have a valid
+              Bagroom, Oversize, or Gate/Ramp
+              location before loading.
+            </div>
+          )}
+        </div>
+      );
+    };
+    return (
+    <div
+      style={{
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: compactScreen ? 0 : 12,
+        padding: compactScreen ? 10 : 16,
+        minHeight: "100%",
+      }}
+      onClick={() => {
+        if (scannerMode && !modal.open) {
+          focusScanner();
+        }
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: compactScreen
+            ? "stretch"
+            : "flex-end",
+          flexDirection: compactScreen
+            ? "column"
+            : "row",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
         <div>
-          <h2 style={{ margin: 0 }}>Aircraft Scan</h2>
-          <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: compactScreen
+                ? "1.25rem"
+                : "1.5rem",
+            }}
+          >
+            Aircraft Scan
+          </h2>
+
+          <p
+            style={{
+              margin: "6px 0 0",
+              color: "#6b7280",
+              fontSize: "0.9rem",
+            }}
+          >
             Scan bags while loading by zone 1–4.
           </p>
 
           {isLoadingCompleted && (
-            <p style={{ margin: "8px 0 0", color: "#16a34a", fontWeight: 900 }}>
+            <p
+              style={{
+                margin: "8px 0 0",
+                color: "#16a34a",
+                fontWeight: 900,
+              }}
+            >
               ✅ Loading Completed
             </p>
           )}
         </div>
 
-        <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
+        <div
+          style={{
+            textAlign: compactScreen
+              ? "left"
+              : "right",
+            fontSize: "0.9rem",
+            padding: compactScreen
+              ? 10
+              : 0,
+            borderRadius: 10,
+            background: compactScreen
+              ? "#f9fafb"
+              : "transparent",
+          }}
+        >
           <div>
-            Flight: <strong>{flightLoading ? "…" : flight?.flightNumber || flightId}</strong>
+            Flight:{" "}
+            <strong>
+              {flightLoading
+                ? "…"
+                : flight?.flightNumber ||
+                  flightId}
+            </strong>
           </div>
-          <div style={{ color: "#6b7280" }}>
-            Date: <strong>{flightLoading ? "…" : flight?.flightDate || "-"}</strong>
+
+          <div
+            style={{
+              color: "#6b7280",
+              marginTop: 3,
+            }}
+          >
+            Date:{" "}
+            <strong>
+              {flightLoading
+                ? "…"
+                : flight?.flightDate ||
+                  "-"}
+            </strong>
+          </div>
+
+          <div
+            style={{
+              color: "#6b7280",
+              marginTop: 3,
+            }}
+          >
+            Gate:{" "}
+            <strong>
+              {flightLoading
+                ? "…"
+                : flight?.gate || "-"}
+            </strong>
           </div>
         </div>
       </div>
 
-      <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "14px 0" }} />
+      <hr
+        style={{
+          border: "none",
+          borderTop: "1px solid #e5e7eb",
+          margin: "14px 0",
+        }}
+      />
 
-      {canReopenOrOffload && isLoadingCompleted && (
-        <section style={{ border: "1px solid #f59e0b", borderRadius: 12, padding: 12, background: "#fef3c7", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <h3 style={{ margin: 0, color: "#92400e" }}>Flight Locked</h3>
-              <p style={{ margin: "6px 0 0", color: "#92400e", fontSize: "0.9rem" }}>
-                To scan again or offload bags after completion, reopen the flight with a reason.
-              </p>
-            </div>
-
-            <button
-              onClick={handleReopenFlight}
-              disabled={reopening}
+      {canReopenOrOffload &&
+        isLoadingCompleted && (
+          <section
+            style={{
+              border: "1px solid #f59e0b",
+              borderRadius: 12,
+              padding: 12,
+              background: "#fef3c7",
+              marginBottom: 14,
+            }}
+          >
+            <div
               style={{
-                padding: "10px 12px",
-                borderRadius: 12,
-                border: "1px solid #f59e0b",
-                background: "#f59e0b",
-                color: "white",
-                fontWeight: 900,
-                cursor: reopening ? "not-allowed" : "pointer",
-                opacity: reopening ? 0.7 : 1,
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+                alignItems: "center",
               }}
             >
-              {reopening ? "Reopening…" : "Reopen Flight"}
-            </button>
-          </div>
-        </section>
-      )}
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                    color: "#92400e",
+                  }}
+                >
+                  Flight Locked
+                </h3>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 12 }}>
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
-          <h3 style={{ margin: 0 }}>Scan</h3>
-
-          <p style={{ margin: "6px 0 10px", color: "#6b7280", fontSize: "0.9rem" }}>
-            Select zone, then scan bag tag. Auto-save is enabled.
-          </p>
-
-          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginBottom: 6 }}>
-            Zone
-          </label>
-
-          <select
-            value={zone}
-            onChange={(e) => setZone(Number(e.target.value))}
-            disabled={isLoadingCompleted}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: isLoadingCompleted ? "#f3f4f6" : "white",
-            }}
-          >
-            <option value={1}>Zone 1</option>
-            <option value={2}>Zone 2</option>
-            <option value={3}>Zone 3</option>
-            <option value={4}>Zone 4</option>
-          </select>
-
-          <label style={{ display: "block", fontSize: "0.85rem", color: "#374151", marginTop: 12, marginBottom: 6 }}>
-            Bag Tag
-          </label>
-
-          <input
-            ref={inputRef}
-            value={tagInput}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            disabled={isLoadingCompleted}
-            placeholder={isLoadingCompleted ? "Loading completed - reopen first" : "Scan bag tag…"}
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: isLoadingCompleted ? "#f3f4f6" : "white",
-            }}
-          />
-
-          <button
-            onClick={() => handleScanSubmit()}
-            disabled={isLoadingCompleted}
-            style={{
-              width: "100%",
-              marginTop: 10,
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #1d4ed8",
-              background: isLoadingCompleted ? "#93c5fd" : "#2563eb",
-              color: "white",
-              fontWeight: 800,
-              cursor: isLoadingCompleted ? "not-allowed" : "pointer",
-            }}
-          >
-            Add Scan
-          </button>
-
-          <button
-            onClick={() => exportReportPdf()}
-            disabled={exporting || !flight || loadingScans}
-            style={{
-              width: "100%",
-              marginTop: 10,
-              padding: "10px 12px",
-              borderRadius: 12,
-              border: "1px solid #111827",
-              background: "#111827",
-              color: "white",
-              fontWeight: 900,
-              cursor: exporting || !flight || loadingScans ? "not-allowed" : "pointer",
-              opacity: exporting || !flight || loadingScans ? 0.7 : 1,
-            }}
-          >
-            {exporting ? "Exporting…" : "Export PDF Report"}
-          </button>
-
-          {strictManifest && (
-            <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.85rem", fontWeight: 900 }}>
-              ⚠️ Strict Manifest ON
-            </p>
-          )}
-
-          {msg && <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem" }}>{msg}</p>}
-          {err && <p style={{ marginTop: 10, color: "#b91c1c", fontSize: "0.9rem" }}>{err}</p>}
-          {completeMsg && (
-            <p style={{ marginTop: 10, color: "#16a34a", fontSize: "0.9rem", fontWeight: 800 }}>
-              {completeMsg}
-            </p>
-          )}
-        </div>
-
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12 }}>
-            <div>
-              <h3 style={{ margin: 0 }}>Aircraft Scans</h3>
-
-              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-                Total scanned: <strong>{loadingScans ? "…" : scans.length}</strong>
-              </p>
-
-              <p style={{ margin: "6px 0 0", color: "#6b7280", fontSize: "0.9rem" }}>
-                Bagroom scanned: <strong>{loadingBagroomTotal ? "…" : bagroomTotal}</strong>
-              </p>
-
-              {typeof flight?.checkedBagsTotal === "number" && !loadingScans && (
-                <p style={{ margin: "6px 0 0", fontSize: "0.9rem" }}>
-                  Gate total: <strong>{flight.checkedBagsTotal}</strong> · Missing:{" "}
-                  <strong style={{ color: missingNow === 0 ? "#16a34a" : "#b91c1c" }}>
-                    {missingNow}
-                  </strong>
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "#92400e",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  To scan again or offload
+                  bags after completion,
+                  reopen the flight with a
+                  reason.
                 </p>
-              )}
+              </div>
 
-              <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap", fontSize: "0.82rem" }}>
-                <span style={miniPill}>Checked: {bagTypeCounts.CHECKED_BAG}</span>
-                <span style={miniPill}>Gate Check: {bagTypeCounts.GATE_CHECK}</span>
-                <span style={miniPill}>Oversize: {bagTypeCounts.OVERSIZE}</span>
+              <button
+                type="button"
+                onClick={
+                  handleReopenFlight
+                }
+                disabled={reopening}
+                style={{
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  border:
+                    "1px solid #f59e0b",
+                  background: "#f59e0b",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: reopening
+                    ? "not-allowed"
+                    : "pointer",
+                  opacity: reopening
+                    ? 0.7
+                    : 1,
+                  minHeight: 46,
+                  touchAction:
+                    "manipulation",
+                }}
+              >
+                {reopening
+                  ? "Reopening…"
+                  : "Reopen Flight"}
+              </button>
+            </div>
+          </section>
+        )}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            pageGridColumns,
+          gap: 12,
+          alignItems: "start",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <section
+            style={{
+              border:
+                "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 12,
+              background: "#f9fafb",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                  }}
+                >
+                  Scan
+                </h3>
+
+                <p
+                  style={{
+                    margin: "5px 0 0",
+                    color: "#6b7280",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  Android scanner ready.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  padding: 4,
+                  borderRadius: 10,
+                  background: "#e5e7eb",
+                }}
+              >
+                <ScannerModeButton
+                  active={scannerMode}
+                  label="Scanner"
+                  onClick={() =>
+                    changeScannerMode(
+                      true
+                    )
+                  }
+                />
+
+                <ScannerModeButton
+                  active={!scannerMode}
+                  label="Manual"
+                  onClick={() =>
+                    changeScannerMode(
+                      false
+                    )
+                  }
+                />
               </div>
             </div>
 
-            {canCompleteLoading && (
-              <button
-                onClick={handleLoadingCompleted}
-                disabled={completing || isLoadingCompleted}
+            <div
+              style={{
+                marginTop: 12,
+              }}
+            >
+              <label
                 style={{
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  border: "none",
-                  background: completing || isLoadingCompleted ? "#86efac" : "#16a34a",
-                  color: "white",
-                  fontWeight: 900,
-                  cursor: completing || isLoadingCompleted ? "not-allowed" : "pointer",
+                  display: "block",
+                  fontSize: "0.82rem",
+                  color: "#374151",
+                  marginBottom: 6,
+                  fontWeight: 800,
                 }}
               >
-                {isLoadingCompleted ? "Completed" : completing ? "Checking…" : "Loading Completed"}
-              </button>
+                Loading Zone
+              </label>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(4, minmax(0, 1fr))",
+                  gap: 6,
+                }}
+              >
+                {[1, 2, 3, 4].map(
+                  (zoneNumber) => (
+                    <ZoneButton
+                      key={zoneNumber}
+                      zoneNumber={
+                        zoneNumber
+                      }
+                      active={
+                        Number(zone) ===
+                        zoneNumber
+                      }
+                      disabled={
+                        isLoadingCompleted
+                      }
+                      onClick={() => {
+                        setZone(
+                          zoneNumber
+                        );
+
+                        focusScanner();
+                      }}
+                    />
+                  )
+                )}
+              </div>
+            </div>
+
+            <label
+              style={{
+                display: "block",
+                fontSize: "0.82rem",
+                color: "#374151",
+                marginTop: 14,
+                marginBottom: 6,
+                fontWeight: 800,
+              }}
+            >
+              Bag Tag
+            </label>
+
+            <input
+              ref={inputRef}
+              value={tagInput}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onBlur={() => {
+                if (
+                  scannerMode &&
+                  !modal.open &&
+                  !scannerDisabled
+                ) {
+                  focusScanner(100);
+                }
+              }}
+              disabled={
+                scannerDisabled
+              }
+              inputMode={
+                scannerMode
+                  ? "none"
+                  : "numeric"
+              }
+              pattern="[0-9]*"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              enterKeyHint="done"
+              maxLength={
+                BAG_TAG_LENGTH
+              }
+              placeholder={
+                scannerPlaceholder
+              }
+              aria-label="Bag tag scanner input"
+              style={{
+                width: "100%",
+                boxSizing:
+                  "border-box",
+                padding: compactScreen
+                  ? "15px 12px"
+                  : "13px 12px",
+                borderRadius: 12,
+                border:
+                  tagInput.length ===
+                  BAG_TAG_LENGTH
+                    ? "2px solid #16a34a"
+                    : "2px solid #2563eb",
+                background:
+                  scannerDisabled
+                    ? "#f3f4f6"
+                    : "white",
+                color: "#111827",
+                fontSize: compactScreen
+                  ? "1.25rem"
+                  : "1.1rem",
+                fontWeight: 900,
+                letterSpacing:
+                  "0.08em",
+                textAlign: "center",
+                outline: "none",
+              }}
+            />
+
+            <div
+              style={{
+                marginTop: 7,
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                gap: 8,
+                alignItems: "center",
+                color: "#6b7280",
+                fontSize: "0.76rem",
+              }}
+            >
+              <span>
+                {scannerMode
+                  ? "Auto-submit at 10 digits"
+                  : "Enter exactly 10 digits"}
+              </span>
+
+              <strong
+                style={{
+                  color:
+                    tagInput.length ===
+                    BAG_TAG_LENGTH
+                      ? "#16a34a"
+                      : "#6b7280",
+                }}
+              >
+                {tagInput.length}/
+                {BAG_TAG_LENGTH}
+              </strong>
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                handleScanSubmit()
+              }
+              disabled={
+                scannerDisabled ||
+                !isValidBagTag(
+                  tagInput
+                )
+              }
+              style={{
+                width: "100%",
+                marginTop: 10,
+                padding: "13px 12px",
+                borderRadius: 12,
+                border:
+                  "1px solid #1d4ed8",
+                background:
+                  scannerDisabled ||
+                  !isValidBagTag(
+                    tagInput
+                  )
+                    ? "#93c5fd"
+                    : "#2563eb",
+                color: "white",
+                fontWeight: 900,
+                fontSize: "0.95rem",
+                cursor:
+                  scannerDisabled ||
+                  !isValidBagTag(
+                    tagInput
+                  )
+                    ? "not-allowed"
+                    : "pointer",
+                minHeight: 48,
+                touchAction:
+                  "manipulation",
+              }}
+            >
+              {submittingTag
+                ? `Loading ${submittingTag}…`
+                : "Add Aircraft Scan"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                exportReportPdf()
+              }
+              disabled={
+                exporting ||
+                !flight ||
+                loadingScans
+              }
+              style={{
+                width: "100%",
+                marginTop: 9,
+                padding: "12px",
+                borderRadius: 12,
+                border:
+                  "1px solid #111827",
+                background: "#111827",
+                color: "white",
+                fontWeight: 900,
+                cursor:
+                  exporting ||
+                  !flight ||
+                  loadingScans
+                    ? "not-allowed"
+                    : "pointer",
+                opacity:
+                  exporting ||
+                  !flight ||
+                  loadingScans
+                    ? 0.7
+                    : 1,
+                minHeight: 46,
+                touchAction:
+                  "manipulation",
+              }}
+            >
+              {exporting
+                ? "Exporting…"
+                : "Export PDF Report"}
+            </button>
+
+            {strictManifest && (
+              <p
+                style={{
+                  marginTop: 10,
+                  marginBottom: 0,
+                  color: "#b91c1c",
+                  fontSize: "0.82rem",
+                  fontWeight: 900,
+                }}
+              >
+                ⚠️ Strict Manifest ON
+              </p>
             )}
-          </div>
 
-          <div style={{ marginTop: 12, maxHeight: 360, overflow: "auto", borderTop: "1px solid #e5e7eb" }}>
-            {loadingScans ? (
-              <p style={{ color: "#6b7280", paddingTop: 10 }}>Loading…</p>
-            ) : scans.length === 0 ? (
-              <p style={{ color: "#6b7280", paddingTop: 10 }}>No scans yet.</p>
-            ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
-                <thead>
-                  <tr style={{ background: "#f9fafb" }}>
-                    <th style={th}>Tag</th>
-                    <th style={th}>Type</th>
-                    <th style={th}>Zone</th>
-                    <th style={th}>User</th>
-                    <th style={{ ...th, textAlign: "right" }}>Action</th>
-                  </tr>
-                </thead>
+            {msg && (
+              <Notice
+                tone="success"
+                text={msg}
+              />
+            )}
 
-                <tbody>
-                  {scans.map((s) => {
-                    const tag = s.tag || s.id;
-                    const busy = offloadingTag === tag;
+            {err && (
+              <Notice
+                tone="danger"
+                text={err}
+              />
+            )}
+
+            {completeMsg && (
+              <Notice
+                tone="success"
+                text={completeMsg}
+              />
+            )}
+          </section>
+
+          {lastLoadedBag && (
+            <section
+              style={{
+                border:
+                  lastLoadedBag.previousLocationValid
+                    ? "2px solid #16a34a"
+                    : "2px solid #dc2626",
+                borderRadius: 12,
+                padding: 12,
+                background:
+                  lastLoadedBag.previousLocationValid
+                    ? "#f0fdf4"
+                    : "#fef2f2",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent:
+                    "space-between",
+                  alignItems: "center",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      color:
+                        lastLoadedBag.previousLocationValid
+                          ? "#166534"
+                          : "#991b1b",
+                      fontSize: "0.72rem",
+                      fontWeight: 900,
+                      textTransform:
+                        "uppercase",
+                      letterSpacing:
+                        "0.05em",
+                    }}
+                  >
+                    Last Loaded Bag
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 3,
+                      fontSize: "1.2rem",
+                      fontWeight: 900,
+                      fontFamily:
+                        "ui-monospace, monospace",
+                    }}
+                  >
+                    {lastLoadedBag.tag}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    background:
+                      lastLoadedBag.previousLocationValid
+                        ? "#dcfce7"
+                        : "#fee2e2",
+                    color:
+                      lastLoadedBag.previousLocationValid
+                        ? "#166534"
+                        : "#991b1b",
+                    fontWeight: 900,
+                    fontSize: "0.78rem",
+                  }}
+                >
+                  Zone{" "}
+                  {lastLoadedBag.zone}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  marginTop: 10,
+                }}
+              >
+                {renderPreviousLocationCard(
+                  lastLoadedBag
+                )}
+              </div>
+            </section>
+          )}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <section
+            style={{
+              border:
+                "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 12,
+              background:
+                pendingCardBackground,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                alignItems: "center",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                    color:
+                      pendingCardColor,
+                  }}
+                >
+                  Next Bags to Load
+                </h3>
+
+                <p
+                  style={{
+                    margin: "5px 0 0",
+                    color:
+                      pendingCardColor,
+                    fontSize: "0.8rem",
+                  }}
+                >
+                  Latest 5 received bags
+                  still pending aircraft
+                  scan.
+                </p>
+              </div>
+
+              <span
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  background:
+                    pendingReceivingScans.length >
+                    0
+                      ? "#ffedd5"
+                      : "#dcfce7",
+                  color:
+                    pendingCardColor,
+                  border:
+                    pendingReceivingScans.length >
+                    0
+                      ? "1px solid #fdba74"
+                      : "1px solid #86efac",
+                  fontWeight: 900,
+                  fontSize: "0.78rem",
+                }}
+              >
+                {loadingReceivingScans ||
+                loadingScans
+                  ? "…"
+                  : `${pendingReceivingScans.length} Pending`}
+              </span>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                display: "grid",
+                gap: 7,
+              }}
+            >
+              {loadingReceivingScans ||
+              loadingScans ? (
+                <div
+                  style={{
+                    padding: 12,
+                    textAlign: "center",
+                    color: "#6b7280",
+                  }}
+                >
+                  Loading bag locations…
+                </div>
+              ) : lastFivePendingBags.length ===
+                0 ? (
+                <div
+                  style={{
+                    padding: 12,
+                    borderRadius: 10,
+                    background: "#dcfce7",
+                    color: "#166534",
+                    textAlign: "center",
+                    fontWeight: 900,
+                  }}
+                >
+                  ✅ No received bags
+                  pending to load
+                </div>
+              ) : (
+                lastFivePendingBags.map(
+                  (bag, index) => {
+                    const tag =
+                      normalizeBagTag(
+                        bag.tag ||
+                          bag.bagTag ||
+                          bag.id
+                      );
+
+                    const location =
+                      normalizeReceivingLocation(
+                        bag.receivingLocation ||
+                          bag.location
+                      );
+
+                    const locationLabel =
+                      bag.locationLabel ||
+                      getReceivingLocationLabel(
+                        location
+                      );
+
+                    const cartNumber =
+                      location ===
+                      "BAGROOM"
+                        ? bag.cartNumber ||
+                          null
+                        : null;
+
+                    const receivedBy =
+                      bag.scannedBy
+                        ?.username ||
+                      bag.createdBy
+                        ?.username ||
+                      "-";
+
+                    const receivedAt =
+                      bag.createdAt ||
+                      bag.scannedAt ||
+                      null;
 
                     return (
-                      <tr key={s.id}>
-                        <td style={td}><strong>{tag}</strong></td>
-                        <td style={td}>{s.bagTypeLabel || getBagTypeLabel(s.bagType)}</td>
-                        <td style={td}>{s.zone ?? "-"}</td>
-                        <td style={{ ...td, color: "#6b7280" }}>{s.scannedBy?.username || "-"}</td>
-                        <td style={{ ...td, textAlign: "right" }}>
-                          {canReopenOrOffload && (
-                            <button
-                              onClick={() => handleOffloadBag(s)}
-                              disabled={busy}
+                      <div
+                        key={
+                          bag.id ||
+                          tag
+                        }
+                        style={{
+                          padding: 10,
+                          borderRadius: 10,
+                          border:
+                            "1px solid #fed7aa",
+                          background: "white",
+                          display: "grid",
+                          gridTemplateColumns:
+                            "auto minmax(0, 1fr) auto",
+                          gap: 9,
+                          alignItems: "center",
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 999,
+                            background:
+                              "#f97316",
+                            color: "white",
+                            display: "flex",
+                            alignItems:
+                              "center",
+                            justifyContent:
+                              "center",
+                            fontSize: "0.75rem",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {index + 1}
+                        </div>
+
+                        <div
+                          style={{
+                            minWidth: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontFamily:
+                                "ui-monospace, monospace",
+                              fontWeight: 900,
+                              fontSize: "0.95rem",
+                              overflow:
+                                "hidden",
+                              textOverflow:
+                                "ellipsis",
+                            }}
+                          >
+                            {tag}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 3,
+                              color:
+                                "#9a3412",
+                              fontSize: "0.76rem",
+                              fontWeight: 800,
+                            }}
+                          >
+                            {getLocationIcon(
+                              location
+                            )}{" "}
+                            {locationLabel}
+                            {cartNumber
+                              ? ` · Cart ${cartNumber}`
+                              : ""}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 2,
+                              color:
+                                "#6b7280",
+                              fontSize: "0.7rem",
+                            }}
+                          >
+                            {receivedBy} ·{" "}
+                            {formatTime(
+                              receivedAt
+                            )}
+                          </div>
+                        </div>
+
+                        <span
+                          style={{
+                            fontSize: "0.68rem",
+                            color: "#9a3412",
+                            fontWeight: 900,
+                            whiteSpace:
+                              "nowrap",
+                          }}
+                        >
+                          WAITING
+                        </span>
+                      </div>
+                    );
+                  }
+                )
+              )}
+            </div>
+          </section>
+
+          <section
+            style={{
+              border:
+                "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                alignItems:
+                  compactScreen
+                    ? "stretch"
+                    : "flex-end",
+                flexDirection:
+                  compactScreen
+                    ? "column"
+                    : "row",
+                gap: 12,
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                  }}
+                >
+                  Aircraft Scans
+                </h3>
+
+                <p
+                  style={{
+                    margin: "6px 0 0",
+                    color: "#6b7280",
+                    fontSize: "0.86rem",
+                  }}
+                >
+                  Total loaded:{" "}
+                  <strong>
+                    {loadingScans
+                      ? "…"
+                      : scans.length}
+                  </strong>
+                </p>
+
+                <p
+                  style={{
+                    margin: "5px 0 0",
+                    color: "#6b7280",
+                    fontSize: "0.86rem",
+                  }}
+                >
+                  Receiving scanned:{" "}
+                  <strong>
+                    {loadingReceivingScans
+                      ? "…"
+                      : bagroomTotal}
+                  </strong>
+                </p>
+
+                {typeof flight
+                  ?.checkedBagsTotal ===
+                  "number" &&
+                  !loadingScans && (
+                    <p
+                      style={{
+                        margin:
+                          "5px 0 0",
+                        fontSize:
+                          "0.86rem",
+                      }}
+                    >
+                      Gate total:{" "}
+                      <strong>
+                        {
+                          flight.checkedBagsTotal
+                        }
+                      </strong>
+                      {" · "}
+                      Missing:{" "}
+                      <strong
+                        style={{
+                          color:
+                            missingNow ===
+                            0
+                              ? "#16a34a"
+                              : "#b91c1c",
+                        }}
+                      >
+                        {missingNow}
+                      </strong>
+                    </p>
+                  )}
+
+                <div
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    gap: 6,
+                    flexWrap: "wrap",
+                    fontSize: "0.78rem",
+                  }}
+                >
+                  <span style={miniPill}>
+                    Checked:{" "}
+                    {
+                      bagTypeCounts.CHECKED_BAG
+                    }
+                  </span>
+
+                  <span style={miniPill}>
+                    Gate Check:{" "}
+                    {
+                      bagTypeCounts.GATE_CHECK
+                    }
+                  </span>
+
+                  <span style={miniPill}>
+                    Oversize:{" "}
+                    {
+                      bagTypeCounts.OVERSIZE
+                    }
+                  </span>
+                </div>
+              </div>
+
+              {canCompleteLoading && (
+                <button
+                  type="button"
+                  onClick={
+                    handleLoadingCompleted
+                  }
+                  disabled={
+                    completing ||
+                    isLoadingCompleted
+                  }
+                  style={{
+                    padding:
+                      "12px 14px",
+                    borderRadius: 12,
+                    border: "none",
+                    background:
+                      completing ||
+                      isLoadingCompleted
+                        ? "#86efac"
+                        : "#16a34a",
+                    color: "white",
+                    fontWeight: 900,
+                    cursor:
+                      completing ||
+                      isLoadingCompleted
+                        ? "not-allowed"
+                        : "pointer",
+                    minHeight: 46,
+                    touchAction:
+                      "manipulation",
+                  }}
+                >
+                  {isLoadingCompleted
+                    ? "Completed"
+                    : completing
+                      ? "Checking…"
+                      : "Loading Completed"}
+                </button>
+              )}
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                maxHeight: compactScreen
+                  ? 440
+                  : 520,
+                overflow: "auto",
+                borderTop:
+                  "1px solid #e5e7eb",
+              }}
+            >
+              {loadingScans ? (
+                <p
+                  style={{
+                    color: "#6b7280",
+                    paddingTop: 10,
+                  }}
+                >
+                  Loading…
+                </p>
+              ) : scans.length === 0 ? (
+                <p
+                  style={{
+                    color: "#6b7280",
+                    paddingTop: 10,
+                  }}
+                >
+                  No scans yet.
+                </p>
+              ) : compactScreen ? (
+                <div
+                  style={{
+                    paddingTop: 8,
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  {scans.map((scan) => {
+                    const tag =
+                      normalizeBagTag(
+                        scan.tag ||
+                          scan.id
+                      );
+
+                    const busy =
+                      offloadingTag ===
+                      tag;
+
+                    return (
+                      <div
+                        key={scan.id}
+                        style={{
+                          padding: 10,
+                          borderRadius: 10,
+                          border:
+                            "1px solid #e5e7eb",
+                          background: "white",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent:
+                              "space-between",
+                            alignItems:
+                              "center",
+                            gap: 8,
+                          }}
+                        >
+                          <div>
+                            <strong
                               style={{
-                                padding: "5px 10px",
-                                borderRadius: 999,
-                                border: "1px solid #ef4444",
-                                background: "#ef4444",
-                                color: "white",
-                                fontWeight: 800,
-                                cursor: busy ? "not-allowed" : "pointer",
-                                opacity: busy ? 0.7 : 1,
+                                fontFamily:
+                                  "ui-monospace, monospace",
+                                fontSize:
+                                  "1rem",
                               }}
                             >
-                              {busy ? "Offloading…" : "Offload"}
+                              {tag}
+                            </strong>
+
+                            <div
+                              style={{
+                                marginTop: 3,
+                                color:
+                                  "#6b7280",
+                                fontSize:
+                                  "0.75rem",
+                              }}
+                            >
+                              {scan.bagTypeLabel ||
+                                getBagTypeLabel(
+                                  scan.bagType
+                                )}
+                              {" · Zone "}
+                              {scan.zone ??
+                                "-"}
+                              {" · "}
+                              {scan.scannedBy
+                                ?.username ||
+                                "-"}
+                            </div>
+                          </div>
+
+                          {canReopenOrOffload && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOffloadBag(
+                                  scan
+                                )
+                              }
+                              disabled={busy}
+                              style={{
+                                padding:
+                                  "7px 10px",
+                                borderRadius:
+                                  999,
+                                border:
+                                  "1px solid #ef4444",
+                                background:
+                                  "#ef4444",
+                                color: "white",
+                                fontWeight:
+                                  900,
+                                cursor: busy
+                                  ? "not-allowed"
+                                  : "pointer",
+                                opacity: busy
+                                  ? 0.7
+                                  : 1,
+                                touchAction:
+                                  "manipulation",
+                              }}
+                            >
+                              {busy
+                                ? "…"
+                                : "Offload"}
                             </button>
                           )}
-                        </td>
-                      </tr>
+                        </div>
+
+                        {renderPreviousLocationCard(
+                          scan
+                        )}
+                      </div>
                     );
                   })}
-                </tbody>
-              </table>
-            )}
-          </div>
+                </div>
+              ) : (
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse:
+                      "collapse",
+                    fontSize: "0.86rem",
+                  }}
+                >
+                  <thead>
+                    <tr
+                      style={{
+                        background:
+                          "#f9fafb",
+                      }}
+                    >
+                      <th style={th}>
+                        Tag
+                      </th>
 
-          <p style={{ marginTop: 10, color: "#6b7280", fontSize: "0.8rem" }}>
-            Tip: scans save automatically after the scanner finishes. Enter is optional.
-          </p>
+                      <th style={th}>
+                        Type
+                      </th>
+
+                      <th style={th}>
+                        Previous Location
+                      </th>
+
+                      <th style={th}>
+                        Zone
+                      </th>
+
+                      <th style={th}>
+                        User
+                      </th>
+
+                      <th
+                        style={{
+                          ...th,
+                          textAlign:
+                            "right",
+                        }}
+                      >
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {scans.map(
+                      (scan) => {
+                        const tag =
+                          normalizeBagTag(
+                            scan.tag ||
+                              scan.id
+                          );
+
+                        const busy =
+                          offloadingTag ===
+                          tag;
+
+                        const location =
+                          normalizeReceivingLocation(
+                            scan.previousLocation
+                          );
+
+                        const locationLabel =
+                          scan.previousLocationLabel ||
+                          getReceivingLocationLabel(
+                            location
+                          );
+
+                        const previousDetails =
+                          location ===
+                            "BAGROOM" &&
+                          scan.previousCartNumber
+                            ? `${locationLabel} · Cart ${scan.previousCartNumber}`
+                            : locationLabel;
+
+                        return (
+                          <tr
+                            key={
+                              scan.id
+                            }
+                            style={{
+                              background:
+                                scan.previousLocationValid
+                                  ? "white"
+                                  : "#fef2f2",
+                            }}
+                          >
+                            <td
+                              style={
+                                td
+                              }
+                            >
+                              <strong>
+                                {tag}
+                              </strong>
+                            </td>
+
+                            <td
+                              style={
+                                td
+                              }
+                            >
+                              {scan.bagTypeLabel ||
+                                getBagTypeLabel(
+                                  scan.bagType
+                                )}
+                            </td>
+
+                            <td
+                              style={
+                                td
+                              }
+                            >
+                              <div
+                                style={{
+                                  fontWeight:
+                                    800,
+                                  color:
+                                    scan.previousLocationValid
+                                      ? "#1d4ed8"
+                                      : "#991b1b",
+                                }}
+                              >
+                                {getLocationIcon(
+                                  location
+                                )}{" "}
+                                {
+                                  previousDetails
+                                }
+                              </div>
+
+                              <div
+                                style={{
+                                  marginTop:
+                                    2,
+                                  color:
+                                    "#6b7280",
+                                  fontSize:
+                                    "0.72rem",
+                                }}
+                              >
+                                {formatTime(
+                                  scan.previousLocationAt
+                                )}
+                                {" · "}
+                                {scan.previousLocationBy
+                                  ?.username ||
+                                  "-"}
+                              </div>
+                            </td>
+
+                            <td
+                              style={
+                                td
+                              }
+                            >
+                              {scan.zone ??
+                                "-"}
+                            </td>
+
+                            <td
+                              style={{
+                                ...td,
+                                color:
+                                  "#6b7280",
+                              }}
+                            >
+                              {scan.scannedBy
+                                ?.username ||
+                                "-"}
+                            </td>
+
+                            <td
+                              style={{
+                                ...td,
+                                textAlign:
+                                  "right",
+                              }}
+                            >
+                              {canReopenOrOffload && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleOffloadBag(
+                                      scan
+                                    )
+                                  }
+                                  disabled={
+                                    busy
+                                  }
+                                  style={{
+                                    padding:
+                                      "6px 10px",
+                                    borderRadius:
+                                      999,
+                                    border:
+                                      "1px solid #ef4444",
+                                    background:
+                                      "#ef4444",
+                                    color:
+                                      "white",
+                                    fontWeight:
+                                      800,
+                                    cursor:
+                                      busy
+                                        ? "not-allowed"
+                                        : "pointer",
+                                    opacity:
+                                      busy
+                                        ? 0.7
+                                        : 1,
+                                  }}
+                                >
+                                  {busy
+                                    ? "Offloading…"
+                                    : "Offload"}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      }
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <p
+              style={{
+                marginTop: 10,
+                marginBottom: 0,
+                color: "#6b7280",
+                fontSize: "0.76rem",
+              }}
+            >
+              Scanner mode saves automatically
+              after 10 digits. Enter and Tab are
+              also supported.
+            </p>
+          </section>
+
+          <section
+            style={{
+              border:
+                "1px solid #e5e7eb",
+              borderRadius: 12,
+              padding: 12,
+              background: "#f9fafb",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent:
+                  "space-between",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin: 0,
+                  }}
+                >
+                  Last 5 Loaded Bags
+                </h3>
+
+                <p
+                  style={{
+                    margin: "5px 0 0",
+                    color: "#6b7280",
+                    fontSize: "0.78rem",
+                  }}
+                >
+                  Previous location before
+                  aircraft loading.
+                </p>
+              </div>
+
+              <span
+                style={{
+                  ...miniPill,
+                  background: "#dbeafe",
+                  color: "#1d4ed8",
+                  border:
+                    "1px solid #bfdbfe",
+                }}
+              >
+                {lastFiveLoadedBags.length}
+              </span>
+            </div>
+
+            <div
+              style={{
+                marginTop: 10,
+                display: "grid",
+                gap: 7,
+              }}
+            >
+              {lastFiveLoadedBags.length ===
+              0 ? (
+                <div
+                  style={{
+                    color: "#6b7280",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  No loaded bags yet.
+                </div>
+              ) : (
+                lastFiveLoadedBags.map(
+                  (scan) => {
+                    const tag =
+                      normalizeBagTag(
+                        scan.tag ||
+                          scan.id
+                      );
+
+                    const location =
+                      normalizeReceivingLocation(
+                        scan.previousLocation
+                      );
+
+                    const valid =
+                      Boolean(
+                        scan.previousLocationValid
+                      );
+
+                    return (
+                      <div
+                        key={
+                          scan.id
+                        }
+                        style={{
+                          padding: 9,
+                          borderRadius: 10,
+                          border: valid
+                            ? "1px solid #bfdbfe"
+                            : "1px solid #fecaca",
+                          background: valid
+                            ? "white"
+                            : "#fef2f2",
+                          display: "flex",
+                          justifyContent:
+                            "space-between",
+                          alignItems:
+                            "center",
+                          gap: 10,
+                        }}
+                      >
+                        <div
+                          style={{
+                            minWidth: 0,
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontFamily:
+                                "ui-monospace, monospace",
+                              fontWeight: 900,
+                            }}
+                          >
+                            {tag}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 3,
+                              color: valid
+                                ? "#1d4ed8"
+                                : "#991b1b",
+                              fontSize:
+                                "0.74rem",
+                              fontWeight: 800,
+                            }}
+                          >
+                            {getLocationIcon(
+                              location
+                            )}{" "}
+                            {scan.previousLocationDetails ||
+                              scan.previousLocationLabel ||
+                              getReceivingLocationLabel(
+                                location
+                              )}
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            textAlign:
+                              "right",
+                            whiteSpace:
+                              "nowrap",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 900,
+                              fontSize:
+                                "0.78rem",
+                            }}
+                          >
+                            Z
+                            {scan.zone ??
+                              "-"}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: 2,
+                              color:
+                                "#6b7280",
+                              fontSize:
+                                "0.68rem",
+                            }}
+                          >
+                            {formatTime(
+                              scan.createdAt
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                )
+              )}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -1401,20 +5339,195 @@ const saveAircraftScan = async (tag, zoneNum) => {
         open={modal.open}
         title={modal.title}
         tone={modal.tone}
-        confirmText={modal.confirmText}
-        cancelText={modal.cancelText}
-        showCancel={modal.showCancel}
+        confirmText={
+          modal.confirmText
+        }
+        cancelText={
+          modal.cancelText
+        }
+        showCancel={
+          modal.showCancel
+        }
         onConfirm={() => {
-          if (typeof modal.onConfirm === "function") modal.onConfirm();
-          else close();
+          if (
+            typeof modal.onConfirm ===
+            "function"
+          ) {
+            modal.onConfirm();
+          } else {
+            close();
+            focusScanner();
+          }
         }}
         onCancel={() => {
-          if (typeof modal.onCancel === "function") modal.onCancel();
-          else close();
+          if (
+            typeof modal.onCancel ===
+            "function"
+          ) {
+            modal.onCancel();
+          } else {
+            close();
+            focusScanner();
+          }
         }}
       >
         {modal.content}
       </Modal>
+    </div>
+  );
+}
+
+function ScannerModeButton({
+  active,
+  label,
+  onClick,
+}) {
+  return (
+    <button
+      type="button"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+          typeof onClick ===
+          "function"
+        ) {
+          onClick();
+        }
+      }}
+      style={{
+        padding: "7px 10px",
+        borderRadius: 8,
+        border: active
+          ? "1px solid #2563eb"
+          : "1px solid transparent",
+        background: active
+          ? "white"
+          : "transparent",
+        color: active
+          ? "#1d4ed8"
+          : "#6b7280",
+        fontWeight: 900,
+        fontSize: "0.76rem",
+        cursor: "pointer",
+        touchAction: "manipulation",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function ZoneButton({
+  zoneNumber,
+  active,
+  disabled,
+  onClick,
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+          typeof onClick ===
+          "function"
+        ) {
+          onClick();
+        }
+      }}
+      style={{
+        minHeight: 48,
+        padding: "8px 4px",
+        borderRadius: 10,
+        border: active
+          ? "2px solid #2563eb"
+          : "1px solid #d1d5db",
+        background: active
+          ? "#dbeafe"
+          : disabled
+            ? "#f3f4f6"
+            : "white",
+        color: active
+          ? "#1d4ed8"
+          : "#374151",
+        fontWeight: 900,
+        cursor: disabled
+          ? "not-allowed"
+          : "pointer",
+        opacity: disabled
+          ? 0.7
+          : 1,
+        touchAction: "manipulation",
+        WebkitTapHighlightColor:
+          "transparent",
+      }}
+    >
+      Z{zoneNumber}
+    </button>
+  );
+}
+
+function Notice({
+  tone = "info",
+  text,
+}) {
+  const styles = {
+    success: {
+      background: "#f0fdf4",
+      border: "#86efac",
+      color: "#166534",
+    },
+
+    danger: {
+      background: "#fef2f2",
+      border: "#fecaca",
+      color: "#991b1b",
+    },
+
+    warning: {
+      background: "#fffbeb",
+      border: "#fde68a",
+      color: "#92400e",
+    },
+
+    info: {
+      background: "#eff6ff",
+      border: "#bfdbfe",
+      color: "#1d4ed8",
+    },
+  };
+
+  const selected =
+    styles[tone] ||
+    styles.info;
+
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 10,
+        background:
+          selected.background,
+        border: `1px solid ${selected.border}`,
+        color: selected.color,
+        fontSize: "0.82rem",
+        fontWeight: 800,
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      {text}
     </div>
   );
 }
@@ -1433,15 +5546,23 @@ const miniPill = {
 const th = {
   textAlign: "left",
   padding: "10px 8px",
-  borderBottom: "1px solid #e5e7eb",
-  fontSize: "0.8rem",
+  borderBottom:
+    "1px solid #e5e7eb",
+  fontSize: "0.75rem",
   textTransform: "uppercase",
   letterSpacing: "0.04em",
   color: "#6b7280",
+  whiteSpace: "nowrap",
+  position: "sticky",
+  top: 0,
+  background: "#f9fafb",
+  zIndex: 1,
 };
 
 const td = {
   padding: "10px 8px",
-  borderBottom: "1px solid #f3f4f6",
+  borderBottom:
+    "1px solid #f3f4f6",
   color: "#111827",
+  verticalAlign: "middle",
 };
