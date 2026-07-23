@@ -81,20 +81,34 @@ function normalizeCartNumber(value) {
 }
 
 function normalizeReceivingLocation(value) {
-  const location = String(value || "BAGROOM")
+  const raw = String(value || "BAGROOM")
     .trim()
     .toUpperCase();
 
-  return RECEIVING_LOCATIONS[location]
-    ? location
+  if (
+    raw === "GATE_RAMP" ||
+    raw === "GATE / RAMP" ||
+    raw === "RAMP"
+  ) {
+    return "GATE";
+  }
+
+  return RECEIVING_LOCATIONS[raw]
+    ? raw
     : "BAGROOM";
 }
 
 function getReceivingLocationConfig(value) {
-  return (
-    RECEIVING_LOCATIONS[
-      normalizeReceivingLocation(value)
-    ] || RECEIVING_LOCATIONS.BAGROOM
+  return RECEIVING_LOCATIONS[
+    normalizeReceivingLocation(value)
+  ];
+}
+
+function getScanReceivingLocation(scan) {
+  return normalizeReceivingLocation(
+    scan?.receivingLocation ||
+      scan?.location ||
+      "BAGROOM"
   );
 }
 
@@ -104,18 +118,16 @@ function getScanLocationLabel(scan) {
   }
 
   const location =
-    scan?.receivingLocation ||
-    scan?.location ||
-    "BAGROOM";
+    getScanReceivingLocation(scan);
 
-  return getReceivingLocationConfig(location).label;
+  return getReceivingLocationConfig(
+    location
+  ).label;
 }
 
 function getScanGroupName(scan) {
-  const location = normalizeReceivingLocation(
-    scan?.receivingLocation ||
-      scan?.location
-  );
+  const location =
+    getScanReceivingLocation(scan);
 
   if (location === "OVERSIZE") {
     return "OVERSIZE";
@@ -239,54 +251,10 @@ export default function BagroomScanPage({
   const [
     receivingLocation,
     setReceivingLocation,
-  ] = useState(() => {
-    return (
-      localStorage.getItem(
-        `bagroomReceivingLocation_${flightId}`
-      ) || "BAGROOM"
-    );
-  });
+  ] = useState("BAGROOM");
 
-  const normalizedReceivingLocation =
-    normalizeReceivingLocation(
-      receivingLocation
-    );
-
-  const receivingLocationConfig =
-    getReceivingLocationConfig(
-      normalizedReceivingLocation
-    );
-
-  const isRegularBagroom =
-    normalizedReceivingLocation === "BAGROOM";
-
-  const [cartNumber, setCartNumber] = useState(
-    () => {
-      return (
-        localStorage.getItem(
-          `bagroomLastRegularCart_${flightId}`
-        ) ||
-        localStorage.getItem(
-          `bagroomCart_${flightId}`
-        ) ||
-        ""
-      );
-    }
-  );
-
-  const selectedCart =
-    normalizeCartNumber(cartNumber);
-
-  /*
-   * A cart is required only when the
-   * selected receiving area is Bagroom.
-   *
-   * Oversize and Gate/Ramp can scan
-   * without selecting a cart.
-   */
-  const locationReady =
-    !isRegularBagroom ||
-    Boolean(selectedCart);
+  const [cartNumber, setCartNumber] =
+    useState("");
 
   const [scannerMode, setScannerMode] =
     useState(() => {
@@ -299,8 +267,6 @@ export default function BagroomScanPage({
 
   const [tagInput, setTagInput] =
     useState("");
-
-  const inputRef = useRef(null);
 
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
@@ -333,10 +299,11 @@ export default function BagroomScanPage({
   ] = useState("");
 
   const [
-    deletingBagroomTag,
-    setDeletingBagroomTag,
+    deletingReceivingTag,
+    setDeletingReceivingTag,
   ] = useState("");
 
+  const inputRef = useRef(null);
   const autoTimerRef = useRef(null);
   const isSubmittingRef = useRef(false);
 
@@ -348,6 +315,30 @@ export default function BagroomScanPage({
 
   const { modal, show, close } =
     useModal();
+
+  const normalizedReceivingLocation =
+    normalizeReceivingLocation(
+      receivingLocation
+    );
+
+  const receivingLocationConfig =
+    getReceivingLocationConfig(
+      normalizedReceivingLocation
+    );
+
+  const isRegularBagroom =
+    normalizedReceivingLocation === "BAGROOM";
+
+  const selectedCart =
+    normalizeCartNumber(cartNumber);
+
+  /*
+   * Bagroom requires a cart.
+   * Oversize and Gate / Ramp do not.
+   */
+  const locationReady =
+    !isRegularBagroom ||
+    Boolean(selectedCart);
 
   const isLoadingCompleted =
     Boolean(
@@ -365,7 +356,7 @@ export default function BagroomScanPage({
       ) {
         inputRef.current.focus();
       }
-    }, 100);
+    }, 180);
   };
 
   const popup = (
@@ -417,15 +408,8 @@ export default function BagroomScanPage({
 
     scans.forEach((scan) => {
       const scanLocation =
-        normalizeReceivingLocation(
-          scan.receivingLocation ||
-            scan.location
-        );
+        getScanReceivingLocation(scan);
 
-      /*
-       * Only regular Bagroom carts
-       * appear as selectable carts.
-       */
       if (scanLocation !== "BAGROOM") {
         return;
       }
@@ -474,8 +458,8 @@ export default function BagroomScanPage({
   }, [counterScans]);
 
   /*
-   * All receiving scans count as
-   * received from Counter:
+   * Every scan saved inside bagroomScans
+   * counts as received:
    *
    * - Bagroom
    * - Oversize
@@ -493,6 +477,24 @@ export default function BagroomScanPage({
         )
         .filter(isValidBagTag)
     );
+  }, [scans]);
+
+  const receivedScanByTag = useMemo(() => {
+    const map = new Map();
+
+    scans.forEach((scan) => {
+      const tag = onlyDigits(
+        scan.tag ||
+          scan.bagTag ||
+          scan.id
+      );
+
+      if (isValidBagTag(tag)) {
+        map.set(tag, scan);
+      }
+    });
+
+    return map;
   }, [scans]);
 
   const receivedCounterScans =
@@ -557,7 +559,7 @@ export default function BagroomScanPage({
     useMemo(() => {
       const groups = {};
 
-      for (const scan of scans) {
+      scans.forEach((scan) => {
         const groupName =
           getScanGroupName(scan);
 
@@ -566,7 +568,7 @@ export default function BagroomScanPage({
         }
 
         groups[groupName].push(scan);
-      }
+      });
 
       return groups;
     }, [scans]);
@@ -574,10 +576,8 @@ export default function BagroomScanPage({
   const bagroomScanCount = useMemo(() => {
     return scans.filter((scan) => {
       return (
-        normalizeReceivingLocation(
-          scan.receivingLocation ||
-            scan.location
-        ) === "BAGROOM"
+        getScanReceivingLocation(scan) ===
+        "BAGROOM"
       );
     }).length;
   }, [scans]);
@@ -585,10 +585,8 @@ export default function BagroomScanPage({
   const oversizeScanCount = useMemo(() => {
     return scans.filter((scan) => {
       return (
-        normalizeReceivingLocation(
-          scan.receivingLocation ||
-            scan.location
-        ) === "OVERSIZE"
+        getScanReceivingLocation(scan) ===
+        "OVERSIZE"
       );
     }).length;
   }, [scans]);
@@ -596,22 +594,19 @@ export default function BagroomScanPage({
   const gateRampScanCount = useMemo(() => {
     return scans.filter((scan) => {
       return (
-        normalizeReceivingLocation(
-          scan.receivingLocation ||
-            scan.location
-        ) === "GATE"
+        getScanReceivingLocation(scan) ===
+        "GATE"
       );
     }).length;
   }, [scans]);
-
-  /*
+    /*
    * Flight subscription.
    */
   useEffect(() => {
     if (!flightId) {
       setFlight(null);
       setFlightLoading(false);
-      return;
+      return undefined;
     }
 
     setFlightLoading(true);
@@ -622,9 +617,8 @@ export default function BagroomScanPage({
       flightId
     );
 
-    const unsub = onSnapshot(
+    const unsubscribe = onSnapshot(
       flightRef,
-
       (snapshot) => {
         if (!snapshot.exists()) {
           setFlight(null);
@@ -632,25 +626,24 @@ export default function BagroomScanPage({
           return;
         }
 
-        const data = {
+        const flightData = {
           id: snapshot.id,
           ...snapshot.data(),
         };
 
-        setFlight(data);
+        setFlight(flightData);
 
         if (
-          typeof data.strictManifest ===
+          typeof flightData.strictManifest ===
           "boolean"
         ) {
           setStrictManifest(
-            data.strictManifest
+            flightData.strictManifest
           );
         }
 
         setFlightLoading(false);
       },
-
       (error) => {
         console.error(
           "Bagroom flight snapshot error:",
@@ -662,35 +655,33 @@ export default function BagroomScanPage({
       }
     );
 
-    return () => unsub();
+    return () => unsubscribe();
   }, [flightId]);
 
   /*
    * Receiving scans subscription.
    *
-   * All three reception areas are saved
-   * in bagroomScans so the Counter match
-   * recognizes them as received.
+   * Bagroom, Oversize, and Gate / Ramp
+   * are all stored in bagroomScans.
    */
   useEffect(() => {
     if (!flightId) {
       setScans([]);
       setLoadingScans(false);
-      return;
+      return undefined;
     }
 
     setLoadingScans(true);
 
-    const receivingRef = collection(
+    const receivingScansRef = collection(
       db,
       "flights",
       flightId,
       "bagroomScans"
     );
 
-    const unsub = onSnapshot(
-      receivingRef,
-
+    const unsubscribe = onSnapshot(
+      receivingScansRef,
       (snapshot) => {
         const rows = snapshot.docs.map(
           (document) => ({
@@ -712,7 +703,6 @@ export default function BagroomScanPage({
         setScans(rows);
         setLoadingScans(false);
       },
-
       (error) => {
         console.error(
           "Receiving scans snapshot error:",
@@ -724,7 +714,7 @@ export default function BagroomScanPage({
       }
     );
 
-    return () => unsub();
+    return () => unsubscribe();
   }, [flightId]);
 
   /*
@@ -734,21 +724,20 @@ export default function BagroomScanPage({
     if (!flightId) {
       setCounterScans([]);
       setLoadingCounterScans(false);
-      return;
+      return undefined;
     }
 
     setLoadingCounterScans(true);
 
-    const counterRef = collection(
+    const counterScansRef = collection(
       db,
       "flights",
       flightId,
       "counterScans"
     );
 
-    const unsub = onSnapshot(
-      counterRef,
-
+    const unsubscribe = onSnapshot(
+      counterScansRef,
       (snapshot) => {
         const rows = snapshot.docs.map(
           (document) => ({
@@ -770,7 +759,6 @@ export default function BagroomScanPage({
         setCounterScans(rows);
         setLoadingCounterScans(false);
       },
-
       (error) => {
         console.error(
           "Counter scans snapshot error:",
@@ -782,23 +770,35 @@ export default function BagroomScanPage({
       }
     );
 
-    return () => unsub();
+    return () => unsubscribe();
   }, [flightId]);
 
   /*
-   * Restore the saved receiving area
-   * whenever the selected flight changes.
+   * Restore the saved receiving area and
+   * cart when the selected flight changes.
    */
   useEffect(() => {
+    if (!flightId) {
+      setReceivingLocation("BAGROOM");
+      setCartNumber("");
+      setTagInput("");
+      setMsg("");
+      setErr("");
+      return;
+    }
+
     const savedLocation =
       localStorage.getItem(
         `bagroomReceivingLocation_${flightId}`
       ) || "BAGROOM";
 
-    setReceivingLocation(
+    const normalizedLocation =
       normalizeReceivingLocation(
         savedLocation
-      )
+      );
+
+    setReceivingLocation(
+      normalizedLocation
     );
 
     const savedCart =
@@ -814,10 +814,28 @@ export default function BagroomScanPage({
     setTagInput("");
     setMsg("");
     setErr("");
+
+    if (autoTimerRef.current) {
+      window.clearTimeout(
+        autoTimerRef.current
+      );
+
+      autoTimerRef.current = null;
+    }
   }, [flightId]);
 
+  /*
+   * Restore scanner focus after changing
+   * area, cart, mode, or flight status.
+   */
   useEffect(() => {
-    focusScanner();
+    if (
+      scannerMode &&
+      locationReady &&
+      !isLoadingCompleted
+    ) {
+      focusScanner();
+    }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -827,17 +845,32 @@ export default function BagroomScanPage({
     isLoadingCompleted,
   ]);
 
+  /*
+   * Clear the auto-submit timer when the
+   * page is unmounted.
+   */
   useEffect(() => {
     return () => {
       if (autoTimerRef.current) {
-        clearTimeout(
+        window.clearTimeout(
           autoTimerRef.current
         );
       }
     };
   }, []);
-    const ensureStatusReceiving = async () => {
-    if (!flight) return;
+
+  const dataLoading =
+    loadingScans ||
+    loadingCounterScans;
+
+  const pagePadding = compactScreen
+    ? 8
+    : 16;
+
+  const ensureStatusReceiving = async () => {
+    if (!flightId || !flight) {
+      return;
+    }
 
     const currentStatus = normalizeStatus(
       flight.status
@@ -852,18 +885,25 @@ export default function BagroomScanPage({
     }
 
     await setDoc(
-      doc(db, "flights", flightId),
+      doc(
+        db,
+        "flights",
+        flightId
+      ),
       {
         status: "RECEIVING",
-
         statusUpdatedAt:
           serverTimestamp(),
 
         statusUpdatedBy: {
-          userId: user?.id || null,
+          userId:
+            user?.id || null,
+
           username:
             user?.username || null,
-          role: user?.role || null,
+
+          role:
+            user?.role || null,
         },
       },
       {
@@ -872,29 +912,29 @@ export default function BagroomScanPage({
     );
   };
 
-  const saveCartToFlight = async () => {
+  const saveCartToFlight = async (
+    cartValue = selectedCart
+  ) => {
+    const normalizedCart =
+      normalizeCartNumber(cartValue);
+
     if (
-      !isRegularBagroom ||
-      !selectedCart ||
-      !flightId
+      !flightId ||
+      !normalizedCart
     ) {
       return;
     }
 
     const existingCarts =
-      Array.isArray(
-        flight?.cartNumbers
-      )
+      Array.isArray(flight?.cartNumbers)
         ? flight.cartNumbers
-            .map(
-              normalizeCartNumber
-            )
+            .map(normalizeCartNumber)
             .filter(Boolean)
         : [];
 
     if (
       existingCarts.includes(
-        selectedCart
+        normalizedCart
       )
     ) {
       return;
@@ -902,7 +942,7 @@ export default function BagroomScanPage({
 
     const nextCarts = [
       ...existingCarts,
-      selectedCart,
+      normalizedCart,
     ].sort((a, b) =>
       String(a).localeCompare(
         String(b),
@@ -930,45 +970,1156 @@ export default function BagroomScanPage({
             user?.id || null,
 
           username:
-            user?.username ||
-            null,
+            user?.username || null,
 
           role:
-            user?.role ||
-              return (
+            user?.role || null,
+        },
+      },
+      {
+        merge: true,
+      }
+    );
+  };
+
+  const selectReceivingLocation = (
+    nextLocation
+  ) => {
+    const normalizedLocation =
+      normalizeReceivingLocation(
+        nextLocation
+      );
+
+    if (autoTimerRef.current) {
+      window.clearTimeout(
+        autoTimerRef.current
+      );
+
+      autoTimerRef.current = null;
+    }
+
+    setReceivingLocation(
+      normalizedLocation
+    );
+
+    localStorage.setItem(
+      `bagroomReceivingLocation_${flightId}`,
+      normalizedLocation
+    );
+
+    setTagInput("");
+    setMsg("");
+    setErr("");
+
+    if (normalizedLocation === "BAGROOM") {
+      const savedCart =
+        localStorage.getItem(
+          `bagroomLastRegularCart_${flightId}`
+        ) ||
+        localStorage.getItem(
+          `bagroomCart_${flightId}`
+        ) ||
+        "";
+
+      setCartNumber(savedCart);
+    }
+
+    window.setTimeout(() => {
+      if (
+        scannerMode &&
+        !isLoadingCompleted
+      ) {
+        inputRef.current?.focus();
+      }
+    }, 250);
+  };
+
+  const selectCart = (value) => {
+    const normalizedCart =
+      normalizeCartNumber(value);
+
+    setCartNumber(normalizedCart);
+
+    if (normalizedCart) {
+      localStorage.setItem(
+        `bagroomCart_${flightId}`,
+        normalizedCart
+      );
+
+      localStorage.setItem(
+        `bagroomLastRegularCart_${flightId}`,
+        normalizedCart
+      );
+    } else {
+      localStorage.removeItem(
+        `bagroomCart_${flightId}`
+      );
+    }
+
+    setTagInput("");
+    setMsg("");
+    setErr("");
+
+    if (
+      normalizedCart &&
+      scannerMode &&
+      !isLoadingCompleted
+    ) {
+      window.setTimeout(() => {
+        inputRef.current?.focus();
+      }, 200);
+    }
+  };
+
+  const changeScannerMode = (
+    nextScannerMode
+  ) => {
+    const enabled =
+      Boolean(nextScannerMode);
+
+    setScannerMode(enabled);
+
+    localStorage.setItem(
+      "bagroomScannerMode",
+      enabled
+        ? "scanner"
+        : "manual"
+    );
+
+    setTagInput("");
+    setMsg("");
+    setErr("");
+
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 200);
+  };
+
+  const findBagInAnotherFlight = async (
+    bagTag
+  ) => {
+    const trackingRef = doc(
+      db,
+      "bagTags",
+      bagTag
+    );
+
+    const trackingSnapshot =
+      await getDoc(trackingRef);
+
+    if (!trackingSnapshot.exists()) {
+      return null;
+    }
+
+    const trackingData =
+      trackingSnapshot.data();
+
+    const trackedFlightId =
+      trackingData?.flightId ||
+      trackingData?.currentFlightId ||
+      null;
+
+    if (
+      trackedFlightId &&
+      trackedFlightId !== flightId
+    ) {
+      return {
+        flightId: trackedFlightId,
+
+        flightNumber:
+          trackingData?.flightNumber ||
+          trackingData?.currentFlightNumber ||
+          trackedFlightId,
+
+        data: trackingData,
+      };
+    }
+
+    return null;
+  };
+
+  const saveTrackingEvent = async ({
+    bagTag,
+    locationConfig,
+    cart,
+    matchedCounter,
+  }) => {
+    if (!flightId || !bagTag) {
+      return;
+    }
+
+    const trackingRef = doc(
+      db,
+      "bagTags",
+      bagTag
+    );
+
+    const trackingSnapshot =
+      await getDoc(trackingRef);
+
+    const existingData =
+      trackingSnapshot.exists()
+        ? trackingSnapshot.data()
+        : {};
+
+    const existingEvents =
+      Array.isArray(existingData.events)
+        ? existingData.events
+        : [];
+
+    const event = {
+      type:
+        locationConfig.eventType,
+
+      event:
+        locationConfig.eventType,
+
+      message:
+        locationConfig.message,
+
+      location:
+        locationConfig.trackingLocation,
+
+      receivingLocation:
+        locationConfig.value,
+
+      locationLabel:
+        locationConfig.label,
+
+      department:
+        locationConfig.department,
+
+      cartNumber:
+        locationConfig.value === "BAGROOM"
+          ? cart || null
+          : null,
+
+      flightId,
+
+      flightNumber:
+        flight?.flightNumber || null,
+
+      flightDate:
+        flight?.flightDate || null,
+
+      gate:
+        flight?.gate || null,
+
+      matchedCounter:
+        Boolean(matchedCounter),
+
+      timestamp:
+        new Date().toISOString(),
+
+      createdBy: {
+        userId:
+          user?.id || null,
+
+        username:
+          user?.username || null,
+
+        role:
+          user?.role || null,
+      },
+    };
+
+    const nextEvents = [
+      ...existingEvents,
+      event,
+    ].slice(-100);
+
+    await setDoc(
+      trackingRef,
+      {
+        tag: bagTag,
+        bagTag,
+
+        flightId,
+
+        currentFlightId:
+          flightId,
+
+        flightNumber:
+          flight?.flightNumber || null,
+
+        currentFlightNumber:
+          flight?.flightNumber || null,
+
+        flightDate:
+          flight?.flightDate || null,
+
+        gate:
+          flight?.gate || null,
+
+        location:
+          locationConfig.trackingLocation,
+
+        receivingLocation:
+          locationConfig.value,
+
+        locationLabel:
+          locationConfig.label,
+
+        department:
+          locationConfig.department,
+
+        cartNumber:
+          locationConfig.value === "BAGROOM"
+            ? cart || null
+            : null,
+
+        lastEvent:
+          locationConfig.eventType,
+
+        lastMessage:
+          locationConfig.message,
+
+        matchedCounter:
+          Boolean(matchedCounter),
+
+        updatedAt:
+          serverTimestamp(),
+
+        updatedBy: {
+          userId:
+            user?.id || null,
+
+          username:
+            user?.username || null,
+
+          role:
+            user?.role || null,
+        },
+
+        events: nextEvents,
+      },
+      {
+        merge: true,
+      }
+    );
+  };
+
+  const saveReceivingScan = async (
+    bagTag
+  ) => {
+    const locationConfig =
+      getReceivingLocationConfig(
+        normalizedReceivingLocation
+      );
+
+    const cart =
+      locationConfig.value === "BAGROOM"
+        ? selectedCart
+        : null;
+
+    const matchedCounter =
+      counterTagSet.has(bagTag);
+
+    const receivingScanRef = doc(
+      db,
+      "flights",
+      flightId,
+      "bagroomScans",
+      bagTag
+    );
+
+    const existingSnapshot =
+      await getDoc(receivingScanRef);
+
+    if (existingSnapshot.exists()) {
+      const existingScan =
+        existingSnapshot.data();
+
+      const existingLocation =
+        getScanLocationLabel(
+          existingScan
+        );
+
+      const existingCart =
+        normalizeCartNumber(
+          existingScan.cartNumber
+        );
+
+      const existingDetails =
+        getScanReceivingLocation(
+          existingScan
+        ) === "BAGROOM"
+          ? `${existingLocation} / Cart ${
+              existingCart || "-"
+            }`
+          : existingLocation;
+
+      throw new Error(
+        `Bag tag ${bagTag} was already received at ${existingDetails}.`
+      );
+    }
+
+    await setDoc(
+      receivingScanRef,
+      {
+        tag: bagTag,
+        bagTag,
+
+        flightId,
+
+        flightNumber:
+          flight?.flightNumber || null,
+
+        flightDate:
+          flight?.flightDate || null,
+
+        gate:
+          flight?.gate || null,
+
+        receivingLocation:
+          locationConfig.value,
+
+        location:
+          locationConfig.value,
+
+        trackingLocation:
+          locationConfig.trackingLocation,
+
+        locationLabel:
+          locationConfig.label,
+
+        department:
+          locationConfig.department,
+
+        eventType:
+          locationConfig.eventType,
+
+        message:
+          locationConfig.message,
+
+        cartNumber: cart,
+
+        matchedCounter,
+
+        source:
+          "BAGGAGE_RECEIVING",
+
+        createdAt:
+          serverTimestamp(),
+
+        scannedAt:
+          serverTimestamp(),
+
+        scannedBy: {
+          userId:
+            user?.id || null,
+
+          username:
+            user?.username || null,
+
+          role:
+            user?.role || null,
+        },
+
+        createdBy: {
+          userId:
+            user?.id || null,
+
+          username:
+            user?.username || null,
+
+          role:
+            user?.role || null,
+        },
+      }
+    );
+
+    await saveTrackingEvent({
+      bagTag,
+      locationConfig,
+      cart,
+      matchedCounter,
+    });
+
+    if (
+      locationConfig.value ===
+        "BAGROOM" &&
+      cart
+    ) {
+      await saveCartToFlight(cart);
+    }
+
+    await ensureStatusReceiving();
+
+    return {
+      locationConfig,
+      cart,
+      matchedCounter,
+    };
+  };
+    const handleScanSubmit = async (
+    value = tagInput
+  ) => {
+    if (isSubmittingRef.current) {
+      return;
+    }
+
+    const bagTag =
+      normalizeBagTag(value);
+
+    if (!flightId || !flight) {
+      setErr(
+        "Flight information is not available."
+      );
+
+      focusScanner();
+      return;
+    }
+
+    if (isLoadingCompleted) {
+      setErr(
+        "This flight is already loaded. Scanning is locked."
+      );
+
+      popup(
+        "Flight Locked",
+        "This flight is already loaded. No additional bags can be received.",
+        "warning"
+      );
+
+      return;
+    }
+
+    if (!locationReady) {
+      setErr(
+        "Select a cart before scanning bags into Bagroom."
+      );
+
+      popup(
+        "Cart Required",
+        "Please select or enter a cart number before scanning a bag into Bagroom.",
+        "warning"
+      );
+
+      return;
+    }
+
+    if (!isValidBagTag(bagTag)) {
+      setErr(
+        `Bag tag must contain exactly ${BAG_TAG_LENGTH} digits.`
+      );
+
+      setTagInput(bagTag);
+      focusScanner();
+      return;
+    }
+
+    const now = Date.now();
+
+    if (
+      lastSubmittedTagRef.current ===
+        bagTag &&
+      now -
+        lastSubmittedTimeRef.current <
+        1200
+    ) {
+      setTagInput("");
+      focusScanner();
+      return;
+    }
+
+    isSubmittingRef.current = true;
+
+    lastSubmittedTagRef.current =
+      bagTag;
+
+    lastSubmittedTimeRef.current =
+      now;
+
+    if (autoTimerRef.current) {
+      window.clearTimeout(
+        autoTimerRef.current
+      );
+
+      autoTimerRef.current = null;
+    }
+
+    setMsg("");
+    setErr("");
+
+    try {
+      const existingOtherFlight =
+        await findBagInAnotherFlight(
+          bagTag
+        );
+
+      if (existingOtherFlight) {
+        const otherFlightLabel =
+          existingOtherFlight.flightNumber ||
+          existingOtherFlight.flightId;
+
+        const confirmed =
+          window.confirm(
+            `Bag tag ${bagTag} is currently associated with flight ${otherFlightLabel}.\n\nDo you want to receive it on this flight?`
+          );
+
+        if (!confirmed) {
+          setTagInput("");
+          setErr(
+            `Scan cancelled. Bag remains associated with flight ${otherFlightLabel}.`
+          );
+
+          return;
+        }
+      }
+
+      if (
+        strictManifest &&
+        !counterTagSet.has(bagTag)
+      ) {
+        const confirmed =
+          window.confirm(
+            `Bag tag ${bagTag} was not found in Counter scans.\n\nStrict Manifest is active. Do you still want to receive this bag?`
+          );
+
+        if (!confirmed) {
+          setTagInput("");
+          setErr(
+            "Scan cancelled because the bag was not found in Counter scans."
+          );
+
+          return;
+        }
+      }
+
+      const result =
+        await saveReceivingScan(
+          bagTag
+        );
+
+      const locationLabel =
+        result.locationConfig.label;
+
+      const cartDescription =
+        result.locationConfig.value ===
+          "BAGROOM" &&
+        result.cart
+          ? ` · Cart ${result.cart}`
+          : "";
+
+      const matchDescription =
+        result.matchedCounter
+          ? " · Counter matched"
+          : " · No Counter match";
+
+      setMsg(
+        `${bagTag} received at ${locationLabel}${cartDescription}${matchDescription}`
+      );
+
+      setTagInput("");
+    } catch (error) {
+      console.error(
+        "Receiving scan error:",
+        error
+      );
+
+      const message =
+        error?.message ||
+        "Unable to save the receiving scan.";
+
+      setErr(message);
+      setTagInput("");
+
+      popup(
+        "Scan Not Saved",
+        message,
+        "error"
+      );
+    } finally {
+      isSubmittingRef.current =
+        false;
+
+      window.setTimeout(() => {
+        focusScanner();
+      }, 120);
+    }
+  };
+
+  const scheduleAutoSubmit = (
+    nextValue
+  ) => {
+    if (autoTimerRef.current) {
+      window.clearTimeout(
+        autoTimerRef.current
+      );
+    }
+
+    if (
+      nextValue.length !==
+      BAG_TAG_LENGTH
+    ) {
+      autoTimerRef.current = null;
+      return;
+    }
+
+    autoTimerRef.current =
+      window.setTimeout(() => {
+        autoTimerRef.current = null;
+
+        handleScanSubmit(nextValue);
+      }, AUTO_SUBMIT_IDLE_MS);
+  };
+
+  const handleChange = (event) => {
+    const nextValue =
+      normalizeBagTag(
+        event.target.value
+      );
+
+    setTagInput(nextValue);
+    setMsg("");
+    setErr("");
+
+    if (scannerMode) {
+      scheduleAutoSubmit(
+        nextValue
+      );
+    }
+  };
+
+  const handleKeyDown = (event) => {
+    if (
+      event.key !== "Enter" &&
+      event.key !== "Tab"
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (autoTimerRef.current) {
+      window.clearTimeout(
+        autoTimerRef.current
+      );
+
+      autoTimerRef.current = null;
+    }
+
+    handleScanSubmit(
+      event.currentTarget.value
+    );
+  };
+
+  const deleteCounterScan = (
+    scan
+  ) => {
+    if (
+      !canDeleteScans ||
+      !flightId
+    ) {
+      return;
+    }
+
+    const bagTag =
+      onlyDigits(
+        scan?.tag ||
+          scan?.bagTag ||
+          scan?.id
+      );
+
+    show({
+      title:
+        "Delete Counter Scan",
+
+      tone:
+        "warning",
+
+      content: (
+        <div>
+          Delete Counter scan{" "}
+          <strong>
+            {bagTag}
+          </strong>
+          ?
+          <br />
+          <br />
+          This will not delete an existing
+          receiving scan.
+        </div>
+      ),
+
+      confirmText:
+        "Delete",
+
+      cancelText:
+        "Cancel",
+
+      showCancel:
+        true,
+
+      onConfirm:
+        async () => {
+          close();
+
+          setDeletingCounterTag(
+            bagTag
+          );
+
+          try {
+            await deleteDoc(
+              doc(
+                db,
+                "flights",
+                flightId,
+                "counterScans",
+                scan.id
+              )
+            );
+
+            setMsg(
+              `Counter scan ${bagTag} deleted.`
+            );
+
+            setErr("");
+          } catch (error) {
+            console.error(
+              "Delete Counter scan error:",
+              error
+            );
+
+            popup(
+              "Delete Failed",
+              error?.message ||
+                "Unable to delete the Counter scan.",
+              "error"
+            );
+          } finally {
+            setDeletingCounterTag(
+              ""
+            );
+
+            focusScanner();
+          }
+        },
+
+      onCancel: () => {
+        close();
+        focusScanner();
+      },
+    });
+  };
+
+  const deleteReceivingScan = (
+    scan
+  ) => {
+    if (
+      !canDeleteScans ||
+      !flightId
+    ) {
+      return;
+    }
+
+    const bagTag =
+      onlyDigits(
+        scan?.tag ||
+          scan?.bagTag ||
+          scan?.id
+      );
+
+    const locationLabel =
+      getScanLocationLabel(scan);
+
+    show({
+      title:
+        "Delete Receiving Scan",
+
+      tone:
+        "warning",
+
+      content: (
+        <div>
+          Delete receiving scan{" "}
+          <strong>
+            {bagTag}
+          </strong>
+          {" "}from{" "}
+          <strong>
+            {locationLabel}
+          </strong>
+          ?
+          <br />
+          <br />
+          The bag will return to Pending if
+          it exists in Counter scans.
+        </div>
+      ),
+
+      confirmText:
+        "Delete",
+
+      cancelText:
+        "Cancel",
+
+      showCancel:
+        true,
+
+      onConfirm:
+        async () => {
+          close();
+
+          setDeletingReceivingTag(
+            bagTag
+          );
+
+          try {
+            await deleteDoc(
+              doc(
+                db,
+                "flights",
+                flightId,
+                "bagroomScans",
+                scan.id
+              )
+            );
+
+            const trackingRef = doc(
+              db,
+              "bagTags",
+              bagTag
+            );
+
+            const trackingSnapshot =
+              await getDoc(
+                trackingRef
+              );
+
+            if (
+              trackingSnapshot.exists()
+            ) {
+              const trackingData =
+                trackingSnapshot.data();
+
+              const existingEvents =
+                Array.isArray(
+                  trackingData.events
+                )
+                  ? trackingData.events
+                  : [];
+
+              const deleteEvent = {
+                type:
+                  "RECEIVING_SCAN_DELETED",
+
+                event:
+                  "RECEIVING_SCAN_DELETED",
+
+                message:
+                  `Receiving scan deleted from ${locationLabel}`,
+
+                location:
+                  "counter",
+
+                receivingLocation:
+                  null,
+
+                locationLabel:
+                  "Counter / Pending",
+
+                department:
+                  "COUNTER",
+
+                cartNumber:
+                  null,
+
+                flightId,
+
+                flightNumber:
+                  flight?.flightNumber ||
+                  null,
+
+                flightDate:
+                  flight?.flightDate ||
+                  null,
+
+                gate:
+                  flight?.gate || null,
+
+                timestamp:
+                  new Date().toISOString(),
+
+                createdBy: {
+                  userId:
+                    user?.id ||
+                    null,
+
+                  username:
+                    user?.username ||
+                    null,
+
+                  role:
+                    user?.role ||
+                    null,
+                },
+              };
+
+              await setDoc(
+                trackingRef,
+                {
+                  location:
+                    counterTagSet.has(
+                      bagTag
+                    )
+                      ? "counter"
+                      : "unknown",
+
+                  receivingLocation:
+                    null,
+
+                  locationLabel:
+                    counterTagSet.has(
+                      bagTag
+                    )
+                      ? "Counter / Pending"
+                      : "Unknown",
+
+                  department:
+                    counterTagSet.has(
+                      bagTag
+                    )
+                      ? "COUNTER"
+                      : null,
+
+                  cartNumber:
+                    null,
+
+                  lastEvent:
+                    "RECEIVING_SCAN_DELETED",
+
+                  lastMessage:
+                    deleteEvent.message,
+
+                  matchedCounter:
+                    false,
+
+                  updatedAt:
+                    serverTimestamp(),
+
+                  updatedBy: {
+                    userId:
+                      user?.id ||
+                      null,
+
+                    username:
+                      user?.username ||
+                      null,
+
+                    role:
+                      user?.role ||
+                      null,
+                  },
+
+                  events: [
+                    ...existingEvents,
+                    deleteEvent,
+                  ].slice(-100),
+                },
+                {
+                  merge: true,
+                }
+              );
+            }
+
+            setMsg(
+              `Receiving scan ${bagTag} deleted.`
+            );
+
+            setErr("");
+          } catch (error) {
+            console.error(
+              "Delete receiving scan error:",
+              error
+            );
+
+            popup(
+              "Delete Failed",
+              error?.message ||
+                "Unable to delete the receiving scan.",
+              "error"
+            );
+          } finally {
+            setDeletingReceivingTag(
+              ""
+            );
+
+            focusScanner();
+          }
+        },
+
+      onCancel: () => {
+        close();
+        focusScanner();
+      },
+    });
+  };
+
+  return (
     <div
       style={{
-        background: "white",
-        border: "1px solid #e5e7eb",
-        borderRadius: compactScreen ? 8 : 12,
-        padding: pagePadding,
-        fontSize: compactScreen
-          ? "14px"
-          : "16px",
+        background:
+          "white",
+
+        border:
+          "1px solid #e5e7eb",
+
+        borderRadius:
+          compactScreen
+            ? 8
+            : 12,
+
+        padding:
+          pagePadding,
+
+        fontSize:
+          compactScreen
+            ? "14px"
+            : "16px",
       }}
-      onClick={() => {
-        if (scannerMode) {
+      onClick={(event) => {
+        const clickedInteractiveElement =
+          event.target.closest?.(
+            "button,input,select,textarea,a"
+          );
+
+        if (
+          scannerMode &&
+          !clickedInteractiveElement
+        ) {
           focusScanner();
         }
       }}
     >
       <header
         style={{
-          display: "flex",
-          flexDirection: compactScreen
-            ? "column"
-            : "row",
-          justifyContent: "space-between",
-          gap: 8,
+          display:
+            "flex",
+
+          flexDirection:
+            compactScreen
+              ? "column"
+              : "row",
+
+          justifyContent:
+            "space-between",
+
+          gap:
+            8,
         }}
       >
         <div>
           <h2
             style={{
-              margin: 0,
-              fontSize: compactScreen
-                ? "1.35rem"
-                : "1.5rem",
+              margin:
+                0,
+
+              fontSize:
+                compactScreen
+                  ? "1.35rem"
+                  : "1.5rem",
             }}
           >
             Baggage Receiving
@@ -976,9 +2127,14 @@ export default function BagroomScanPage({
 
           <p
             style={{
-              margin: "4px 0 0",
-              color: "#6b7280",
-              fontSize: "0.82rem",
+              margin:
+                "4px 0 0",
+
+              color:
+                "#6b7280",
+
+              fontSize:
+                "0.82rem",
             }}
           >
             Select the receiving area and scan
@@ -988,12 +2144,21 @@ export default function BagroomScanPage({
 
         <div
           style={{
-            padding: compactScreen ? 8 : 0,
-            borderRadius: 8,
-            background: compactScreen
-              ? "#f9fafb"
-              : "transparent",
-            fontSize: "0.82rem",
+            padding:
+              compactScreen
+                ? 8
+                : 0,
+
+            borderRadius:
+              8,
+
+            background:
+              compactScreen
+                ? "#f9fafb"
+                : "transparent",
+
+            fontSize:
+              "0.82rem",
           }}
         >
           <div>
@@ -1011,7 +2176,8 @@ export default function BagroomScanPage({
             <strong>
               {flightLoading
                 ? "…"
-                : flight?.flightDate || "-"}
+                : flight?.flightDate ||
+                  "-"}
             </strong>
           </div>
 
@@ -1020,7 +2186,8 @@ export default function BagroomScanPage({
             <strong>
               {flightLoading
                 ? "…"
-                : flight?.gate || "-"}
+                : flight?.gate ||
+                  "-"}
             </strong>
           </div>
         </div>
@@ -1029,13 +2196,26 @@ export default function BagroomScanPage({
       {isLoadingCompleted && (
         <div
           style={{
-            marginTop: 10,
-            padding: 10,
-            borderRadius: 10,
-            background: "#dcfce7",
-            color: "#166534",
-            fontWeight: 900,
-            textAlign: "center",
+            marginTop:
+              10,
+
+            padding:
+              10,
+
+            borderRadius:
+              10,
+
+            background:
+              "#dcfce7",
+
+            color:
+              "#166534",
+
+            fontWeight:
+              900,
+
+            textAlign:
+              "center",
           }}
         >
           ✅ FLIGHT LOADED — SCANNING LOCKED
@@ -1044,58 +2224,95 @@ export default function BagroomScanPage({
 
       <hr
         style={{
-          border: "none",
-          borderTop: "1px solid #e5e7eb",
-          margin: "12px 0",
+          border:
+            "none",
+
+          borderTop:
+            "1px solid #e5e7eb",
+
+          margin:
+            "12px 0",
         }}
       />
 
       <div
         style={{
-          display: "grid",
-          gridTemplateColumns: compactScreen
-            ? "1fr"
-            : "minmax(320px, 0.85fr) minmax(520px, 1.15fr)",
-          gap: 12,
-          alignItems: "start",
+          display:
+            "grid",
+
+          gridTemplateColumns:
+            compactScreen
+              ? "1fr"
+              : "minmax(320px, 0.85fr) minmax(520px, 1.15fr)",
+
+          gap:
+            12,
+
+          alignItems:
+            "start",
         }}
       >
         <section
           style={{
-            border: "1px solid #dbeafe",
-            borderRadius: 12,
-            padding: compactScreen ? 10 : 14,
-            background: "#f8fafc",
+            border:
+              "1px solid #dbeafe",
+
+            borderRadius:
+              12,
+
+            padding:
+              compactScreen
+                ? 10
+                : 14,
+
+            background:
+              "#f8fafc",
           }}
         >
           <div
             style={{
-              display: "flex",
-              gap: 6,
-              marginBottom: 12,
+              display:
+                "flex",
+
+              gap:
+                6,
+
+              marginBottom:
+                12,
             }}
           >
             <ModeButton
-              active={scannerMode}
+              active={
+                scannerMode
+              }
               label="Scanner"
               onClick={() =>
-                changeScannerMode(true)
+                changeScannerMode(
+                  true
+                )
               }
             />
 
             <ModeButton
-              active={!scannerMode}
+              active={
+                !scannerMode
+              }
               label="Manual"
               onClick={() =>
-                changeScannerMode(false)
+                changeScannerMode(
+                  false
+                )
               }
             />
           </div>
 
           <h3
             style={{
-              margin: "0 0 8px",
-              fontSize: "1rem",
+              margin:
+                "0 0 8px",
+
+              fontSize:
+                "1rem",
             }}
           >
             1. Receiving Area
@@ -1103,11 +2320,17 @@ export default function BagroomScanPage({
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 "repeat(3, minmax(0, 1fr))",
-              gap: 6,
-              marginBottom: 14,
+
+              gap:
+                6,
+
+              marginBottom:
+                14,
             }}
           >
             <LocationButton
@@ -1117,7 +2340,9 @@ export default function BagroomScanPage({
                 normalizedReceivingLocation ===
                 "BAGROOM"
               }
-              disabled={isLoadingCompleted}
+              disabled={
+                isLoadingCompleted
+              }
               onClick={() =>
                 selectReceivingLocation(
                   "BAGROOM"
@@ -1132,7 +2357,9 @@ export default function BagroomScanPage({
                 normalizedReceivingLocation ===
                 "OVERSIZE"
               }
-              disabled={isLoadingCompleted}
+              disabled={
+                isLoadingCompleted
+              }
               onClick={() =>
                 selectReceivingLocation(
                   "OVERSIZE"
@@ -1141,13 +2368,15 @@ export default function BagroomScanPage({
             />
 
             <LocationButton
-              label="Gate"
+              label="Gate / Ramp"
               icon="🚪"
               active={
                 normalizedReceivingLocation ===
                 "GATE"
               }
-              disabled={isLoadingCompleted}
+              disabled={
+                isLoadingCompleted
+              }
               onClick={() =>
                 selectReceivingLocation(
                   "GATE"
@@ -1155,11 +2384,11 @@ export default function BagroomScanPage({
               }
             />
           </div>
-
-          <div
+                    <div
             style={{
               padding: 10,
               borderRadius: 10,
+
               border: `1px solid ${
                 normalizedReceivingLocation ===
                 "BAGROOM"
@@ -1169,6 +2398,7 @@ export default function BagroomScanPage({
                     ? "#fed7aa"
                     : "#ddd6fe"
               }`,
+
               background:
                 normalizedReceivingLocation ===
                 "BAGROOM"
@@ -1177,6 +2407,7 @@ export default function BagroomScanPage({
                       "OVERSIZE"
                     ? "#fff7ed"
                     : "#f5f3ff",
+
               color:
                 normalizedReceivingLocation ===
                 "BAGROOM"
@@ -1185,6 +2416,7 @@ export default function BagroomScanPage({
                       "OVERSIZE"
                     ? "#9a3412"
                     : "#5b21b6",
+
               textAlign: "center",
               fontWeight: 900,
               marginBottom: 12,
@@ -1210,8 +2442,10 @@ export default function BagroomScanPage({
                 <div
                   style={{
                     display: "grid",
+
                     gridTemplateColumns:
                       "repeat(3, minmax(0, 1fr))",
+
                     gap: 6,
                     marginBottom: 8,
                   }}
@@ -1221,9 +2455,19 @@ export default function BagroomScanPage({
                       <button
                         key={cart}
                         type="button"
-                        onClick={() =>
-                          selectCart(cart)
-                        }
+                        onPointerDown={(
+                          event
+                        ) => {
+                          event.stopPropagation();
+                        }}
+                        onClick={(
+                          event
+                        ) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+
+                          selectCart(cart);
+                        }}
                         disabled={
                           isLoadingCompleted
                         }
@@ -1231,27 +2475,40 @@ export default function BagroomScanPage({
                           minHeight: 46,
                           padding: "6px 4px",
                           borderRadius: 10,
+
                           border:
                             selectedCart ===
                             cart
                               ? "2px solid #16a34a"
                               : "1px solid #d1d5db",
+
                           background:
                             selectedCart ===
                             cart
                               ? "#dcfce7"
-                              : "white",
+                              : isLoadingCompleted
+                                ? "#f3f4f6"
+                                : "white",
+
                           color:
                             selectedCart ===
                             cart
                               ? "#166534"
                               : "#111827",
+
                           fontWeight: 900,
                           fontSize: "1rem",
+
                           cursor:
                             isLoadingCompleted
                               ? "not-allowed"
                               : "pointer",
+
+                          touchAction:
+                            "manipulation",
+
+                          WebkitTapHighlightColor:
+                            "transparent",
                         }}
                       >
                         {cart}
@@ -1263,12 +2520,20 @@ export default function BagroomScanPage({
 
               <input
                 value={cartNumber}
-                onChange={(event) =>
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.stopPropagation();
+                }}
+                onChange={(event) => {
                   selectCart(
                     event.target.value
-                  )
+                  );
+                }}
+                disabled={
+                  isLoadingCompleted
                 }
-                disabled={isLoadingCompleted}
                 placeholder="Cart number"
                 autoComplete="off"
                 style={{
@@ -1277,14 +2542,18 @@ export default function BagroomScanPage({
                   minHeight: 50,
                   padding: "10px 12px",
                   borderRadius: 10,
+
                   border:
                     "1px solid #d1d5db",
+
                   background:
                     isLoadingCompleted
                       ? "#f3f4f6"
                       : "white",
+
                   fontSize: "1rem",
                   fontWeight: 900,
+
                   textTransform:
                     "uppercase",
                 }}
@@ -1295,12 +2564,17 @@ export default function BagroomScanPage({
                   marginTop: 8,
                   padding: 10,
                   borderRadius: 10,
-                  background: selectedCart
-                    ? "#dcfce7"
-                    : "#fef3c7",
-                  color: selectedCart
-                    ? "#166534"
-                    : "#92400e",
+
+                  background:
+                    selectedCart
+                      ? "#dcfce7"
+                      : "#fef3c7",
+
+                  color:
+                    selectedCart
+                      ? "#166534"
+                      : "#92400e",
+
                   fontWeight: 900,
                   textAlign: "center",
                 }}
@@ -1315,16 +2589,19 @@ export default function BagroomScanPage({
               style={{
                 padding: 12,
                 borderRadius: 10,
+
                 background:
                   normalizedReceivingLocation ===
                   "OVERSIZE"
                     ? "#ffedd5"
                     : "#ede9fe",
+
                 color:
                   normalizedReceivingLocation ===
                   "OVERSIZE"
                     ? "#9a3412"
                     : "#5b21b6",
+
                 fontWeight: 900,
                 textAlign: "center",
               }}
@@ -1339,8 +2616,10 @@ export default function BagroomScanPage({
           <hr
             style={{
               border: "none",
+
               borderTop:
                 "1px solid #e5e7eb",
+
               margin: "14px 0",
             }}
           />
@@ -1359,6 +2638,12 @@ export default function BagroomScanPage({
           <input
             ref={inputRef}
             value={tagInput}
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             disabled={
@@ -1386,28 +2671,38 @@ export default function BagroomScanPage({
             style={{
               width: "100%",
               boxSizing: "border-box",
-              minHeight: compactScreen
-                ? 62
-                : 54,
+
+              minHeight:
+                compactScreen
+                  ? 62
+                  : 54,
+
               padding: "10px 12px",
               borderRadius: 12,
+
               border:
                 tagInput.length ===
                 BAG_TAG_LENGTH
                   ? "3px solid #16a34a"
                   : "2px solid #2563eb",
+
               background:
                 isLoadingCompleted ||
                 !locationReady
                   ? "#f3f4f6"
                   : "white",
+
               color: "#111827",
-              fontSize: compactScreen
-                ? "1.45rem"
-                : "1.2rem",
+
+              fontSize:
+                compactScreen
+                  ? "1.45rem"
+                  : "1.2rem",
+
               fontWeight: 900,
               textAlign: "center",
               letterSpacing: "0.08em",
+
               fontFamily:
                 "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             }}
@@ -1416,18 +2711,24 @@ export default function BagroomScanPage({
           <div
             style={{
               display: "flex",
+
               justifyContent:
                 "space-between",
+
               marginTop: 6,
               gap: 8,
-              fontSize: "0.8rem",
+
+              fontSize:
+                "0.8rem",
             }}
           >
             <span
               style={{
-                color: scannerMode
-                  ? "#2563eb"
-                  : "#6b7280",
+                color:
+                  scannerMode
+                    ? "#2563eb"
+                    : "#6b7280",
+
                 fontWeight: 800,
               }}
             >
@@ -1452,9 +2753,15 @@ export default function BagroomScanPage({
 
           <button
             type="button"
-            onClick={() =>
-              handleScanSubmit()
-            }
+            onPointerDown={(event) => {
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+
+              handleScanSubmit();
+            }}
             disabled={
               isLoadingCompleted ||
               !locationReady ||
@@ -1466,8 +2773,10 @@ export default function BagroomScanPage({
               minHeight: 54,
               marginTop: 10,
               borderRadius: 12,
+
               border:
                 "1px solid #1d4ed8",
+
               background:
                 isLoadingCompleted ||
                 !locationReady ||
@@ -1475,9 +2784,11 @@ export default function BagroomScanPage({
                   BAG_TAG_LENGTH
                   ? "#93c5fd"
                   : "#2563eb",
+
               color: "white",
               fontWeight: 900,
               fontSize: "1rem",
+
               cursor:
                 isLoadingCompleted ||
                 !locationReady ||
@@ -1487,7 +2798,9 @@ export default function BagroomScanPage({
                   : "pointer",
             }}
           >
-            SAVE {receivingLocationConfig.label.toUpperCase()} SCAN
+            SAVE{" "}
+            {receivingLocationConfig.label.toUpperCase()}{" "}
+            SCAN
           </button>
 
           {msg && (
@@ -1496,8 +2809,13 @@ export default function BagroomScanPage({
                 marginTop: 10,
                 padding: 10,
                 borderRadius: 10,
-                background: "#dcfce7",
-                color: "#166534",
+
+                background:
+                  "#dcfce7",
+
+                color:
+                  "#166534",
+
                 fontWeight: 900,
                 textAlign: "center",
               }}
@@ -1512,8 +2830,13 @@ export default function BagroomScanPage({
                 marginTop: 10,
                 padding: 10,
                 borderRadius: 10,
-                background: "#fee2e2",
-                color: "#991b1b",
+
+                background:
+                  "#fee2e2",
+
+                color:
+                  "#991b1b",
+
                 fontWeight: 900,
                 textAlign: "center",
               }}
@@ -1526,8 +2849,12 @@ export default function BagroomScanPage({
             <p
               style={{
                 color: "#b91c1c",
-                fontSize: "0.78rem",
-                fontWeight: 900,
+
+                fontSize:
+                  "0.78rem",
+
+                fontWeight:
+                  900,
               }}
             >
               ⚠️ Strict Manifest ON
@@ -1537,23 +2864,36 @@ export default function BagroomScanPage({
 
         <section
           style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: compactScreen
-              ? 8
-              : 12,
-            minWidth: 0,
+            border:
+              "1px solid #e5e7eb",
+
+            borderRadius:
+              12,
+
+            padding:
+              compactScreen
+                ? 8
+                : 12,
+
+            minWidth:
+              0,
           }}
         >
-          <h3 style={{ marginTop: 0 }}>
+          <h3
+            style={{
+              marginTop: 0,
+            }}
+          >
             Counter → Receiving
           </h3>
 
           <div
             style={{
               display: "grid",
+
               gridTemplateColumns:
                 "repeat(3, minmax(0, 1fr))",
+
               gap: 6,
             }}
           >
@@ -1594,8 +2934,10 @@ export default function BagroomScanPage({
           <div
             style={{
               display: "grid",
+
               gridTemplateColumns:
                 "repeat(3, minmax(0, 1fr))",
+
               gap: 6,
               marginTop: 6,
             }}
@@ -1637,10 +2979,14 @@ export default function BagroomScanPage({
           <div
             style={{
               marginTop: 10,
-              maxHeight: compactScreen
-                ? 330
-                : 430,
-              overflow: "auto",
+
+              maxHeight:
+                compactScreen
+                  ? 330
+                  : 430,
+
+              overflow:
+                "auto",
             }}
           >
             {dataLoading ? (
@@ -1670,13 +3016,8 @@ export default function BagroomScanPage({
                     );
 
                   const receivedScan =
-                    scans.find(
-                      (row) =>
-                        onlyDigits(
-                          row.tag ||
-                            row.bagTag ||
-                            row.id
-                        ) === tag
+                    receivedScanByTag.get(
+                      tag
                     );
 
                   const subtitle =
@@ -1715,11 +3056,11 @@ export default function BagroomScanPage({
                         deletingCounterTag ===
                         tag
                       }
-                      onDelete={() =>
+                      onDelete={() => {
                         deleteCounterScan(
                           scan
-                        )
-                      }
+                        );
+                      }}
                     />
                   );
                 }
@@ -1754,6 +3095,7 @@ export default function BagroomScanPage({
                       <th
                         style={{
                           ...th,
+
                           textAlign:
                             "right",
                         }}
@@ -1780,13 +3122,8 @@ export default function BagroomScanPage({
                         );
 
                       const receivedScan =
-                        scans.find(
-                          (row) =>
-                            onlyDigits(
-                              row.tag ||
-                                row.bagTag ||
-                                row.id
-                            ) === tag
+                        receivedScanByTag.get(
+                          tag
                         );
 
                       return (
@@ -1839,6 +3176,7 @@ export default function BagroomScanPage({
                             <td
                               style={{
                                 ...td,
+
                                 textAlign:
                                   "right",
                               }}
@@ -1848,11 +3186,11 @@ export default function BagroomScanPage({
                                   deletingCounterTag ===
                                   tag
                                 }
-                                onClick={() =>
+                                onClick={() => {
                                   deleteCounterScan(
                                     scan
-                                  )
-                                }
+                                  );
+                                }}
                               />
                             </td>
                           )}
@@ -1868,19 +3206,25 @@ export default function BagroomScanPage({
           <hr
             style={{
               border: "none",
+
               borderTop:
                 "1px solid #e5e7eb",
+
               margin: "14px 0",
             }}
           />
 
-          <h3>Received Bags</h3>
+          <h3>
+            Received Bags
+          </h3>
 
           <div
             style={{
               display: "grid",
+
               gridTemplateColumns:
                 "repeat(2, minmax(0, 1fr))",
+
               gap: 6,
             }}
           >
@@ -1914,14 +3258,17 @@ export default function BagroomScanPage({
               }
             />
           </div>
-
-          <div
+                    <div
             style={{
               marginTop: 10,
-              maxHeight: compactScreen
-                ? 330
-                : 430,
-              overflow: "auto",
+
+              maxHeight:
+                compactScreen
+                  ? 330
+                  : 430,
+
+              overflow:
+                "auto",
             }}
           >
             {loadingScans ? (
@@ -1955,11 +3302,14 @@ export default function BagroomScanPage({
                     scan
                   );
 
+                const scanLocation =
+                  getScanReceivingLocation(
+                    scan
+                  );
+
                 const subtitle =
-                  normalizeReceivingLocation(
-                    scan.receivingLocation ||
-                      scan.location
-                  ) === "BAGROOM"
+                  scanLocation ===
+                  "BAGROOM"
                     ? `${locationLabel} · Cart ${
                         scan.cartNumber ||
                         "-"
@@ -1981,20 +3331,22 @@ export default function BagroomScanPage({
                     username={
                       scan.scannedBy
                         ?.username ||
+                      scan.createdBy
+                        ?.username ||
                       "-"
                     }
                     canDelete={
                       canDeleteScans
                     }
                     deleting={
-                      deletingBagroomTag ===
+                      deletingReceivingTag ===
                       tag
                     }
-                    onDelete={() =>
+                    onDelete={() => {
                       deleteReceivingScan(
                         scan
-                      )
-                    }
+                      );
+                    }}
                   />
                 );
               })
@@ -2028,6 +3380,7 @@ export default function BagroomScanPage({
                       <th
                         style={{
                           ...th,
+
                           textAlign:
                             "right",
                         }}
@@ -2054,9 +3407,8 @@ export default function BagroomScanPage({
                         );
 
                       const scanLocation =
-                        normalizeReceivingLocation(
-                          scan.receivingLocation ||
-                            scan.location
+                        getScanReceivingLocation(
+                          scan
                         );
 
                       return (
@@ -2100,6 +3452,8 @@ export default function BagroomScanPage({
                           <td style={td}>
                             {scan.scannedBy
                               ?.username ||
+                              scan.createdBy
+                                ?.username ||
                               "-"}
                           </td>
 
@@ -2107,20 +3461,21 @@ export default function BagroomScanPage({
                             <td
                               style={{
                                 ...td,
+
                                 textAlign:
                                   "right",
                               }}
                             >
                               <DeleteButton
                                 busy={
-                                  deletingBagroomTag ===
+                                  deletingReceivingTag ===
                                   tag
                                 }
-                                onClick={() =>
+                                onClick={() => {
                                   deleteReceivingScan(
                                     scan
-                                  )
-                                }
+                                  );
+                                }}
                               />
                             </td>
                           )}
@@ -2137,25 +3492,42 @@ export default function BagroomScanPage({
 
       <section
         style={{
-          marginTop: 12,
-          border: "1px solid #e5e7eb",
-          borderRadius: 12,
-          padding: compactScreen
-            ? 8
-            : 12,
-          background: "#f9fafb",
+          marginTop:
+            12,
+
+          border:
+            "1px solid #e5e7eb",
+
+          borderRadius:
+            12,
+
+          padding:
+            compactScreen
+              ? 8
+              : 12,
+
+          background:
+            "#f9fafb",
         }}
       >
-        <h3 style={{ marginTop: 0 }}>
+        <h3
+          style={{
+            marginTop:
+              0,
+          }}
+        >
           Received Bags by Area
         </h3>
 
         {loadingScans ? (
-          <p>Loading…</p>
+          <p>
+            Loading…
+          </p>
         ) : scans.length === 0 ? (
           <p
             style={{
-              color: "#6b7280",
+              color:
+                "#6b7280",
             }}
           >
             No scans yet.
@@ -2163,12 +3535,16 @@ export default function BagroomScanPage({
         ) : (
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 compactScreen
                   ? "1fr"
                   : "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: 8,
+
+              gap:
+                8,
             }}
           >
             {Object.keys(
@@ -2179,7 +3555,8 @@ export default function BagroomScanPage({
                   String(b),
                   undefined,
                   {
-                    numeric: true,
+                    numeric:
+                      true,
                   }
                 )
               )
@@ -2193,19 +3570,19 @@ export default function BagroomScanPage({
                   groupScans[0];
 
                 const scanLocation =
-                  normalizeReceivingLocation(
+                  getScanReceivingLocation(
                     firstScan
-                      ?.receivingLocation ||
-                      firstScan?.location
                   );
 
                 const groupActive =
                   scanLocation ===
                     normalizedReceivingLocation &&
-                  (scanLocation !==
-                    "BAGROOM" ||
+                  (
+                    scanLocation !==
+                      "BAGROOM" ||
                     groupName ===
-                      selectedCart);
+                      selectedCart
+                  );
 
                 return (
                   <div
@@ -2213,14 +3590,30 @@ export default function BagroomScanPage({
                     style={{
                       border:
                         "1px solid #e5e7eb",
-                      borderRadius: 10,
-                      background: "white",
-                      overflow: "hidden",
+
+                      borderRadius:
+                        10,
+
+                      background:
+                        "white",
+
+                      overflow:
+                        "hidden",
                     }}
                   >
                     <button
                       type="button"
-                      onClick={() => {
+                      onPointerDown={(
+                        event
+                      ) => {
+                        event.stopPropagation();
+                      }}
+                      onClick={(
+                        event
+                      ) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+
                         if (
                           scanLocation ===
                           "BAGROOM"
@@ -2229,8 +3622,13 @@ export default function BagroomScanPage({
                             "BAGROOM"
                           );
 
-                          selectCart(
-                            groupName
+                          window.setTimeout(
+                            () => {
+                              selectCart(
+                                groupName
+                              );
+                            },
+                            50
                           );
                         } else {
                           selectReceivingLocation(
@@ -2238,10 +3636,19 @@ export default function BagroomScanPage({
                           );
                         }
                       }}
+                      disabled={
+                        isLoadingCompleted
+                      }
                       style={{
-                        width: "100%",
-                        border: "none",
-                        padding: "10px",
+                        width:
+                          "100%",
+
+                        border:
+                          "none",
+
+                        padding:
+                          "10px",
+
                         background:
                           groupActive
                             ? "#166534"
@@ -2252,13 +3659,37 @@ export default function BagroomScanPage({
                                   "GATE"
                                 ? "#5b21b6"
                                 : "#111827",
-                        color: "white",
-                        display: "flex",
+
+                        color:
+                          "white",
+
+                        display:
+                          "flex",
+
                         justifyContent:
                           "space-between",
-                        gap: 8,
-                        fontWeight: 900,
-                        cursor: "pointer",
+
+                        gap:
+                          8,
+
+                        fontWeight:
+                          900,
+
+                        cursor:
+                          isLoadingCompleted
+                            ? "not-allowed"
+                            : "pointer",
+
+                        opacity:
+                          isLoadingCompleted
+                            ? 0.7
+                            : 1,
+
+                        touchAction:
+                          "manipulation",
+
+                        WebkitTapHighlightColor:
+                          "transparent",
                       }}
                     >
                       <span>
@@ -2278,10 +3709,17 @@ export default function BagroomScanPage({
 
                     <div
                       style={{
-                        padding: 8,
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 5,
+                        padding:
+                          8,
+
+                        display:
+                          "flex",
+
+                        flexWrap:
+                          "wrap",
+
+                        gap:
+                          5,
                       }}
                     >
                       {groupScans.map(
@@ -2289,6 +3727,7 @@ export default function BagroomScanPage({
                           const tag =
                             onlyDigits(
                               scan.tag ||
+                                scan.bagTag ||
                                 scan.id
                             );
 
@@ -2299,24 +3738,32 @@ export default function BagroomScanPage({
 
                           return (
                             <span
-                              key={scan.id}
+                              key={
+                                scan.id
+                              }
                               style={{
                                 padding:
                                   "4px 7px",
+
                                 borderRadius:
                                   999,
+
                                 background:
                                   matched
                                     ? "#dcfce7"
                                     : "#ffedd5",
+
                                 color:
                                   matched
                                     ? "#166534"
                                     : "#9a3412",
+
                                 fontFamily:
                                   "ui-monospace, monospace",
+
                                 fontWeight:
                                   800,
+
                                 fontSize:
                                   "0.75rem",
                               }}
@@ -2386,35 +3833,72 @@ function LocationButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+          typeof onClick ===
+          "function"
+        ) {
+          onClick();
+        }
+      }}
       disabled={disabled}
       style={{
-        minHeight: 62,
-        padding: "7px 4px",
-        borderRadius: 10,
-        border: active
-          ? "2px solid #2563eb"
-          : "1px solid #d1d5db",
-        background: active
-          ? "#dbeafe"
-          : disabled
-            ? "#f3f4f6"
-            : "white",
-        color: active
-          ? "#1d4ed8"
-          : "#374151",
-        fontWeight: 900,
-        cursor: disabled
-          ? "not-allowed"
-          : "pointer",
-        opacity: disabled
-          ? 0.7
-          : 1,
+        minHeight:
+          62,
+
+        padding:
+          "7px 4px",
+
+        borderRadius:
+          10,
+
+        border:
+          active
+            ? "2px solid #2563eb"
+            : "1px solid #d1d5db",
+
+        background:
+          active
+            ? "#dbeafe"
+            : disabled
+              ? "#f3f4f6"
+              : "white",
+
+        color:
+          active
+            ? "#1d4ed8"
+            : "#374151",
+
+        fontWeight:
+          900,
+
+        cursor:
+          disabled
+            ? "not-allowed"
+            : "pointer",
+
+        opacity:
+          disabled
+            ? 0.7
+            : 1,
+
+        touchAction:
+          "manipulation",
+
+        WebkitTapHighlightColor:
+          "transparent",
       }}
     >
       <div
         style={{
-          fontSize: "1.2rem",
+          fontSize:
+            "1.2rem",
         }}
       >
         {icon}
@@ -2422,8 +3906,11 @@ function LocationButton({
 
       <div
         style={{
-          marginTop: 2,
-          fontSize: "0.72rem",
+          marginTop:
+            2,
+
+          fontSize:
+            "0.72rem",
         }}
       >
         {label}
@@ -2440,22 +3927,56 @@ function ModeButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+          typeof onClick ===
+          "function"
+        ) {
+          onClick();
+        }
+      }}
       style={{
-        flex: 1,
-        minHeight: 44,
-        borderRadius: 10,
-        border: active
-          ? "2px solid #2563eb"
-          : "1px solid #d1d5db",
-        background: active
-          ? "#dbeafe"
-          : "white",
-        color: active
-          ? "#1d4ed8"
-          : "#374151",
-        fontWeight: 900,
-        cursor: "pointer",
+        flex:
+          1,
+
+        minHeight:
+          44,
+
+        borderRadius:
+          10,
+
+        border:
+          active
+            ? "2px solid #2563eb"
+            : "1px solid #d1d5db",
+
+        background:
+          active
+            ? "#dbeafe"
+            : "white",
+
+        color:
+          active
+            ? "#1d4ed8"
+            : "#374151",
+
+        fontWeight:
+          900,
+
+        cursor:
+          "pointer",
+
+        touchAction:
+          "manipulation",
+
+        WebkitTapHighlightColor:
+          "transparent",
       }}
     >
       {label}
@@ -2472,20 +3993,33 @@ function SummaryCard({
   return (
     <div
       style={{
-        minWidth: 0,
-        padding: "9px 4px",
-        borderRadius: 10,
+        minWidth:
+          0,
+
+        padding:
+          "9px 4px",
+
+        borderRadius:
+          10,
+
         background,
+
         color,
-        textAlign: "center",
+
+        textAlign:
+          "center",
+
         border:
           "1px solid rgba(0,0,0,0.06)",
       }}
     >
       <div
         style={{
-          fontSize: "0.68rem",
-          fontWeight: 900,
+          fontSize:
+            "0.68rem",
+
+          fontWeight:
+            900,
         }}
       >
         {label}
@@ -2493,8 +4027,11 @@ function SummaryCard({
 
       <div
         style={{
-          fontSize: "1.25rem",
-          fontWeight: 900,
+          fontSize:
+            "1.25rem",
+
+          fontWeight:
+            900,
         }}
       >
         {value}
@@ -2514,42 +4051,60 @@ function ScanCard({
   deleting,
   onDelete,
 }) {
-  const background = success
-    ? "#f0fdf4"
-    : warning
-      ? "#fff7ed"
-      : "#fef2f2";
+  const background =
+    success
+      ? "#f0fdf4"
+      : warning
+        ? "#fff7ed"
+        : "#fef2f2";
 
-  const color = success
-    ? "#166534"
-    : warning
-      ? "#9a3412"
-      : "#991b1b";
+  const color =
+    success
+      ? "#166534"
+      : warning
+        ? "#9a3412"
+        : "#991b1b";
 
   return (
     <div
       style={{
-        marginBottom: 6,
-        padding: 9,
-        borderRadius: 10,
+        marginBottom:
+          6,
+
+        padding:
+          9,
+
+        borderRadius:
+          10,
+
         background,
-        border: `1px solid ${color}33`,
+
+        border:
+          `1px solid ${color}33`,
       }}
     >
       <div
         style={{
-          display: "flex",
+          display:
+            "flex",
+
           justifyContent:
             "space-between",
-          gap: 6,
-          alignItems: "center",
+
+          gap:
+            6,
+
+          alignItems:
+            "center",
         }}
       >
         <strong
           style={{
             fontFamily:
               "ui-monospace, monospace",
-            fontSize: "0.95rem",
+
+            fontSize:
+              "0.95rem",
           }}
         >
           {tag}
@@ -2557,12 +4112,22 @@ function ScanCard({
 
         <span
           style={{
-            padding: "3px 7px",
-            borderRadius: 999,
-            background: "white",
+            padding:
+              "3px 7px",
+
+            borderRadius:
+              999,
+
+            background:
+              "white",
+
             color,
-            fontSize: "0.65rem",
-            fontWeight: 900,
+
+            fontSize:
+              "0.65rem",
+
+            fontWeight:
+              900,
           }}
         >
           {status}
@@ -2571,14 +4136,26 @@ function ScanCard({
 
       <div
         style={{
-          marginTop: 5,
-          display: "flex",
+          marginTop:
+            5,
+
+          display:
+            "flex",
+
           justifyContent:
             "space-between",
-          alignItems: "center",
-          gap: 6,
-          color: "#6b7280",
-          fontSize: "0.75rem",
+
+          alignItems:
+            "center",
+
+          gap:
+            6,
+
+          color:
+            "#6b7280",
+
+          fontSize:
+            "0.75rem",
         }}
       >
         <span>
@@ -2602,17 +4179,30 @@ function StatusBadge({
   return (
     <span
       style={{
-        display: "inline-flex",
-        padding: "4px 7px",
-        borderRadius: 999,
-        background: received
-          ? "#dcfce7"
-          : "#fee2e2",
-        color: received
-          ? "#166534"
-          : "#991b1b",
-        fontSize: "0.68rem",
-        fontWeight: 900,
+        display:
+          "inline-flex",
+
+        padding:
+          "4px 7px",
+
+        borderRadius:
+          999,
+
+        background:
+          received
+            ? "#dcfce7"
+            : "#fee2e2",
+
+        color:
+          received
+            ? "#166534"
+            : "#991b1b",
+
+        fontSize:
+          "0.68rem",
+
+        fontWeight:
+          900,
       }}
     >
       {received
@@ -2628,17 +4218,30 @@ function MatchBadge({
   return (
     <span
       style={{
-        display: "inline-flex",
-        padding: "4px 7px",
-        borderRadius: 999,
-        background: matched
-          ? "#dcfce7"
-          : "#ffedd5",
-        color: matched
-          ? "#166534"
-          : "#9a3412",
-        fontSize: "0.68rem",
-        fontWeight: 900,
+        display:
+          "inline-flex",
+
+        padding:
+          "4px 7px",
+
+        borderRadius:
+          999,
+
+        background:
+          matched
+            ? "#dcfce7"
+            : "#ffedd5",
+
+        color:
+          matched
+            ? "#166534"
+            : "#9a3412",
+
+        fontSize:
+          "0.68rem",
+
+        fontWeight:
+          900,
       }}
     >
       {matched
@@ -2655,54 +4258,113 @@ function DeleteButton({
   return (
     <button
       type="button"
-      onClick={(event) => {
+      onPointerDown={(event) => {
         event.stopPropagation();
-        onClick();
+      }}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (
+          typeof onClick ===
+          "function"
+        ) {
+          onClick();
+        }
       }}
       disabled={busy}
       style={{
-        minHeight: 32,
-        padding: "4px 8px",
-        borderRadius: 999,
+        minHeight:
+          32,
+
+        padding:
+          "4px 8px",
+
+        borderRadius:
+          999,
+
         border:
           "1px solid #ef4444",
-        background: busy
-          ? "#fca5a5"
-          : "#ef4444",
-        color: "white",
-        fontSize: "0.7rem",
-        fontWeight: 900,
-        cursor: busy
-          ? "not-allowed"
-          : "pointer",
-        opacity: busy ? 0.7 : 1,
+
+        background:
+          busy
+            ? "#fca5a5"
+            : "#ef4444",
+
+        color:
+          "white",
+
+        fontSize:
+          "0.7rem",
+
+        fontWeight:
+          900,
+
+        cursor:
+          busy
+            ? "not-allowed"
+            : "pointer",
+
+        opacity:
+          busy
+            ? 0.7
+            : 1,
+
+        touchAction:
+          "manipulation",
+
+        WebkitTapHighlightColor:
+          "transparent",
       }}
     >
-      {busy ? "…" : "Delete"}
+      {busy
+        ? "…"
+        : "Delete"}
     </button>
   );
 }
 
 const tableStyle = {
-  width: "100%",
-  borderCollapse: "collapse",
+  width:
+    "100%",
+
+  borderCollapse:
+    "collapse",
 };
 
 const th = {
-  textAlign: "left",
-  padding: "9px 7px",
+  textAlign:
+    "left",
+
+  padding:
+    "9px 7px",
+
   borderBottom:
     "1px solid #e5e7eb",
-  fontSize: "0.72rem",
-  textTransform: "uppercase",
-  color: "#6b7280",
-  whiteSpace: "nowrap",
+
+  fontSize:
+    "0.72rem",
+
+  textTransform:
+    "uppercase",
+
+  color:
+    "#6b7280",
+
+  whiteSpace:
+    "nowrap",
 };
 
 const td = {
-  padding: "9px 7px",
+  padding:
+    "9px 7px",
+
   borderBottom:
     "1px solid #f3f4f6",
-  color: "#111827",
-  verticalAlign: "middle",
+
+  color:
+    "#111827",
+
+  verticalAlign:
+    "middle",
 };
