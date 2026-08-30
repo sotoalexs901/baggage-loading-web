@@ -1,4 +1,4 @@
-/ functions/index.js
+// functions/index.js
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 
@@ -262,6 +262,9 @@ async function getFlightsForMonth(
  * This includes every current or future subcollection under:
  *
  * flights/{flightId}
+ *
+ * Diagnostic STEP logging is included so failures can be
+ * identified from Cloud Functions logs and returned to the frontend.
  */
 async function deleteEntireFlight(flightId) {
   const cleanFlightId = String(
@@ -269,36 +272,90 @@ async function deleteEntireFlight(flightId) {
   ).trim();
 
   if (!cleanFlightId) {
-    throw new Error("flightId is required.");
+    throw new Error(
+      "flightId is required."
+    );
   }
 
   const flightRef = db
     .collection("flights")
     .doc(cleanFlightId);
 
-  const flightSnapshot =
-    await flightRef.get();
+  let flightSnapshot;
+  let flightData = null;
 
-  const flightData =
-    flightSnapshot.exists
-      ? flightSnapshot.data()
-      : null;
+  /*
+   * STEP 0
+   * Read the flight before deleting anything.
+   */
+  try {
+    console.log(
+      `[deleteEntireFlight] STEP 0 - reading flight ${cleanFlightId}`
+    );
+
+    flightSnapshot =
+      await flightRef.get();
+
+    flightData =
+      flightSnapshot.exists
+        ? flightSnapshot.data()
+        : null;
+
+    console.log(
+      `[deleteEntireFlight] STEP 0 completed for ${cleanFlightId}`
+    );
+  } catch (error) {
+    console.error(
+      `[deleteEntireFlight] STEP 0 FAILED for ${cleanFlightId}:`,
+      error
+    );
+
+    throw new Error(
+      `STEP 0 - Unable to read flight ${cleanFlightId}: ${
+        error?.message || error
+      }`
+    );
+  }
 
   console.log(
     `[deleteEntireFlight] Starting deletion for flight ${cleanFlightId}`
   );
 
-  /*
-   * Delete the global bagTags first while the flight
-   * information is still available.
-   */
-  const deletedBagTags =
-    await deleteBagTagsIndexForFlight(
-      cleanFlightId
-    );
+  let deletedBagTags = 0;
 
   /*
-   * Deletes every subcollection under the flight.
+   * STEP 1
+   * Delete global baggage tracking records.
+   */
+  try {
+    console.log(
+      `[deleteEntireFlight] STEP 1 - deleting bagTags for ${cleanFlightId}`
+    );
+
+    deletedBagTags =
+      await deleteBagTagsIndexForFlight(
+        cleanFlightId
+      );
+
+    console.log(
+      `[deleteEntireFlight] STEP 1 completed for ${cleanFlightId}. Deleted bagTags: ${deletedBagTags}`
+    );
+  } catch (error) {
+    console.error(
+      `[deleteEntireFlight] STEP 1 FAILED for ${cleanFlightId}:`,
+      error
+    );
+
+    throw new Error(
+      `STEP 1 - Unable to delete bagTags for ${cleanFlightId}: ${
+        error?.message || error
+      }`
+    );
+  }
+
+  /*
+   * STEP 2
+   * Delete every subcollection and the flight document.
    *
    * This automatically includes:
    *
@@ -312,16 +369,57 @@ async function deleteEntireFlight(flightId) {
    * - reopenReports
    * - any future subcollection
    */
-  await deleteDocumentTree(
-    flightRef
-  );
+  try {
+    console.log(
+      `[deleteEntireFlight] STEP 2 - deleting Firestore flight tree ${cleanFlightId}`
+    );
+
+    await deleteDocumentTree(
+      flightRef
+    );
+
+    console.log(
+      `[deleteEntireFlight] STEP 2 completed for ${cleanFlightId}`
+    );
+  } catch (error) {
+    console.error(
+      `[deleteEntireFlight] STEP 2 FAILED for ${cleanFlightId}:`,
+      error
+    );
+
+    throw new Error(
+      `STEP 2 - Unable to delete Firestore flight data for ${cleanFlightId}: ${
+        error?.message || error
+      }`
+    );
+  }
 
   /*
+   * STEP 3
    * Delete uploaded files associated with the flight.
+   *
+   * Storage failures are logged but do not fail the whole
+   * Firestore cleanup because deleteStoragePrefix already
+   * treats Storage cleanup as best-effort.
    */
-  await deleteStoragePrefix(
-    `flights/${cleanFlightId}/`
-  );
+  try {
+    console.log(
+      `[deleteEntireFlight] STEP 3 - deleting Storage files for ${cleanFlightId}`
+    );
+
+    await deleteStoragePrefix(
+      `flights/${cleanFlightId}/`
+    );
+
+    console.log(
+      `[deleteEntireFlight] STEP 3 completed for ${cleanFlightId}`
+    );
+  } catch (error) {
+    console.warn(
+      `[deleteEntireFlight] STEP 3 Storage cleanup skipped for ${cleanFlightId}:`,
+      error?.message || error
+    );
+  }
 
   console.log(
     `[deleteEntireFlight] Completed deletion for flight ${cleanFlightId}. Deleted bagTags: ${deletedBagTags}`
@@ -392,7 +490,19 @@ exports.deleteFlightCascade =
         throw new functions.https.HttpsError(
           "internal",
           error?.message ||
-            "Unable to delete flight."
+            "Unable to delete flight.",
+          {
+            originalMessage:
+              error?.message ||
+              null,
+
+            stack:
+              error?.stack ||
+              null,
+
+            flightId:
+              flightId,
+          }
         );
       }
     }
@@ -571,7 +681,19 @@ exports.previewMonthlyCleanup =
         throw new functions.https.HttpsError(
           "internal",
           error?.message ||
-            "Unable to preview monthly cleanup."
+            "Unable to preview monthly cleanup.",
+          {
+            originalMessage:
+              error?.message ||
+              null,
+
+            stack:
+              error?.stack ||
+              null,
+
+            month:
+              monthPrefix,
+          }
         );
       }
     }
@@ -646,11 +768,19 @@ exports.deleteFlightsByMonth =
       }
 
       try {
+        console.log(
+          `[deleteFlightsByMonth] Starting monthly cleanup for ${monthPrefix}. Requested by: ${data?.username || "unknown"}`
+        );
+
         const flightDocs =
           await getFlightsForMonth(
             year,
             month
           );
+
+        console.log(
+          `[deleteFlightsByMonth] Found ${flightDocs.length} flight(s) for ${monthPrefix}`
+        );
 
         let deletedFlights = 0;
         let deletedBagTags = 0;
@@ -659,6 +789,13 @@ exports.deleteFlightsByMonth =
           const documentSnapshot
           of flightDocs
         ) {
+          const flight =
+            documentSnapshot.data();
+
+          console.log(
+            `[deleteFlightsByMonth] Deleting flight ${flight?.flightNumber || documentSnapshot.id} (${documentSnapshot.id})`
+          );
+
           const result =
             await deleteEntireFlight(
               documentSnapshot.id
@@ -697,7 +834,23 @@ exports.deleteFlightsByMonth =
         throw new functions.https.HttpsError(
           "internal",
           error?.message ||
-            "Unable to delete monthly flight data."
+            "Unable to delete monthly flight data.",
+          {
+            originalMessage:
+              error?.message ||
+              null,
+
+            stack:
+              error?.stack ||
+              null,
+
+            month:
+              monthPrefix,
+
+            requestedBy:
+              data?.username ||
+              null,
+          }
         );
       }
     }
@@ -811,7 +964,19 @@ exports.deleteLoadedFlightsByMonth =
         throw new functions.https.HttpsError(
           "internal",
           error?.message ||
-            "Unable to delete flights."
+            "Unable to delete flights.",
+          {
+            originalMessage:
+              error?.message ||
+              null,
+
+            stack:
+              error?.stack ||
+              null,
+
+            month:
+              monthPrefix,
+          }
         );
       }
     }
@@ -921,7 +1086,16 @@ exports.cleanupOrphanedBagTags =
         throw new functions.https.HttpsError(
           "internal",
           error?.message ||
-            "Unable to clean orphaned bag tags."
+            "Unable to clean orphaned bag tags.",
+          {
+            originalMessage:
+              error?.message ||
+              null,
+
+            stack:
+              error?.stack ||
+              null,
+          }
         );
       }
     }
