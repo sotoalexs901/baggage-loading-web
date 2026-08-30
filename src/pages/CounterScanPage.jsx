@@ -285,7 +285,7 @@ export default function CounterScanPage({ flightId, user }) {
       return {
         ok: false,
         message:
-          `â This bag tag belongs to another flight/date.\n\n` +
+          `\u274C This bag tag belongs to another flight/date.\n\n` +
           `Current flight: ${flight?.flightNumber || flightId} ` +
           `(${flight?.flightDate || "-"})\n` +
           `Registered flight: ${existing.flightNumber || existing.flightId} ` +
@@ -310,7 +310,7 @@ export default function CounterScanPage({ flightId, user }) {
       type: "COUNTER_SCAN",
       location: "counter",
       message:
-        `Bag tag created / scanned at counter Â· ` +
+        `Bag tag created / scanned at counter \u00B7 ` +
         getBagTypeLabel(selectedBagType),
       tag,
       bagType: selectedBagType,
@@ -422,7 +422,7 @@ export default function CounterScanPage({ flightId, user }) {
         await deleteDoc(doc(db, "bagTags", tag));
       }
 
-      setMsg(`Counter scan deleted â ${tag}`);
+      setMsg(`Counter scan deleted \u2705 ${tag}`);
     } catch (e) {
       console.error("Delete Counter scan error:", e);
       setErr("Could not delete Counter scan. Check Firestore rules/connection.");
@@ -499,7 +499,7 @@ export default function CounterScanPage({ flightId, user }) {
         await deleteDoc(doc(db, "bagTags", tag));
       }
 
-      setMsg(`Bagroom scan deleted â ${tag}`);
+      setMsg(`Bagroom scan deleted \u2705 ${tag}`);
     } catch (e) {
       console.error("Delete Bagroom scan error:", e);
       setErr("Could not delete Bagroom scan. Check Firestore rules/connection.");
@@ -550,7 +550,7 @@ export default function CounterScanPage({ flightId, user }) {
       if (!saved) return;
 
       setMsg(
-        `Counter scan saved â ${tag} Â· ${getBagTypeLabel(selectedBagType)}`
+        `Counter scan saved \u2705 ${tag} \u00B7 ${getBagTypeLabel(selectedBagType)}`
       );
 
       setTagInput("");
@@ -653,7 +653,7 @@ export default function CounterScanPage({ flightId, user }) {
                 fontSize: "0.78rem",
               }}
             >
-              â Flight Loaded Â· Counter locked
+              \u2705 Flight Loaded \u00B7 Counter locked
             </div>
           )}
         </div>
@@ -671,21 +671,21 @@ export default function CounterScanPage({ flightId, user }) {
           <span>
             Flight:{" "}
             <strong style={{ color: "#0f172a" }}>
-              {loadingFlight ? "â¦" : flight?.flightNumber || flightId}
+              {loadingFlight ? "\u2026" : flight?.flightNumber || flightId}
             </strong>
           </span>
 
           <span>
             Date:{" "}
             <strong style={{ color: "#0f172a" }}>
-              {loadingFlight ? "â¦" : flight?.flightDate || "-"}
+              {loadingFlight ? "\u2026" : flight?.flightDate || "-"}
             </strong>
           </span>
 
           <span>
             Gate:{" "}
             <strong style={{ color: "#0f172a" }}>
-              {loadingFlight ? "â¦" : flight?.gate || "-"}
+              {loadingFlight ? "\u2026" : flight?.gate || "-"}
             </strong>
           </span>
         </div>
@@ -823,7 +823,7 @@ export default function CounterScanPage({ flightId, user }) {
             placeholder={
               isFlightLoaded
                 ? "Flight loaded / locked"
-                : "Scan bag tagâ¦"
+                : "Scan bag tag\u2026"
             }
             style={{
               width: "100%",
@@ -916,7 +916,7 @@ export default function CounterScanPage({ flightId, user }) {
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: 8 }}>
-            Counter â Bagroom Match
+            Counter \u2192 Bagroom Match
           </h3>
 
           <div
@@ -929,7 +929,7 @@ export default function CounterScanPage({ flightId, user }) {
           >
             <SummaryBox
               label="Counter"
-              value={loadingRows ? "â¦" : rows.length}
+              value={loadingRows ? "\u2026" : rows.length}
               background="#eff6ff"
               color="#1d4ed8"
               compact={isMobile}
@@ -939,7 +939,7 @@ export default function CounterScanPage({ flightId, user }) {
               label="Received"
               value={
                 loadingRows || loadingBagroomRows
-                  ? "â¦"
+                  ? "\u2026"
                   : counterReceivedCount
               }
               background="#dcfce7"
@@ -951,7 +951,7 @@ export default function CounterScanPage({ flightId, user }) {
               label="Pending"
               value={
                 loadingRows || loadingBagroomRows
-                  ? "â¦"
+                  ? "\u2026"
                   : counterPendingCount
               }
               background={
@@ -976,12 +976,12 @@ export default function CounterScanPage({ flightId, user }) {
               marginBottom: 8,
             }}
           >
-            Green = received in Bagroom Â· Red = still pending
+            Green = received in Bagroom \u00B7 Red = still pending
           </p>
 
           {loadingRows || loadingBagroomRows ? (
             <p style={{ color: "#6b7280" }}>
-              Loading Counter and Bagroom scansâ¦
+              Loading Counter and Bagroom scans\u2026
             </p>
           ) : rows.length === 0 ? (
             <p style={{ color: "#6b7280" }}>
@@ -1046,7 +1046,7 @@ export default function CounterScanPage({ flightId, user }) {
                         >
                           {row.bagTypeLabel ||
                             getBagTypeLabel(row.bagType)}
-                          {" Â· "}
+                          {" \u00B7 "}
                           {row.scannedBy?.username || "-"}
                         </div>
                       </div>
@@ -1089,7 +1089,7 @@ export default function CounterScanPage({ flightId, user }) {
                               : "pointer",
                         }}
                       >
-                        {busy ? "Deletingâ¦" : "Delete Counter Scan"}
+                        {busy ? "Deleting\u2026" : "Delete Counter Scan"}
                       </button>
                     )}
                   </div>
@@ -1180,7 +1180,7 @@ export default function CounterScanPage({ flightId, user }) {
                               disabled={busy || isFlightLoaded}
                               style={deleteButtonStyle(busy || isFlightLoaded)}
                             >
-                              {busy ? "Deletingâ¦" : "Delete"}
+                              {busy ? "Deleting\u2026" : "Delete"}
                             </button>
                           )}
                         </td>
@@ -1216,7 +1216,7 @@ export default function CounterScanPage({ flightId, user }) {
               label="Bagroom Total"
               value={
                 loadingBagroomRows
-                  ? "â¦"
+                  ? "\u2026"
                   : bagroomRows.length
               }
               background="#dcfce7"
@@ -1228,7 +1228,7 @@ export default function CounterScanPage({ flightId, user }) {
               label="Without Counter"
               value={
                 loadingRows || loadingBagroomRows
-                  ? "â¦"
+                  ? "\u2026"
                   : bagroomWithoutCounterCount
               }
               background={
@@ -1258,7 +1258,7 @@ export default function CounterScanPage({ flightId, user }) {
 
           {loadingBagroomRows ? (
             <p style={{ color: "#6b7280" }}>
-              Loading Bagroom scansâ¦
+              Loading Bagroom scans\u2026
             </p>
           ) : bagroomRows.length === 0 ? (
             <p style={{ color: "#6b7280" }}>
@@ -1322,7 +1322,7 @@ export default function CounterScanPage({ flightId, user }) {
                           }}
                         >
                           Cart {row.cartNumber || "-"}
-                          {" Â· "}
+                          {" \u00B7 "}
                           {row.scannedBy?.username || "-"}
                         </div>
                       </div>
@@ -1367,7 +1367,7 @@ export default function CounterScanPage({ flightId, user }) {
                               : "pointer",
                         }}
                       >
-                        {busy ? "Deletingâ¦" : "Delete Bagroom Scan"}
+                        {busy ? "Deleting\u2026" : "Delete Bagroom Scan"}
                       </button>
                     )}
                   </div>
@@ -1453,7 +1453,7 @@ export default function CounterScanPage({ flightId, user }) {
                               disabled={busy || isFlightLoaded}
                               style={deleteButtonStyle(busy || isFlightLoaded)}
                             >
-                              {busy ? "Deletingâ¦" : "Delete"}
+                              {busy ? "Deleting\u2026" : "Delete"}
                             </button>
                           )}
                         </td>
