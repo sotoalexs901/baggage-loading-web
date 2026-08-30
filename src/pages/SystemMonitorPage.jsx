@@ -161,6 +161,41 @@ function safeNumber(value) {
     : 0;
 }
 
+function getStatusCount(
+  metric,
+  status
+) {
+  if (!metric) {
+    return 0;
+  }
+
+  const normalizedStatus =
+    String(status || "")
+      .trim()
+      .toUpperCase();
+
+  const nestedValue =
+    metric.statusCounts
+      ?.[normalizedStatus];
+
+  if (
+    nestedValue !==
+      undefined &&
+    nestedValue !==
+      null
+  ) {
+    return safeNumber(
+      nestedValue
+    );
+  }
+
+  return safeNumber(
+    metric[
+      `statusCounts.${normalizedStatus}`
+    ]
+  );
+}
+
 function getPerformanceLabel(milliseconds) {
   const value =
     safeNumber(
@@ -251,21 +286,21 @@ function getModuleHealth(metric) {
     );
 
   const success =
-    safeNumber(
-      metric.statusCounts
-        ?.SUCCESS
+    getStatusCount(
+      metric,
+      "SUCCESS"
     );
 
   const warning =
-    safeNumber(
-      metric.statusCounts
-        ?.WARNING
+    getStatusCount(
+      metric,
+      "WARNING"
     );
 
   const error =
-    safeNumber(
-      metric.statusCounts
-        ?.ERROR
+    getStatusCount(
+      metric,
+      "ERROR"
     );
 
   const performanceSamples =
@@ -838,21 +873,21 @@ export default function SystemMonitorPage({
             );
 
           success +=
-            safeNumber(
-              metric.statusCounts
-                ?.SUCCESS
+            getStatusCount(
+              metric,
+              "SUCCESS"
             );
 
           warning +=
-            safeNumber(
-              metric.statusCounts
-                ?.WARNING
+            getStatusCount(
+              metric,
+              "WARNING"
             );
 
           errors +=
-            safeNumber(
-              metric.statusCounts
-                ?.ERROR
+            getStatusCount(
+              metric,
+              "ERROR"
             );
 
           duration +=
