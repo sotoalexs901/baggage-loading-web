@@ -1,5 +1,10 @@
 // src/pages/FlightsPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   addDoc,
@@ -13,92 +18,161 @@ import {
   where,
 } from "firebase/firestore";
 
-import { httpsCallable } from "firebase/functions";
+import {
+  httpsCallable,
+} from "firebase/functions";
 
-import { db, functions } from "../firebase";
+import {
+  db,
+  functions,
+} from "../firebase";
 
 const MOBILE_BREAKPOINT = 760;
 
+/* =========================
+   HELPERS
+========================= */
+
 function getTodayYYYYMMDD() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const d =
+    new Date();
+
+  const y =
+    d.getFullYear();
+
+  const m =
+    String(
+      d.getMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  const day =
+    String(
+      d.getDate()
+    ).padStart(
+      2,
+      "0"
+    );
 
   return `${y}-${m}-${day}`;
 }
 
-function normalizeRole(roleRaw) {
-  return String(roleRaw || "")
+function normalizeRole(
+  roleRaw
+) {
+  return String(
+    roleRaw || ""
+  )
     .trim()
     .toLowerCase();
 }
 
-function normalizeOperationalPosition(value) {
-  return String(value || "")
+function normalizeOperationalPosition(
+  value
+) {
+  return String(
+    value || ""
+  )
     .trim()
     .toUpperCase();
 }
 
-function canCreateFlights(roleRaw) {
-  const role = normalizeRole(roleRaw);
+function canCreateFlights(
+  roleRaw
+) {
+  const role =
+    normalizeRole(
+      roleRaw
+    );
 
   return (
-    role === "station_manager" ||
-    role === "duty_manager" ||
-    role === "duty_managers" ||
-    role === "supervisor" ||
-    role === "gate_controller"
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller"
   );
 }
 
-function isManager(roleRaw) {
-  const role = normalizeRole(roleRaw);
+function isManager(
+  roleRaw
+) {
+  const role =
+    normalizeRole(
+      roleRaw
+    );
 
   return (
-    role === "station_manager" ||
-    role === "duty_manager" ||
-    role === "duty_managers" ||
-    role === "supervisor" ||
-    role === "gate_controller"
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller"
   );
 }
 
-function normalizeStatus(value) {
-  const status = String(value || "OPEN")
-    .trim()
-    .toUpperCase();
+function normalizeStatus(
+  value
+) {
+  const status =
+    String(
+      value || "OPEN"
+    )
+      .trim()
+      .toUpperCase();
 
   return [
     "OPEN",
     "RECEIVING",
     "LOADING",
     "LOADED",
-  ].includes(status)
+  ].includes(
+    status
+  )
     ? status
     : "OPEN";
 }
 
-function getOperationalActor(user, operationalContext) {
+function getOperationalActor(
+  user,
+  operationalContext
+) {
   return {
     userId:
-      user?.id || null,
+      user?.id ||
+      null,
 
     username:
-      user?.username || null,
+      user?.username ||
+      null,
 
     role:
-      user?.role || null,
+      user?.role ||
+      null,
 
     fullName:
-      operationalContext?.employeeFullName ||
+      operationalContext
+        ?.employeeFullName ||
       user?.fullName ||
       user?.name ||
       user?.username ||
       null,
 
     employeeFullName:
-      operationalContext?.employeeFullName ||
+      operationalContext
+        ?.employeeFullName ||
       user?.fullName ||
       user?.name ||
       user?.username ||
@@ -106,76 +180,129 @@ function getOperationalActor(user, operationalContext) {
 
     operationalPosition:
       normalizeOperationalPosition(
-        operationalContext?.operationalPosition
-      ) || null,
+        operationalContext
+          ?.operationalPosition
+      ) ||
+      null,
 
     operationalPositionLabel:
-      operationalContext?.operationalPositionLabel ||
+      operationalContext
+        ?.operationalPositionLabel ||
       null,
 
     basePosition:
-      operationalContext?.basePosition ||
+      operationalContext
+        ?.basePosition ||
       user?.position ||
       null,
 
     systemRole:
-      operationalContext?.systemRole ||
-      normalizeRole(user?.role) ||
+      operationalContext
+        ?.systemRole ||
+      normalizeRole(
+        user?.role
+      ) ||
       null,
 
     loginAt:
-      operationalContext?.loginAt ||
+      operationalContext
+        ?.loginAt ||
       null,
   };
 }
 
 const STATUS_COLORS = {
   OPEN: {
-    bg: "#fef3c7",
-    text: "#92400e",
-    border: "#f59e0b",
+    bg:
+      "#fef3c7",
+
+    text:
+      "#92400e",
+
+    border:
+      "#f59e0b",
   },
 
   RECEIVING: {
-    bg: "#fef3c7",
-    text: "#92400e",
-    border: "#f59e0b",
+    bg:
+      "#fef3c7",
+
+    text:
+      "#92400e",
+
+    border:
+      "#f59e0b",
   },
 
   LOADING: {
-    bg: "#ffedd5",
-    text: "#9a3412",
-    border: "#fb923c",
+    bg:
+      "#ffedd5",
+
+    text:
+      "#9a3412",
+
+    border:
+      "#fb923c",
   },
 
   LOADED: {
-    bg: "#dcfce7",
-    text: "#166534",
-    border: "#22c55e",
+    bg:
+      "#dcfce7",
+
+    text:
+      "#166534",
+
+    border:
+      "#22c55e",
   },
 };
 
-function StatusPill({ status }) {
+function StatusPill({
+  status,
+}) {
   const normalized =
-    normalizeStatus(status);
+    normalizeStatus(
+      status
+    );
 
   const colors =
-    STATUS_COLORS[normalized] ||
+    STATUS_COLORS[
+      normalized
+    ] ||
     STATUS_COLORS.OPEN;
 
   return (
     <span
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "4px 10px",
-        borderRadius: 999,
-        border: `1px solid ${colors.border}`,
-        background: colors.bg,
-        color: colors.text,
-        fontWeight: 900,
-        fontSize: "0.75rem",
-        letterSpacing: "0.04em",
+        display:
+          "inline-flex",
+
+        alignItems:
+          "center",
+
+        padding:
+          "4px 10px",
+
+        borderRadius:
+          999,
+
+        border:
+          `1px solid ${colors.border}`,
+
+        background:
+          colors.bg,
+
+        color:
+          colors.text,
+
+        fontWeight:
+          900,
+
+        fontSize:
+          "0.75rem",
+
+        letterSpacing:
+          "0.04em",
       }}
     >
       {normalized}
@@ -183,36 +310,58 @@ function StatusPill({ status }) {
   );
 }
 
-function formatCallableError(error) {
+function formatCallableError(
+  error
+) {
   const code =
     error?.code
-      ? String(error.code)
+      ? String(
+          error.code
+        )
       : "";
 
   const message =
     error?.message
-      ? String(error.message)
+      ? String(
+          error.message
+        )
       : "Unknown error";
 
-  let details = "";
+  let details =
+    "";
 
   try {
     details =
       error?.details
-        ? JSON.stringify(error.details)
+        ? JSON.stringify(
+            error.details
+          )
         : "";
   } catch {
-    details = "";
+    details =
+      "";
   }
 
   return [
-    code && `(${code})`,
+    code &&
+      `(${code})`,
+
     message,
-    details && `Details: ${details}`,
+
+    details &&
+      `Details: ${details}`,
   ]
-    .filter(Boolean)
-    .join(" ");
+    .filter(
+      Boolean
+    )
+    .join(
+      " "
+    );
 }
+
+/* =========================
+   PAGE
+========================= */
 
 export default function FlightsPage({
   user,
@@ -221,7 +370,8 @@ export default function FlightsPage({
 }) {
   const today =
     useMemo(
-      () => getTodayYYYYMMDD(),
+      () =>
+        getTodayYYYYMMDD(),
       []
     );
 
@@ -229,75 +379,106 @@ export default function FlightsPage({
     isMobile,
     setIsMobile,
   ] = useState(
-    typeof window !== "undefined"
-      ? window.innerWidth < MOBILE_BREAKPOINT
+    typeof window !==
+      "undefined"
+      ? window.innerWidth <
+          MOBILE_BREAKPOINT
       : false
   );
 
   const [
     selectedDate,
     setSelectedDate,
-  ] = useState(today);
+  ] = useState(
+    today
+  );
 
   const [
     statusFilter,
     setStatusFilter,
-  ] = useState("active");
+  ] = useState(
+    "active"
+  );
 
   const [
     flights,
     setFlights,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
   const [
     loading,
     setLoading,
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
   const [
     showCreate,
     setShowCreate,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
   const [
     form,
     setForm,
   ] = useState({
-    flightNumber: "",
-    flightDate: today,
-    gate: "",
-    aircraftType: "",
+    flightNumber:
+      "",
+
+    flightDate:
+      today,
+
+    gate:
+      "",
+
+    aircraftType:
+      "",
   });
 
   const [
     formError,
     setFormError,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     saving,
     setSaving,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
   const [
     actionMsg,
     setActionMsg,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     actionErr,
     setActionErr,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     deletingId,
     setDeletingId,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     reopeningId,
     setReopeningId,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const allowCreate =
     canCreateFlights(
@@ -322,13 +503,18 @@ export default function FlightsPage({
       ]
     );
 
+  /* =========================
+     RESPONSIVE
+  ========================= */
+
   useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(
-        window.innerWidth <
-          MOBILE_BREAKPOINT
-      );
-    };
+    const handleResize =
+      () => {
+        setIsMobile(
+          window.innerWidth <
+            MOBILE_BREAKPOINT
+        );
+      };
 
     window.addEventListener(
       "resize",
@@ -343,73 +529,109 @@ export default function FlightsPage({
     };
   }, []);
 
-  useEffect(() => {
-    setLoading(true);
+  /* =========================
+     LOAD FLIGHTS
+  ========================= */
 
-    const qRef = query(
-      collection(
-        db,
-        "flights"
-      ),
-      where(
-        "flightDate",
-        "==",
-        selectedDate
-      ),
-      orderBy(
-        "createdAt",
-        "desc"
-      )
+  useEffect(() => {
+    setLoading(
+      true
     );
 
-    const unsub = onSnapshot(
-      qRef,
-      (snap) => {
-        const rows =
-          snap.docs.map(
-            (documentSnapshot) => ({
-              id:
-                documentSnapshot.id,
+    const qRef =
+      query(
+        collection(
+          db,
+          "flights"
+        ),
 
-              ...documentSnapshot.data(),
-            })
+        where(
+          "flightDate",
+          "==",
+          selectedDate
+        ),
+
+        orderBy(
+          "createdAt",
+          "desc"
+        )
+      );
+
+    const unsub =
+      onSnapshot(
+        qRef,
+
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                documentSnapshot
+              ) => ({
+                id:
+                  documentSnapshot.id,
+
+                ...documentSnapshot.data(),
+              })
+            );
+
+          const filtered =
+            statusFilter ===
+            "all"
+              ? rows
+              : statusFilter ===
+                  "completed"
+                ? rows.filter(
+                    (
+                      flight
+                    ) =>
+                      normalizeStatus(
+                        flight.status
+                      ) ===
+                      "LOADED"
+                  )
+                : rows.filter(
+                    (
+                      flight
+                    ) =>
+                      normalizeStatus(
+                        flight.status
+                      ) !==
+                      "LOADED"
+                  );
+
+          setFlights(
+            filtered
           );
 
-        const filtered =
-          statusFilter === "all"
-            ? rows
-            : statusFilter === "completed"
-              ? rows.filter(
-                  (flight) =>
-                    normalizeStatus(
-                      flight.status
-                    ) === "LOADED"
-                )
-              : rows.filter(
-                  (flight) =>
-                    normalizeStatus(
-                      flight.status
-                    ) !== "LOADED"
-                );
+          setLoading(
+            false
+          );
+        },
 
-        setFlights(
-          filtered
-        );
-
-        setLoading(
-          false
-        );
-      },
-      (error) => {
-        console.error(
-          "Flights onSnapshot error:",
+        (
           error
-        );
+        ) => {
+          console.error(
+            "Flights onSnapshot error:",
+            error
+          );
 
-        setFlights([]);
-        setLoading(false);
-      }
-    );
+          setFlights(
+            []
+          );
+
+          setLoading(
+            false
+          );
+
+          setActionErr(
+            error?.message ||
+              "Could not load flights."
+          );
+        }
+      );
 
     return () => {
       unsub();
@@ -419,361 +641,544 @@ export default function FlightsPage({
     statusFilter,
   ]);
 
-  const openCreate = () => {
-    setFormError("");
+  /* =========================
+     CREATE MODAL
+  ========================= */
 
-    setForm({
-      flightNumber: "",
-      flightDate: selectedDate,
-      gate: "",
-      aircraftType: "",
-    });
-
-    setShowCreate(true);
-  };
-
-  const closeCreate = () => {
-    if (saving) {
-      return;
-    }
-
-    setShowCreate(false);
-    setFormError("");
-  };
-
-  const handleCreate = async () => {
-    if (saving) {
-      return;
-    }
-
-    setFormError("");
-    setActionMsg("");
-    setActionErr("");
-
-    const flightNumber =
-      form.flightNumber
-        .trim()
-        .toUpperCase();
-
-    const flightDate =
-      form.flightDate
-        .trim();
-
-    const gate =
-      form.gate
-        .trim()
-        .toUpperCase();
-
-    const aircraftType =
-      form.aircraftType
-        .trim()
-        .toUpperCase();
-
-    if (
-      !flightNumber ||
-      !flightDate
-    ) {
+  const openCreate =
+    () => {
       setFormError(
-        "Flight number and date are required."
+        ""
       );
 
-      return;
-    }
+      setForm({
+        flightNumber:
+          "",
 
-    try {
-      setSaving(true);
+        flightDate:
+          selectedDate,
 
-      const dupQ = query(
-        collection(
-          db,
-          "flights"
-        ),
-        where(
-          "flightDate",
-          "==",
-          flightDate
-        ),
-        where(
-          "flightNumber",
-          "==",
-          flightNumber
-        ),
-        limit(1)
+        gate:
+          "",
+
+        aircraftType:
+          "",
+      });
+
+      setShowCreate(
+        true
+      );
+    };
+
+  const closeCreate =
+    () => {
+      if (
+        saving
+      ) {
+        return;
+      }
+
+      setShowCreate(
+        false
       );
 
-      const dupSnap =
-        await getDocs(
-          dupQ
-        );
+      setFormError(
+        ""
+      );
+    };
+
+  /* =========================
+     CREATE FLIGHT
+  ========================= */
+
+  const handleCreate =
+    async () => {
+      if (
+        saving
+      ) {
+        return;
+      }
+
+      setFormError(
+        ""
+      );
+
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      const flightNumber =
+        form.flightNumber
+          .trim()
+          .toUpperCase();
+
+      const flightDate =
+        form.flightDate
+          .trim();
+
+      const gate =
+        form.gate
+          .trim()
+          .toUpperCase();
+
+      const aircraftType =
+        form.aircraftType
+          .trim()
+          .toUpperCase();
 
       if (
-        !dupSnap.empty
+        !flightNumber ||
+        !flightDate
       ) {
         setFormError(
-          "This flight already exists for that date."
+          "Flight number and date are required."
         );
 
         return;
       }
 
-      const payload = {
-        flightNumber,
-        flightDate,
-
-        gate:
-          gate || null,
-
-        aircraftType:
-          aircraftType || null,
-
-        status:
-          "OPEN",
-
-        createdAt:
-          serverTimestamp(),
-
-        createdBy:
-          operationalActor,
-
-        createdByUsername:
-          user?.username || null,
-
-        createdByFullName:
-          operationalActor.employeeFullName,
-
-        createdByOperationalPosition:
-          operationalActor.operationalPosition,
-
-        createdByOperationalPositionLabel:
-          operationalActor.operationalPositionLabel,
-      };
-
-      const docRef =
-        await addDoc(
-          collection(
-            db,
-            "flights"
-          ),
-          payload
+      try {
+        setSaving(
+          true
         );
 
-      setShowCreate(false);
+        const dupQ =
+          query(
+            collection(
+              db,
+              "flights"
+            ),
 
-      setActionMsg(
-        `Flight created: ${flightNumber}`
-      );
+            where(
+              "flightDate",
+              "==",
+              flightDate
+            ),
 
-      window.setTimeout(
-        () => {
-          setActionMsg("");
-        },
-        2500
-      );
+            where(
+              "flightNumber",
+              "==",
+              flightNumber
+            ),
 
-      onFlightSelected?.(
-        docRef.id
-      );
-    } catch (error) {
-      console.error(
-        "Create flight error:",
-        error
-      );
+            limit(
+              1
+            )
+          );
 
-      setFormError(
-        error?.message ||
-          "Could not create flight. Check permissions/rules."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
+        const dupSnap =
+          await getDocs(
+            dupQ
+          );
 
-  const openFlight = (
-    flight
-  ) => {
-    onFlightSelected?.(
-      flight.id
-    );
-  };
+        if (
+          !dupSnap.empty
+        ) {
+          setFormError(
+            "This flight already exists for that date."
+          );
 
-  const handleReopen = async (
-    flight
-  ) => {
-    if (!allowManage) {
-      return;
-    }
+          return;
+        }
 
-    setActionMsg("");
-    setActionErr("");
+        const payload = {
+          flightNumber,
 
-    const ok =
-      window.confirm(
-        `Reopen this flight?\n\n` +
-          `${flight.flightNumber || flight.id} ` +
-          `(${flight.flightDate || "-"})\n\n` +
-          `This will unlock scanning again.`
-      );
+          flightDate,
 
-    if (!ok) {
-      return;
-    }
+          gate:
+            gate ||
+            null,
 
-    try {
-      setReopeningId(
-        flight.id
-      );
+          aircraftType:
+            aircraftType ||
+            null,
 
-      const reopenFlight =
-        httpsCallable(
-          functions,
-          "reopenFlight"
+          status:
+            "OPEN",
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy:
+            operationalActor,
+
+          createdByUsername:
+            user?.username ||
+            null,
+
+          createdByFullName:
+            operationalActor
+              .employeeFullName,
+
+          createdByOperationalPosition:
+            operationalActor
+              .operationalPosition,
+
+          createdByOperationalPositionLabel:
+            operationalActor
+              .operationalPositionLabel,
+        };
+
+        const docRef =
+          await addDoc(
+            collection(
+              db,
+              "flights"
+            ),
+            payload
+          );
+
+        setShowCreate(
+          false
         );
 
-      await reopenFlight({
-        flightId:
-          flight.id,
+        setActionMsg(
+          `Flight created: ${flightNumber}`
+        );
 
-        userRole:
-          user?.role || null,
+        window.setTimeout(
+          () => {
+            setActionMsg(
+              ""
+            );
+          },
+          2500
+        );
 
-        username:
-          user?.username || null,
-
-        employeeFullName:
-          operationalActor.employeeFullName,
-
-        operationalPosition:
-          operationalActor.operationalPosition,
-
-        operationalPositionLabel:
-          operationalActor.operationalPositionLabel,
-      });
-
-      setActionMsg(
-        `Flight reopened: ${
-          flight.flightNumber ||
-          flight.id
-        }`
-      );
-
-      window.setTimeout(
-        () => {
-          setActionMsg("");
-        },
-        2500
-      );
-    } catch (error) {
-      console.error(
-        "reopenFlight failed:",
+        /*
+         * IMPORTANT:
+         * Send BOTH the Firestore ID
+         * and flight number back to App.jsx.
+         */
+        if (
+          typeof onFlightSelected ===
+          "function"
+        ) {
+          onFlightSelected(
+            docRef.id,
+            flightNumber
+          );
+        }
+      } catch (
         error
+      ) {
+        console.error(
+          "Create flight error:",
+          error
+        );
+
+        setFormError(
+          error?.message ||
+            "Could not create flight. Check permissions/rules."
+        );
+      } finally {
+        setSaving(
+          false
+        );
+      }
+    };
+
+  /* =========================
+     OPEN FLIGHT
+  ========================= */
+
+  const openFlight =
+    (
+      flight
+    ) => {
+      setActionMsg(
+        ""
       );
 
       setActionErr(
-        formatCallableError(
-          error
-        )
-      );
-    } finally {
-      setReopeningId("");
-    }
-  };
-
-  const handleDelete = async (
-    flight
-  ) => {
-    if (!allowManage) {
-      return;
-    }
-
-    setActionMsg("");
-    setActionErr("");
-
-    const label =
-      `${flight.flightNumber || flight.id} ` +
-      `(${flight.flightDate || "-"})`;
-
-    const ok =
-      window.confirm(
-        `DELETE FLIGHT?\n\n` +
-          `${label}\n\n` +
-          `This will permanently remove:\n` +
-          `- Counter scans\n` +
-          `- Bagroom / Oversize / Gate-Ramp scans\n` +
-          `- Aircraft scans\n` +
-          `- Manifest tags\n` +
-          `- Reports\n` +
-          `- PDFs and flight files in Storage\n` +
-          `- Global bagTags tracking records\n` +
-          `- Bag tag event history\n\n` +
-          `This cannot be undone.`
+        ""
       );
 
-    if (!ok) {
-      return;
-    }
-
-    try {
-      setDeletingId(
-        flight.id
-      );
-
-      const deleteFlightCascade =
-        httpsCallable(
-          functions,
-          "deleteFlightCascade"
+      if (
+        !flight?.id
+      ) {
+        setActionErr(
+          "Unable to open flight. Flight ID is missing."
         );
 
-      const result =
-        await deleteFlightCascade({
+        return;
+      }
+
+      /*
+       * IMPORTANT FIX:
+       *
+       * Previously only flight.id was sent.
+       * Now the flight number is also sent.
+       *
+       * App.jsx receives these values and
+       * changes currentView to "gate".
+       */
+      if (
+        typeof onFlightSelected ===
+        "function"
+      ) {
+        onFlightSelected(
+          flight.id,
+          flight.flightNumber ||
+            null
+        );
+      } else {
+        setActionErr(
+          "Unable to open flight. Navigation handler is unavailable."
+        );
+      }
+    };
+
+  /* =========================
+     REOPEN
+  ========================= */
+
+  const handleReopen =
+    async (
+      flight
+    ) => {
+      if (
+        !allowManage
+      ) {
+        return;
+      }
+
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      const ok =
+        window.confirm(
+          `Reopen this flight?\n\n` +
+            `${
+              flight.flightNumber ||
+              flight.id
+            } ` +
+            `(${
+              flight.flightDate ||
+              "-"
+            })\n\n` +
+            `This will unlock scanning again.`
+        );
+
+      if (
+        !ok
+      ) {
+        return;
+      }
+
+      try {
+        setReopeningId(
+          flight.id
+        );
+
+        const reopenFlight =
+          httpsCallable(
+            functions,
+            "reopenFlight"
+          );
+
+        await reopenFlight({
           flightId:
             flight.id,
 
           userRole:
-            user?.role || null,
+            user?.role ||
+            null,
 
           username:
-            user?.username || null,
+            user?.username ||
+            null,
 
           employeeFullName:
-            operationalActor.employeeFullName,
+            operationalActor
+              .employeeFullName,
 
           operationalPosition:
-            operationalActor.operationalPosition,
+            operationalActor
+              .operationalPosition,
 
           operationalPositionLabel:
-            operationalActor.operationalPositionLabel,
+            operationalActor
+              .operationalPositionLabel,
         });
 
-      const deletedBagTags =
-        result?.data
-          ?.deletedBagTags || 0;
+        setActionMsg(
+          `Flight reopened: ${
+            flight.flightNumber ||
+            flight.id
+          }`
+        );
+
+        window.setTimeout(
+          () => {
+            setActionMsg(
+              ""
+            );
+          },
+          2500
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "reopenFlight failed:",
+          error
+        );
+
+        setActionErr(
+          formatCallableError(
+            error
+          )
+        );
+      } finally {
+        setReopeningId(
+          ""
+        );
+      }
+    };
+
+  /* =========================
+     DELETE
+  ========================= */
+
+  const handleDelete =
+    async (
+      flight
+    ) => {
+      if (
+        !allowManage
+      ) {
+        return;
+      }
 
       setActionMsg(
-        `Flight deleted: ${label}. ` +
-          `${deletedBagTags} tracked bag tag record(s) removed.`
-      );
-
-      window.setTimeout(
-        () => {
-          setActionMsg("");
-        },
-        3500
-      );
-    } catch (error) {
-      console.error(
-        "deleteFlightCascade failed:",
-        error
+        ""
       );
 
       setActionErr(
-        formatCallableError(
-          error
-        )
+        ""
       );
-    } finally {
-      setDeletingId("");
-    }
-  };
+
+      const labelText =
+        `${
+          flight.flightNumber ||
+          flight.id
+        } ` +
+        `(${
+          flight.flightDate ||
+          "-"
+        })`;
+
+      const ok =
+        window.confirm(
+          `DELETE FLIGHT?\n\n` +
+            `${labelText}\n\n` +
+            `This will permanently remove:\n` +
+            `- Counter scans\n` +
+            `- Bagroom / Oversize / Gate-Ramp scans\n` +
+            `- Aircraft scans\n` +
+            `- Manifest tags\n` +
+            `- Reports\n` +
+            `- PDFs and flight files in Storage\n` +
+            `- Global bagTags tracking records\n` +
+            `- Bag tag event history\n\n` +
+            `This cannot be undone.`
+        );
+
+      if (
+        !ok
+      ) {
+        return;
+      }
+
+      try {
+        setDeletingId(
+          flight.id
+        );
+
+        const deleteFlightCascade =
+          httpsCallable(
+            functions,
+            "deleteFlightCascade"
+          );
+
+        const result =
+          await deleteFlightCascade({
+            flightId:
+              flight.id,
+
+            userRole:
+              user?.role ||
+              null,
+
+            username:
+              user?.username ||
+              null,
+
+            employeeFullName:
+              operationalActor
+                .employeeFullName,
+
+            operationalPosition:
+              operationalActor
+                .operationalPosition,
+
+            operationalPositionLabel:
+              operationalActor
+                .operationalPositionLabel,
+          });
+
+        const deletedBagTags =
+          result?.data
+            ?.deletedBagTags ||
+          0;
+
+        setActionMsg(
+          `Flight deleted: ${labelText}. ` +
+            `${deletedBagTags} tracked bag tag record(s) removed.`
+        );
+
+        window.setTimeout(
+          () => {
+            setActionMsg(
+              ""
+            );
+          },
+          3500
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "deleteFlightCascade failed:",
+          error
+        );
+
+        setActionErr(
+          formatCallableError(
+            error
+          )
+        );
+      } finally {
+        setDeletingId(
+          ""
+        );
+      }
+    };
+
+  /* =========================
+     RENDER
+  ========================= */
 
   return (
     <div
@@ -795,6 +1200,8 @@ export default function FlightsPage({
           "1px solid #e5e7eb",
       }}
     >
+      {/* HEADER */}
+
       <div
         style={{
           display:
@@ -823,7 +1230,8 @@ export default function FlightsPage({
         <div>
           <h2
             style={{
-              margin: 0,
+              margin:
+                0,
             }}
           >
             Flights
@@ -909,7 +1317,9 @@ export default function FlightsPage({
         >
           <div>
             <label
-              style={label}
+              style={
+                label
+              }
             >
               Date
             </label>
@@ -923,7 +1333,9 @@ export default function FlightsPage({
                 event
               ) => {
                 setSelectedDate(
-                  event.target.value
+                  event
+                    .target
+                    .value
                 );
               }}
               style={{
@@ -937,7 +1349,9 @@ export default function FlightsPage({
 
           <div>
             <label
-              style={label}
+              style={
+                label
+              }
             >
               Filter
             </label>
@@ -950,7 +1364,9 @@ export default function FlightsPage({
                 event
               ) => {
                 setStatusFilter(
-                  event.target.value
+                  event
+                    .target
+                    .value
                 );
               }}
               style={{
@@ -1034,6 +1450,8 @@ export default function FlightsPage({
         </div>
       </div>
 
+      {/* MESSAGES */}
+
       {(actionMsg ||
         actionErr) && (
         <div
@@ -1112,6 +1530,8 @@ export default function FlightsPage({
         }}
       />
 
+      {/* FLIGHTS */}
+
       {loading ? (
         <p
           style={{
@@ -1134,6 +1554,10 @@ export default function FlightsPage({
           {statusFilter}).
         </p>
       ) : isMobile ? (
+        /* =========================
+           MOBILE CARDS
+        ========================= */
+
         <div
           style={{
             display:
@@ -1144,7 +1568,9 @@ export default function FlightsPage({
           }}
         >
           {flights.map(
-            (flight) => {
+            (
+              flight
+            ) => {
               const status =
                 normalizeStatus(
                   flight.status
@@ -1356,6 +1782,10 @@ export default function FlightsPage({
           )}
         </div>
       ) : (
+        /* =========================
+           DESKTOP TABLE
+        ========================= */
+
         <div
           style={{
             overflowX:
@@ -1422,7 +1852,9 @@ export default function FlightsPage({
 
             <tbody>
               {flights.map(
-                (flight) => {
+                (
+                  flight
+                ) => {
                   const status =
                     normalizeStatus(
                       flight.status
@@ -1446,7 +1878,11 @@ export default function FlightsPage({
                         flight.id
                       }
                     >
-                      <td style={td}>
+                      <td
+                        style={
+                          td
+                        }
+                      >
                         <strong>
                           {
                             flight.flightNumber ||
@@ -1455,28 +1891,44 @@ export default function FlightsPage({
                         </strong>
                       </td>
 
-                      <td style={td}>
+                      <td
+                        style={
+                          td
+                        }
+                      >
                         {
                           flight.flightDate ||
                           "-"
                         }
                       </td>
 
-                      <td style={td}>
+                      <td
+                        style={
+                          td
+                        }
+                      >
                         {
                           flight.gate ||
                           "-"
                         }
                       </td>
 
-                      <td style={td}>
+                      <td
+                        style={
+                          td
+                        }
+                      >
                         {
                           flight.aircraftType ||
                           "-"
                         }
                       </td>
 
-                      <td style={td}>
+                      <td
+                        style={
+                          td
+                        }
+                      >
                         <StatusPill
                           status={
                             status
@@ -1502,7 +1954,9 @@ export default function FlightsPage({
                               flight
                             )
                           }
-                          style={tableOpenButton}
+                          style={
+                            tableOpenButton
+                          }
                         >
                           {isCompleted
                             ? "View"
@@ -1597,15 +2051,24 @@ export default function FlightsPage({
                 "0.8rem",
             }}
           >
-            Tip: Completed flights (LOADED) remain accessible for
-            Gate, Aircraft, and Reports. Managers can Reopen if needed.
+            Tip: Completed flights
+            (LOADED) remain accessible
+            for Gate, Aircraft, and
+            Reports. Managers can
+            Reopen if needed.
           </p>
         </div>
       )}
 
+      {/* =========================
+          CREATE FLIGHT MODAL
+      ========================= */}
+
       {showCreate && (
         <div
-          style={overlay}
+          style={
+            overlay
+          }
           onMouseDown={(
             event
           ) => {
@@ -1719,7 +2182,9 @@ export default function FlightsPage({
             >
               <div>
                 <label
-                  style={label}
+                  style={
+                    label
+                  }
                 >
                   Flight Number
                 </label>
@@ -1738,19 +2203,25 @@ export default function FlightsPage({
                         ...previous,
 
                         flightNumber:
-                          event.target.value,
+                          event
+                            .target
+                            .value,
                       })
                     )
                   }
                   placeholder="e.g. SY214"
                   autoCapitalize="characters"
-                  style={input}
+                  style={
+                    input
+                  }
                 />
               </div>
 
               <div>
                 <label
-                  style={label}
+                  style={
+                    label
+                  }
                 >
                   Date
                 </label>
@@ -1770,17 +2241,23 @@ export default function FlightsPage({
                         ...previous,
 
                         flightDate:
-                          event.target.value,
+                          event
+                            .target
+                            .value,
                       })
                     )
                   }
-                  style={input}
+                  style={
+                    input
+                  }
                 />
               </div>
 
               <div>
                 <label
-                  style={label}
+                  style={
+                    label
+                  }
                 >
                   Gate
                 </label>
@@ -1799,19 +2276,25 @@ export default function FlightsPage({
                         ...previous,
 
                         gate:
-                          event.target.value,
+                          event
+                            .target
+                            .value,
                       })
                     )
                   }
                   placeholder="e.g. E68"
                   autoCapitalize="characters"
-                  style={input}
+                  style={
+                    input
+                  }
                 />
               </div>
 
               <div>
                 <label
-                  style={label}
+                  style={
+                    label
+                  }
                 >
                   Aircraft Type
                 </label>
@@ -1830,13 +2313,17 @@ export default function FlightsPage({
                         ...previous,
 
                         aircraftType:
-                          event.target.value,
+                          event
+                            .target
+                            .value,
                       })
                     )
                   }
                   placeholder="e.g. B737-800"
                   autoCapitalize="characters"
-                  style={input}
+                  style={
+                    input
+                  }
                 />
               </div>
             </div>
@@ -1974,7 +2461,8 @@ export default function FlightsPage({
               Created by:{" "}
               <strong>
                 {
-                  operationalActor.employeeFullName ||
+                  operationalActor
+                    .employeeFullName ||
                   user?.username ||
                   "-"
                 }
@@ -2000,6 +2488,10 @@ export default function FlightsPage({
     </div>
   );
 }
+
+/* =========================
+   UI COMPONENTS
+========================= */
 
 function MiniInfo({
   label,
@@ -2070,7 +2562,8 @@ function ActionButton({
     "#cbd5e1";
 
   if (
-    tone === "success"
+    tone ===
+    "success"
   ) {
     background =
       "#16a34a";
@@ -2083,7 +2576,8 @@ function ActionButton({
   }
 
   if (
-    tone === "danger"
+    tone ===
+    "danger"
   ) {
     background =
       "#ef4444";
@@ -2142,6 +2636,10 @@ function ActionButton({
     </button>
   );
 }
+
+/* =========================
+   STYLES
+========================= */
 
 const th = {
   textAlign:
