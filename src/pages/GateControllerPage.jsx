@@ -1,10 +1,12 @@
 // src/pages/GateControllerPage.jsx
+
 import React, {
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+
 import {
   collection,
   deleteDoc,
@@ -17,35 +19,84 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  where,
   writeBatch,
 } from "firebase/firestore";
-import { db, storage } from "../firebase";
+
+import {
+  db,
+  storage,
+} from "../firebase";
+
+import {
+  logSystemIncident,
+  logSystemSuccess,
+  startSystemTimer,
+} from "../utils/systemLogger.js";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
+
 import {
   ref as storageRef,
   uploadBytes,
   getDownloadURL,
 } from "firebase/storage";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  pdfWorker;
 
 const MOBILE_BREAKPOINT = 760;
 
+/* =========================
+   BASIC HELPERS
+========================= */
+
 function normalizeRole(role) {
-  return String(role || "").trim().toLowerCase();
+  return String(role || "")
+    .trim()
+    .toLowerCase();
 }
 
-function normalizeOperationalPosition(value) {
-  return String(value || "").trim().toUpperCase();
+function normalizeOperationalPosition(
+  value
+) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
 }
 
-function userCanWorkGateController(item) {
-  if (!item) return false;
+function getErrorCode(error) {
+  return (
+    error?.code ||
+    error?.name ||
+    null
+  );
+}
 
-  if (normalizeRole(item.role) === "gate_controller") {
+function getErrorMessage(
+  error,
+  fallback
+) {
+  return (
+    error?.message ||
+    fallback ||
+    "Unknown error"
+  );
+}
+
+function userCanWorkGateController(
+  item
+) {
+  if (!item) {
+    return false;
+  }
+
+  if (
+    normalizeRole(
+      item.role
+    ) ===
+    "gate_controller"
+  ) {
     return true;
   }
 
@@ -56,220 +107,472 @@ function userCanWorkGateController(item) {
     item.positions,
   ];
 
-  return candidates.some((list) => {
-    if (!Array.isArray(list)) return false;
+  return candidates.some(
+    (
+      list
+    ) => {
+      if (
+        !Array.isArray(
+          list
+        )
+      ) {
+        return false;
+      }
 
-    return list.some((value) => {
-      const normalized = normalizeOperationalPosition(value);
+      return list.some(
+        (
+          value
+        ) => {
+          const normalized =
+            normalizeOperationalPosition(
+              value
+            );
 
-      return (
-        normalized === "GATE_CONTROLLER" ||
-        normalized === "GATE CONTROLLER"
+          return (
+            normalized ===
+              "GATE_CONTROLLER" ||
+            normalized ===
+              "GATE CONTROLLER"
+          );
+        }
       );
-    });
-  });
+    }
+  );
 }
 
-function getOperationalActor(user, operationalContext) {
+function getOperationalActor(
+  user,
+  operationalContext
+) {
   return {
-    userId: user?.id || null,
-    username: user?.username || null,
-    role: user?.role || null,
+    userId:
+      user?.id ||
+      null,
+
+    username:
+      user?.username ||
+      null,
+
+    role:
+      user?.role ||
+      null,
+
     fullName:
-      operationalContext?.employeeFullName ||
+      operationalContext
+        ?.employeeFullName ||
       user?.fullName ||
       user?.name ||
       user?.username ||
       null,
+
     employeeFullName:
-      operationalContext?.employeeFullName ||
+      operationalContext
+        ?.employeeFullName ||
       user?.fullName ||
       user?.name ||
       user?.username ||
       null,
+
     operationalPosition:
-      operationalContext?.operationalPosition || null,
+      operationalContext
+        ?.operationalPosition ||
+      null,
+
     operationalPositionLabel:
-      operationalContext?.operationalPositionLabel || null,
+      operationalContext
+        ?.operationalPositionLabel ||
+      null,
+
     basePosition:
-      operationalContext?.basePosition ||
+      operationalContext
+        ?.basePosition ||
       user?.position ||
       null,
+
     systemRole:
-      operationalContext?.systemRole ||
-      normalizeRole(user?.role) ||
+      operationalContext
+        ?.systemRole ||
+      normalizeRole(
+        user?.role
+      ) ||
       null,
   };
 }
 
-function toIntSafe(value) {
-  const number = Number(value);
+function toIntSafe(
+  value
+) {
+  const number =
+    Number(
+      value
+    );
 
-  if (!Number.isFinite(number)) return null;
+  if (
+    !Number.isFinite(
+      number
+    )
+  ) {
+    return null;
+  }
 
-  return Math.max(0, Math.trunc(number));
+  return Math.max(
+    0,
+    Math.trunc(
+      number
+    )
+  );
 }
+
+/* =========================
+   STATUS
+========================= */
 
 const STATUS_COLORS = {
   OPEN: {
-    bg: "#FEF3C7",
-    text: "#92400E",
-    border: "#F59E0B",
+    bg:
+      "#FEF3C7",
+
+    text:
+      "#92400E",
+
+    border:
+      "#F59E0B",
   },
+
   RECEIVING: {
-    bg: "#DBEAFE",
-    text: "#1E3A8A",
-    border: "#60A5FA",
+    bg:
+      "#DBEAFE",
+
+    text:
+      "#1E3A8A",
+
+    border:
+      "#60A5FA",
   },
+
   LOADING: {
-    bg: "#FFEDD5",
-    text: "#9A3412",
-    border: "#FB923C",
+    bg:
+      "#FFEDD5",
+
+    text:
+      "#9A3412",
+
+    border:
+      "#FB923C",
   },
+
   LOADED: {
-    bg: "#DCFCE7",
-    text: "#166534",
-    border: "#22C55E",
+    bg:
+      "#DCFCE7",
+
+    text:
+      "#166534",
+
+    border:
+      "#22C55E",
   },
 };
 
-function normalizeStatus(status) {
-  const value = String(status || "OPEN")
-    .trim()
-    .toUpperCase();
+function normalizeStatus(
+  status
+) {
+  const value =
+    String(
+      status ||
+        "OPEN"
+    )
+      .trim()
+      .toUpperCase();
 
-  return value === "OPEN" ||
+  return (
+    value === "OPEN" ||
     value === "RECEIVING" ||
     value === "LOADING" ||
     value === "LOADED"
+  )
     ? value
     : "OPEN";
 }
 
-function normalizeBagType(value) {
-  const type = String(value || "CHECKED_BAG")
-    .trim()
-    .toUpperCase();
+/* =========================
+   BAG HELPERS
+========================= */
 
-  return type === "CHECKED_BAG" ||
+function normalizeBagType(
+  value
+) {
+  const type =
+    String(
+      value ||
+        "CHECKED_BAG"
+    )
+      .trim()
+      .toUpperCase();
+
+  return (
+    type === "CHECKED_BAG" ||
     type === "GATE_CHECK" ||
     type === "OVERSIZE" ||
     type === "GATE_BAG"
+  )
     ? type
     : "CHECKED_BAG";
 }
 
-function getBagTypeLabel(value) {
-  const type = normalizeBagType(value);
+function getBagTypeLabel(
+  value
+) {
+  const type =
+    normalizeBagType(
+      value
+    );
 
-  if (type === "GATE_CHECK") {
+  if (
+    type ===
+    "GATE_CHECK"
+  ) {
     return "Gate Check";
   }
 
-  if (type === "OVERSIZE") {
+  if (
+    type ===
+    "OVERSIZE"
+  ) {
     return "Oversize";
   }
 
-  if (type === "GATE_BAG") {
+  if (
+    type ===
+    "GATE_BAG"
+  ) {
     return "Bag Tagged at Gate";
   }
 
   return "Checked Bag";
 }
 
-function cleanTagValue(value) {
-  return String(value || "").trim();
+function cleanTagValue(
+  value
+) {
+  return String(
+    value ||
+      ""
+  ).trim();
 }
 
-function onlyDigits(value) {
-  return String(value || "").replace(/\D+/g, "");
+function onlyDigits(
+  value
+) {
+  return String(
+    value ||
+      ""
+  ).replace(
+    /\D+/g,
+    ""
+  );
 }
 
-function isValidTag10(tag) {
-  return onlyDigits(tag).length === 10;
+function isValidTag10(
+  tag
+) {
+  return (
+    onlyDigits(
+      tag
+    ).length ===
+    10
+  );
 }
 
-function normalizeCartNumber(value) {
-  return String(value || "").trim().toUpperCase();
+function normalizeCartNumber(
+  value
+) {
+  return String(
+    value ||
+      ""
+  )
+    .trim()
+    .toUpperCase();
 }
 
-/*
- * Converts Firestore Timestamp, Date, string, or number
- * into a readable local date and time.
- */
-function formatTrackerDateTime(value) {
-  if (!value) return "Not available";
+/* =========================
+   TRACKER HELPERS
+========================= */
 
-  let date = null;
-
-  if (typeof value?.toDate === "function") {
-    date = value.toDate();
-  } else if (
-    typeof value?.seconds === "number"
-  ) {
-    date = new Date(value.seconds * 1000);
-  } else if (value instanceof Date) {
-    date = value;
-  } else {
-    const parsed = new Date(value);
-
-    if (!Number.isNaN(parsed.getTime())) {
-      date = parsed;
-    }
-  }
-
-  if (!date || Number.isNaN(date.getTime())) {
+function formatTrackerDateTime(
+  value
+) {
+  if (!value) {
     return "Not available";
   }
 
-  return date.toLocaleString([], {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  let date =
+    null;
+
+  if (
+    typeof value
+      ?.toDate ===
+    "function"
+  ) {
+    date =
+      value.toDate();
+  } else if (
+    typeof value
+      ?.seconds ===
+    "number"
+  ) {
+    date =
+      new Date(
+        value.seconds *
+          1000
+      );
+  } else if (
+    value instanceof
+    Date
+  ) {
+    date =
+      value;
+  } else {
+    const parsed =
+      new Date(
+        value
+      );
+
+    if (
+      !Number.isNaN(
+        parsed.getTime()
+      )
+    ) {
+      date =
+        parsed;
+    }
+  }
+
+  if (
+    !date ||
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return "Not available";
+  }
+
+  return date.toLocaleString(
+    [],
+    {
+      month:
+        "short",
+
+      day:
+        "2-digit",
+
+      year:
+        "numeric",
+
+      hour:
+        "2-digit",
+
+      minute:
+        "2-digit",
+
+      second:
+        "2-digit",
+    }
+  );
 }
 
-/*
- * Converts stored location keys into labels
- * that are easier for the Gate Controller to read.
- */
-function getTrackerLocationLabel(value) {
-  const location = String(value || "")
-    .trim()
-    .toLowerCase();
+function getTrackerLocationLabel(
+  value
+) {
+  const location =
+    String(
+      value ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
 
   const labels = {
-    counter: "Ticket Counter",
-    ticket_counter: "Ticket Counter",
-    checkin: "Ticket Counter",
-    check_in: "Ticket Counter",
-    tsa: "TSA",
-    security: "TSA",
-    bagroom: "Bagroom",
-    bag_room: "Bagroom",
-    baggage_room: "Bagroom",
-    makeup: "Bagroom / Make-up Area",
-    makeup_area: "Bagroom / Make-up Area",
-    oversize: "Oversize",
-    oversize_belt: "Oversize Belt",
-    transfer: "Transfer Area",
-    customs: "Customs",
-    cbp: "Customs / CBP",
-    gate: "Boarding Gate",
-    jetbridge: "Jet Bridge",
-    ramp: "Ramp",
-    aircraft: "Aircraft",
-    aircraft_hold: "Aircraft Hold",
-    hold: "Aircraft Hold",
-    loaded: "Aircraft Loaded",
-    offloaded: "Offloaded",
+    counter:
+      "Ticket Counter",
+
+    ticket_counter:
+      "Ticket Counter",
+
+    checkin:
+      "Ticket Counter",
+
+    check_in:
+      "Ticket Counter",
+
+    tsa:
+      "TSA",
+
+    security:
+      "TSA",
+
+    bagroom:
+      "Bagroom",
+
+    bag_room:
+      "Bagroom",
+
+    baggage_room:
+      "Bagroom",
+
+    makeup:
+      "Bagroom / Make-up Area",
+
+    makeup_area:
+      "Bagroom / Make-up Area",
+
+    oversize:
+      "Oversize",
+
+    oversize_belt:
+      "Oversize Belt",
+
+    transfer:
+      "Transfer Area",
+
+    customs:
+      "Customs",
+
+    cbp:
+      "Customs / CBP",
+
+    gate:
+      "Boarding Gate",
+
+    jetbridge:
+      "Jet Bridge",
+
+    ramp:
+      "Ramp",
+
+    aircraft:
+      "Aircraft",
+
+    aircraft_hold:
+      "Aircraft Hold",
+
+    hold:
+      "Aircraft Hold",
+
+    loaded:
+      "Aircraft Loaded",
+
+    offloaded:
+      "Offloaded",
   };
 
-  if (labels[location]) {
-    return labels[location];
+  if (
+    labels[
+      location
+    ]
+  ) {
+    return labels[
+      location
+    ];
   }
 
   if (!location) {
@@ -277,39 +580,54 @@ function getTrackerLocationLabel(value) {
   }
 
   return location
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (character) =>
-      character.toUpperCase()
+    .replaceAll(
+      "_",
+      " "
+    )
+    .replace(
+      /\b\w/g,
+      (
+        character
+      ) =>
+        character.toUpperCase()
     );
 }
 
-/*
- * Retrieves the best available username from
- * different event/document formats.
- */
-function getTrackerUsername(source) {
-  if (!source) return "Not available";
+function getTrackerUsername(
+  source
+) {
+  if (!source) {
+    return "Not available";
+  }
 
   return (
     source.username ||
     source.employeeName ||
     source.agentName ||
-    source.scannedBy?.username ||
-    source.scannedBy?.fullName ||
-    source.createdBy?.username ||
-    source.createdBy?.fullName ||
-    source.updatedBy?.username ||
-    source.lastSeenBy?.username ||
-    source.lastSeenBy?.fullName ||
+    source.scannedBy
+      ?.username ||
+    source.scannedBy
+      ?.fullName ||
+    source.createdBy
+      ?.username ||
+    source.createdBy
+      ?.fullName ||
+    source.updatedBy
+      ?.username ||
+    source.lastSeenBy
+      ?.username ||
+    source.lastSeenBy
+      ?.fullName ||
     "Not available"
   );
 }
 
-/*
- * Retrieves the most useful event description.
- */
-function getTrackerEventLabel(source) {
-  if (!source) return "No event information";
+function getTrackerEventLabel(
+  source
+) {
+  if (!source) {
+    return "No event information";
+  }
 
   return (
     source.message ||
@@ -321,71 +639,152 @@ function getTrackerEventLabel(source) {
   );
 }
 
+/* =========================
+   MANIFEST HELPERS
+========================= */
+
 function extractBagTagsFromText(
   text,
-  { exactLen = 10 } = {}
+  {
+    exactLen =
+      10,
+  } = {}
 ) {
-  const source = String(text || "");
-  const matches = source.match(/\d+/g) || [];
-
-  const tags = matches
-    .map((value) => value.trim())
-    .filter(
-      (value) => value.length === exactLen
+  const source =
+    String(
+      text ||
+        ""
     );
 
-  const seen = new Set();
-  const unique = [];
+  const matches =
+    source.match(
+      /\d+/g
+    ) ||
+    [];
 
-  for (const tag of tags) {
-    if (!seen.has(tag)) {
-      seen.add(tag);
-      unique.push(tag);
+  const tags =
+    matches
+      .map(
+        (
+          value
+        ) =>
+          value.trim()
+      )
+      .filter(
+        (
+          value
+        ) =>
+          value.length ===
+          exactLen
+      );
+
+  const seen =
+    new Set();
+
+  const unique =
+    [];
+
+  for (
+    const tag of tags
+  ) {
+    if (
+      !seen.has(
+        tag
+      )
+    ) {
+      seen.add(
+        tag
+      );
+
+      unique.push(
+        tag
+      );
     }
   }
 
   return unique;
 }
 
-async function readFileAsText(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
+async function readFileAsText(
+  file
+) {
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+      const reader =
+        new FileReader();
 
-    reader.onerror = () => {
-      reject(new Error("File read error"));
-    };
+      reader.onerror =
+        () => {
+          reject(
+            new Error(
+              "File read error"
+            )
+          );
+        };
 
-    reader.onload = () => {
-      resolve(String(reader.result || ""));
-    };
+      reader.onload =
+        () => {
+          resolve(
+            String(
+              reader.result ||
+                ""
+            )
+          );
+        };
 
-    reader.readAsText(file);
-  });
+      reader.readAsText(
+        file
+      );
+    }
+  );
 }
 
-async function readPdfAsText(file) {
-  const arrayBuffer = await file.arrayBuffer();
+async function readPdfAsText(
+  file
+) {
+  const arrayBuffer =
+    await file.arrayBuffer();
 
-  const pdf = await pdfjsLib.getDocument({
-    data: arrayBuffer,
-  }).promise;
+  const pdf =
+    await pdfjsLib
+      .getDocument({
+        data:
+          arrayBuffer,
+      })
+      .promise;
 
-  let fullText = "";
+  let fullText =
+    "";
 
   for (
     let pageNumber = 1;
-    pageNumber <= pdf.numPages;
+    pageNumber <=
+    pdf.numPages;
     pageNumber += 1
   ) {
-    const page = await pdf.getPage(pageNumber);
+    const page =
+      await pdf.getPage(
+        pageNumber
+      );
+
     const content =
       await page.getTextContent();
 
-    const strings = content.items.map(
-      (item) => item.str
-    );
+    const strings =
+      content.items.map(
+        (
+          item
+        ) =>
+          item.str
+      );
 
-    fullText += `${strings.join(" ")}\n`;
+    fullText +=
+      `${strings.join(
+        " "
+      )}\n`;
   }
 
   return fullText;
@@ -396,34 +795,67 @@ async function uploadPdfForOcr({
   flightId,
   user,
 }) {
-  const safeName = String(
-    file.name || "manifest.pdf"
-  ).replaceAll(" ", "_");
+  const safeName =
+    String(
+      file.name ||
+        "manifest.pdf"
+    ).replaceAll(
+      " ",
+      "_"
+    );
 
   const path =
     `flights/${flightId}/manifests/` +
     `${Date.now()}_${safeName}`;
 
-  const fileRef = storageRef(storage, path);
+  const fileRef =
+    storageRef(
+      storage,
+      path
+    );
 
-  await uploadBytes(fileRef, file, {
-    contentType: "application/pdf",
-    customMetadata: {
-      flightId: String(flightId),
-      uploadedBy: String(
-        user?.username || ""
-      ),
-      role: String(user?.role || ""),
-    },
-  });
+  await uploadBytes(
+    fileRef,
+    file,
+    {
+      contentType:
+        "application/pdf",
 
-  const url = await getDownloadURL(fileRef);
+      customMetadata: {
+        flightId:
+          String(
+            flightId
+          ),
+
+        uploadedBy:
+          String(
+            user?.username ||
+              ""
+          ),
+
+        role:
+          String(
+            user?.role ||
+              ""
+          ),
+      },
+    }
+  );
+
+  const url =
+    await getDownloadURL(
+      fileRef
+    );
 
   return {
     path,
     url,
   };
 }
+
+/* =========================
+   MAIN PAGE
+========================= */
 
 export default function GateControllerPage({
   flightId,
@@ -432,30 +864,151 @@ export default function GateControllerPage({
   gateControllerOnDuty,
   canEdit,
 }) {
-  const role = useMemo(
-    () => normalizeRole(user?.role),
-    [user]
-  );
+  const role =
+    useMemo(
+      () =>
+        normalizeRole(
+          user?.role
+        ),
+      [
+        user?.role,
+      ]
+    );
 
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== "undefined"
-      ? window.innerWidth < MOBILE_BREAKPOINT
+  const [
+    isMobile,
+    setIsMobile,
+  ] = useState(
+    typeof window !==
+      "undefined"
+      ? window.innerWidth <
+          MOBILE_BREAKPOINT
       : false
   );
 
-  const operationalActor = useMemo(
-    () => getOperationalActor(user, operationalContext),
-    [user, operationalContext]
-  );
+  const operationalActor =
+    useMemo(
+      () =>
+        getOperationalActor(
+          user,
+          operationalContext
+        ),
+      [
+        user,
+        operationalContext,
+      ]
+    );
 
   const canDeleteGateBags =
-    role === "station_manager" ||
-    role === "duty_manager" ||
-    role === "supervisor" ||
-    role === "gate_controller";
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller";
 
-  const [gateControllers, setGateControllers] =
-    useState([]);
+  /* =========================
+     FLIGHT
+  ========================= */
+
+  const [
+    flight,
+    setFlight,
+  ] = useState(
+    null
+  );
+
+  const [
+    flightLoading,
+    setFlightLoading,
+  ] = useState(
+    true
+  );
+
+  /* =========================
+     SYSTEM MONITOR
+  ========================= */
+
+  const logGateIncident =
+    async ({
+      action,
+
+      status =
+        "ERROR",
+
+      severity =
+        "MEDIUM",
+
+      errorType =
+        null,
+
+      errorCode =
+        null,
+
+      message =
+        null,
+
+      tag =
+        null,
+
+      durationMs =
+        null,
+
+      metadata =
+        {},
+    }) => {
+      await logSystemIncident({
+        module:
+          "GATE_CONTROLLER",
+
+        action,
+
+        status,
+
+        severity,
+
+        errorType,
+
+        errorCode,
+
+        message,
+
+        user,
+
+        operationalContext,
+
+        flightId,
+
+        flightNumber:
+          flight
+            ?.flightNumber ||
+          null,
+
+        bagTag:
+          tag ||
+          null,
+
+        durationMs,
+
+        currentView:
+          "gate",
+
+        metadata,
+      });
+    };
+
+  /* =========================
+     GATE CONTROLLER
+  ========================= */
+
+  const [
+    gateControllers,
+    setGateControllers,
+  ] = useState(
+    []
+  );
 
   const [
     selectedGateController,
@@ -468,24 +1021,53 @@ export default function GateControllerPage({
       ""
   );
 
-  const [gcMsg, setGcMsg] = useState("");
+  const [
+    gcMsg,
+    setGcMsg,
+  ] = useState(
+    ""
+  );
 
-  const [flight, setFlight] = useState(null);
-  const [flightLoading, setFlightLoading] =
-    useState(true);
+  /* =========================
+     TOTALS
+  ========================= */
 
   const [
     checkedTotalInput,
     setCheckedTotalInput,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
+  const [
+    saving,
+    setSaving,
+  ] = useState(
+    false
+  );
 
-  const [aircraftTotal, setAircraftTotal] =
-    useState(0);
+  const [
+    saveMsg,
+    setSaveMsg,
+  ] = useState(
+    ""
+  );
 
-  const [zones, setZones] = useState({
+  /* =========================
+     AIRCRAFT
+  ========================= */
+
+  const [
+    aircraftTotal,
+    setAircraftTotal,
+  ] = useState(
+    0
+  );
+
+  const [
+    zones,
+    setZones,
+  ] = useState({
     1: 0,
     2: 0,
     3: 0,
@@ -495,232 +1077,403 @@ export default function GateControllerPage({
   const [
     aircraftLoading,
     setAircraftLoading,
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
   const [
     aircraftScans,
     setAircraftScans,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
   const [
     loadedAircraftTags,
     setLoadedAircraftTags,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
+
+  /* =========================
+     BAGROOM
+  ========================= */
 
   const [
     bagroomScans,
     setBagroomScans,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
   const [
     loadingBagroomScans,
     setLoadingBagroomScans,
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
   const [
     activeBagroomTab,
     setActiveBagroomTab,
-  ] = useState("summary");
+  ] = useState(
+    "summary"
+  );
 
-  const [manifestText, setManifestText] =
-    useState("");
+  /* =========================
+     MANIFEST
+  ========================= */
+
+  const [
+    manifestText,
+    setManifestText,
+  ] = useState(
+    ""
+  );
 
   const [
     manifestTagsPreview,
     setManifestTagsPreview,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
-  const [manifestMsg, setManifestMsg] =
-    useState("");
+  const [
+    manifestMsg,
+    setManifestMsg,
+  ] = useState(
+    ""
+  );
 
-  const [manifestErr, setManifestErr] =
-    useState("");
+  const [
+    manifestErr,
+    setManifestErr,
+  ] = useState(
+    ""
+  );
 
-  const [importing, setImporting] =
-    useState(false);
+  const [
+    importing,
+    setImporting,
+  ] = useState(
+    false
+  );
 
   const [
     strictManifest,
     setStrictManifest,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
-  const [scanInput, setScanInput] =
-    useState("");
+  const [
+    scanInput,
+    setScanInput,
+  ] = useState(
+    ""
+  );
 
-  const scanRef = useRef(null);
+  const scanRef =
+    useRef(
+      null
+    );
 
-  const [scanMsg, setScanMsg] = useState("");
-  const [scanErr, setScanErr] = useState("");
+  const [
+    scanMsg,
+    setScanMsg,
+  ] = useState(
+    ""
+  );
 
-  const [savingScan, setSavingScan] =
-    useState(false);
+  const [
+    scanErr,
+    setScanErr,
+  ] = useState(
+    ""
+  );
 
-  const [allowedCount, setAllowedCount] =
-    useState(0);
+  const [
+    savingScan,
+    setSavingScan,
+  ] = useState(
+    false
+  );
+
+  const [
+    allowedCount,
+    setAllowedCount,
+  ] = useState(
+    0
+  );
 
   const [
     recentAllowed,
     setRecentAllowed,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
   const [
     allManifestTags,
     setAllManifestTags,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
   const [
     loadingAllowed,
     setLoadingAllowed,
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
-  const [deletingTag, setDeletingTag] =
-    useState("");
+  const [
+    deletingTag,
+    setDeletingTag,
+  ] = useState(
+    ""
+  );
 
   const [
     activeManifestTab,
     setActiveManifestTab,
-  ] = useState("recent");
+  ] = useState(
+    "recent"
+  );
 
-  /*
-   * Missing bag tracker modal.
-   *
-   * The tracker is activated when the flight has
-   * between 1 and 5 manifest bags missing to load.
-   */
+  /* =========================
+     BAG TRACKER
+  ========================= */
+
   const [
     trackerOpen,
     setTrackerOpen,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
   const [
     trackerTag,
     setTrackerTag,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     trackerLoading,
     setTrackerLoading,
-  ] = useState(false);
+  ] = useState(
+    false
+  );
 
   const [
     trackerError,
     setTrackerError,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     trackerData,
     setTrackerData,
-  ] = useState(null);
+  ] = useState(
+    null
+  );
 
-  /*
-   * Gate-tagged bags:
-   * direct Gate \u2192 Aircraft.
-   */
+  /* =========================
+     GATE BAG
+  ========================= */
+
   const [
     gateBagInput,
     setGateBagInput,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
-  const gateBagInputRef = useRef(null);
-  const gateBagTimerRef = useRef(null);
-  const gateBagSavingRef = useRef(false);
+  const gateBagInputRef =
+    useRef(
+      null
+    );
+
+  const gateBagTimerRef =
+    useRef(
+      null
+    );
+
+  const gateBagSavingRef =
+    useRef(
+      false
+    );
 
   const [
     gateBagScans,
     setGateBagScans,
-  ] = useState([]);
+  ] = useState(
+    []
+  );
 
   const [
     loadingGateBagScans,
     setLoadingGateBagScans,
-  ] = useState(true);
+  ] = useState(
+    true
+  );
 
   const [
     gateBagMsg,
     setGateBagMsg,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     gateBagErr,
     setGateBagErr,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
   const [
     deletingGateBagTag,
     setDeletingGateBagTag,
-  ] = useState("");
+  ] = useState(
+    ""
+  );
 
-  const debounceRef = useRef(null);
+  const debounceRef =
+    useRef(
+      null
+    );
+
+  /* =========================
+     COMPUTED
+  ========================= */
 
   const isFlightLoaded =
     Boolean(
-      flight?.aircraftLoadingCompleted
+      flight
+        ?.aircraftLoadingCompleted
     ) ||
-    normalizeStatus(flight?.status) ===
+    normalizeStatus(
+      flight?.status
+    ) ===
       "LOADED";
 
-  const loadedAircraftTagSet = useMemo(() => {
-    return new Set(
-      aircraftScans
-        .map((scan) =>
-          onlyDigits(
-            scan.tag ||
-              scan.bagTag ||
-              scan.bagTagNumber ||
-              scan.barcode ||
-              scan.id
-          )
-        )
-        .filter((tag) =>
-          isValidTag10(tag)
-        )
+  const loadedAircraftTagSet =
+    useMemo(
+      () => {
+        return new Set(
+          aircraftScans
+            .map(
+              (
+                scan
+              ) =>
+                onlyDigits(
+                  scan.tag ||
+                    scan.bagTag ||
+                    scan.bagTagNumber ||
+                    scan.barcode ||
+                    scan.id
+                )
+            )
+            .filter(
+              (
+                tag
+              ) =>
+                isValidTag10(
+                  tag
+                )
+            )
+        );
+      },
+      [
+        aircraftScans,
+      ]
     );
-  }, [aircraftScans]);
 
-  const gateBagLoadedCount = useMemo(() => {
-    return gateBagScans.filter((scan) => {
-      const tag = onlyDigits(
-        scan.tag || scan.id
-      );
+  const gateBagLoadedCount =
+    useMemo(
+      () => {
+        return gateBagScans.filter(
+          (
+            scan
+          ) => {
+            const tag =
+              onlyDigits(
+                scan.tag ||
+                  scan.id
+              );
 
-      return loadedAircraftTagSet.has(tag);
-    }).length;
-  }, [
-    gateBagScans,
-    loadedAircraftTagSet,
-  ]);
+            return loadedAircraftTagSet.has(
+              tag
+            );
+          }
+        ).length;
+      },
+      [
+        gateBagScans,
+        loadedAircraftTagSet,
+      ]
+    );
 
-  const gateBagPendingCount = Math.max(
-    0,
-    gateBagScans.length -
-      gateBagLoadedCount
-  );
+  const gateBagPendingCount =
+    Math.max(
+      0,
+      gateBagScans.length -
+        gateBagLoadedCount
+    );
 
   const aircraftBagTypeCounts =
-    useMemo(() => {
-      const counts = {
-        CHECKED_BAG: 0,
-        GATE_CHECK: 0,
-        OVERSIZE: 0,
-        GATE_BAG: 0,
-      };
+    useMemo(
+      () => {
+        const counts = {
+          CHECKED_BAG:
+            0,
 
-      for (const scan of aircraftScans) {
-        const type = normalizeBagType(
-          scan.bagType
-        );
+          GATE_CHECK:
+            0,
 
-        counts[type] += 1;
-      }
+          OVERSIZE:
+            0,
 
-      return counts;
-    }, [aircraftScans]);
+          GATE_BAG:
+            0,
+        };
+
+        for (
+          const scan of
+            aircraftScans
+        ) {
+          const type =
+            normalizeBagType(
+              scan.bagType
+            );
+
+          counts[
+            type
+          ] += 1;
+        }
+
+        return counts;
+      },
+      [
+        aircraftScans,
+      ]
+    );
+
+  /* =========================
+     RESPONSIVE
+  ========================= */
+
   useEffect(() => {
-    const handleResize = () => {
-      setIsMobile(
-        window.innerWidth < MOBILE_BREAKPOINT
-      );
-    };
+    const handleResize =
+      () => {
+        setIsMobile(
+          window.innerWidth <
+            MOBILE_BREAKPOINT
+        );
+      };
 
     window.addEventListener(
       "resize",
@@ -735,251 +1488,657 @@ export default function GateControllerPage({
     };
   }, []);
 
-  useEffect(() => {
-    const loadGateControllers = async () => {
-      try {
-        const snap = await getDocs(
-          collection(db, "users")
-        );
+  /* =========================
+     LOAD GATE CONTROLLERS
+  ========================= */
 
-        const list = snap.docs
-          .map((document) => ({
-            id: document.id,
-            ...document.data(),
-          }))
-          .filter(
-            (candidate) =>
-              candidate.username &&
-              candidate.active !== false &&
-              userCanWorkGateController(candidate)
-          )
-          .sort((a, b) =>
-            String(
-              a.fullName ||
-                a.username ||
-                ""
-            ).localeCompare(
-              String(
-                b.fullName ||
-                  b.username ||
-                  ""
+  useEffect(() => {
+    const loadGateControllers =
+      async () => {
+        const timer =
+          startSystemTimer();
+
+        try {
+          const snap =
+            await getDocs(
+              collection(
+                db,
+                "users"
               )
-            )
+            );
+
+          const list =
+            snap.docs
+              .map(
+                (
+                  document
+                ) => ({
+                  id:
+                    document.id,
+
+                  ...document.data(),
+                })
+              )
+              .filter(
+                (
+                  candidate
+                ) =>
+                  candidate.username &&
+                  candidate.active !==
+                    false &&
+                  userCanWorkGateController(
+                    candidate
+                  )
+              )
+              .sort(
+                (
+                  a,
+                  b
+                ) =>
+                  String(
+                    a.fullName ||
+                      a.username ||
+                      ""
+                  ).localeCompare(
+                    String(
+                      b.fullName ||
+                        b.username ||
+                        ""
+                    )
+                  )
+              );
+
+          setGateControllers(
+            list
           );
 
-        setGateControllers(list);
-      } catch (error) {
-        console.error(
-          "Error loading gate controllers:",
+          await logSystemSuccess({
+            module:
+              "GATE_CONTROLLER",
+
+            action:
+              "LOAD_GATE_CONTROLLERS",
+
+            durationMs:
+              timer.elapsed(),
+          });
+        } catch (
           error
-        );
-      }
-    };
+        ) {
+          console.error(
+            "Error loading gate controllers:",
+            error
+          );
+
+          await logGateIncident({
+            action:
+              "LOAD_GATE_CONTROLLERS",
+
+            status:
+              "ERROR",
+
+            severity:
+              "MEDIUM",
+
+            errorType:
+              "FIRESTORE_READ",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load Gate Controllers."
+              ),
+
+            durationMs:
+              timer.elapsed(),
+          });
+        }
+      };
 
     loadGateControllers();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* =========================
+     FLIGHT SUBSCRIPTION
+  ========================= */
+
   useEffect(() => {
-    if (!flightId) {
-      setFlight(null);
-      setFlightLoading(false);
-      return;
+    if (
+      !flightId
+    ) {
+      setFlight(
+        null
+      );
+
+      setFlightLoading(
+        false
+      );
+
+      return undefined;
     }
 
-    setFlightLoading(true);
-
-    const flightRef = doc(
-      db,
-      "flights",
-      flightId
+    setFlightLoading(
+      true
     );
 
-    const unsub = onSnapshot(
-      flightRef,
-      (snap) => {
-        if (!snap.exists()) {
-          setFlight(null);
-          setFlightLoading(false);
-          return;
-        }
+    const flightRef =
+      doc(
+        db,
+        "flights",
+        flightId
+      );
 
-        const data = {
-          id: snap.id,
-          ...snap.data(),
-        };
+    const unsub =
+      onSnapshot(
+        flightRef,
 
-        setFlight(data);
+        (
+          snap
+        ) => {
+          if (
+            !snap.exists()
+          ) {
+            setFlight(
+              null
+            );
 
-        if (
-          typeof data.checkedBagsTotal ===
-          "number"
-        ) {
-          setCheckedTotalInput(
-            String(data.checkedBagsTotal)
+            setFlightLoading(
+              false
+            );
+
+            logSystemIncident({
+              module:
+                "GATE_CONTROLLER",
+
+              action:
+                "LOAD_FLIGHT",
+
+              status:
+                "ERROR",
+
+              severity:
+                "HIGH",
+
+              errorType:
+                "FLIGHT_NOT_FOUND",
+
+              message:
+                "Selected flight document was not found.",
+
+              user,
+
+              operationalContext,
+
+              flightId,
+
+              currentView:
+                "gate",
+            });
+
+            return;
+          }
+
+          const data = {
+            id:
+              snap.id,
+
+            ...snap.data(),
+          };
+
+          setFlight(
+            data
           );
-        } else {
-          setCheckedTotalInput("");
-        }
 
-        if (
-          typeof data.strictManifest ===
-          "boolean"
-        ) {
-          setStrictManifest(
-            data.strictManifest
+          if (
+            typeof data
+              .checkedBagsTotal ===
+            "number"
+          ) {
+            setCheckedTotalInput(
+              String(
+                data.checkedBagsTotal
+              )
+            );
+          } else {
+            setCheckedTotalInput(
+              ""
+            );
+          }
+
+          if (
+            typeof data
+              .strictManifest ===
+            "boolean"
+          ) {
+            setStrictManifest(
+              data.strictManifest
+            );
+          }
+
+          if (
+            data
+              .gateControllerOnDuty
+          ) {
+            setSelectedGateController(
+              data
+                .gateControllerOnDuty
+            );
+
+            localStorage.setItem(
+              "gateControllerOnDuty",
+              data
+                .gateControllerOnDuty
+            );
+          }
+
+          setFlightLoading(
+            false
           );
-        }
+        },
 
-        if (data.gateControllerOnDuty) {
-          setSelectedGateController(
-            data.gateControllerOnDuty
-          );
-
-          localStorage.setItem(
-            "gateControllerOnDuty",
-            data.gateControllerOnDuty
-          );
-        }
-
-        setFlightLoading(false);
-      },
-      (error) => {
-        console.error(
-          "GateControllerPage flight snapshot error:",
+        (
           error
-        );
+        ) => {
+          console.error(
+            "GateControllerPage flight snapshot error:",
+            error
+          );
 
-        setFlight(null);
-        setFlightLoading(false);
-      }
-    );
+          setFlight(
+            null
+          );
 
-    return () => unsub();
-  }, [flightId]);
+          setFlightLoading(
+            false
+          );
+
+          logSystemIncident({
+            module:
+              "GATE_CONTROLLER",
+
+            action:
+              "LOAD_FLIGHT",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load flight."
+              ),
+
+            user,
+
+            operationalContext,
+
+            flightId,
+
+            currentView:
+              "gate",
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    flightId,
+    user,
+    operationalContext,
+  ]);
+
+  /* =========================
+     MANIFEST SUBSCRIPTION
+  ========================= */
 
   useEffect(() => {
-    if (!flightId) {
-      setAllowedCount(0);
-      setRecentAllowed([]);
-      setAllManifestTags([]);
-      setLoadingAllowed(false);
-      return;
+    if (
+      !flightId
+    ) {
+      setAllowedCount(
+        0
+      );
+
+      setRecentAllowed(
+        []
+      );
+
+      setAllManifestTags(
+        []
+      );
+
+      setLoadingAllowed(
+        false
+      );
+
+      return undefined;
     }
 
-    setLoadingAllowed(true);
-
-    const collectionRef = collection(
-      db,
-      "flights",
-      flightId,
-      "allowedBagTags"
+    setLoadingAllowed(
+      true
     );
 
-    const manifestQuery = query(
-      collectionRef,
-      orderBy("importedAt", "desc")
-    );
+    const collectionRef =
+      collection(
+        db,
+        "flights",
+        flightId,
+        "allowedBagTags"
+      );
 
-    const unsub = onSnapshot(
-      manifestQuery,
-      (snap) => {
-        setAllowedCount(snap.size);
+    const manifestQuery =
+      query(
+        collectionRef,
+        orderBy(
+          "importedAt",
+          "desc"
+        )
+      );
 
-        const rows = snap.docs.map(
-          (document) => ({
-            id: document.id,
-            ...document.data(),
-          })
-        );
+    const unsub =
+      onSnapshot(
+        manifestQuery,
 
-        const tags = rows
-          .map((row) =>
-            onlyDigits(
-              row.tag || row.id
+        (
+          snap
+        ) => {
+          setAllowedCount(
+            snap.size
+          );
+
+          const rows =
+            snap.docs.map(
+              (
+                document
+              ) => ({
+                id:
+                  document.id,
+
+                ...document.data(),
+              })
+            );
+
+          const tags =
+            rows
+              .map(
+                (
+                  row
+                ) =>
+                  onlyDigits(
+                    row.tag ||
+                      row.id
+                  )
+              )
+              .filter(
+                (
+                  tag
+                ) =>
+                  isValidTag10(
+                    tag
+                  )
+              );
+
+          setAllManifestTags(
+            tags
+          );
+
+          setRecentAllowed(
+            rows.slice(
+              0,
+              60
             )
-          )
-          .filter((tag) =>
-            isValidTag10(tag)
           );
 
-        setAllManifestTags(tags);
-        setRecentAllowed(
-          rows.slice(0, 60)
-        );
-        setLoadingAllowed(false);
-      },
-      (error) => {
-        console.error(
-          "allowedBagTags snapshot error:",
+          setLoadingAllowed(
+            false
+          );
+        },
+
+        (
           error
-        );
+        ) => {
+          console.error(
+            "allowedBagTags snapshot error:",
+            error
+          );
 
-        setAllowedCount(0);
-        setRecentAllowed([]);
-        setAllManifestTags([]);
-        setLoadingAllowed(false);
-      }
-    );
+          setAllowedCount(
+            0
+          );
 
-    return () => unsub();
-  }, [flightId]);
+          setRecentAllowed(
+            []
+          );
+
+          setAllManifestTags(
+            []
+          );
+
+          setLoadingAllowed(
+            false
+          );
+
+          logSystemIncident({
+            module:
+              "GATE_CONTROLLER",
+
+            action:
+              "LOAD_MANIFEST",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load flight manifest."
+              ),
+
+            user,
+
+            operationalContext,
+
+            flightId,
+
+            currentView:
+              "gate",
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    flightId,
+    user,
+    operationalContext,
+  ]);
+
+  /* =========================
+     BAGROOM SUBSCRIPTION
+  ========================= */
 
   useEffect(() => {
-    if (!flightId) {
-      setBagroomScans([]);
-      setLoadingBagroomScans(false);
-      return;
+    if (
+      !flightId
+    ) {
+      setBagroomScans(
+        []
+      );
+
+      setLoadingBagroomScans(
+        false
+      );
+
+      return undefined;
     }
 
-    setLoadingBagroomScans(true);
-
-    const bagroomRef = collection(
-      db,
-      "flights",
-      flightId,
-      "bagroomScans"
+    setLoadingBagroomScans(
+      true
     );
 
-    const unsub = onSnapshot(
-      bagroomRef,
-      (snap) => {
-        const rows = snap.docs.map(
-          (document) => ({
-            id: document.id,
-            ...document.data(),
-          })
-        );
+    const bagroomRef =
+      collection(
+        db,
+        "flights",
+        flightId,
+        "bagroomScans"
+      );
 
-        rows.sort((a, b) => {
-          const timeA =
-            a.createdAt?.seconds || 0;
+    const unsub =
+      onSnapshot(
+        bagroomRef,
 
-          const timeB =
-            b.createdAt?.seconds || 0;
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                document
+              ) => ({
+                id:
+                  document.id,
 
-          return timeB - timeA;
-        });
+                ...document.data(),
+              })
+            );
 
-        setBagroomScans(rows);
-        setLoadingBagroomScans(false);
-      },
-      (error) => {
-        console.error(
-          "Bagroom scans snapshot error:",
+          rows.sort(
+            (
+              a,
+              b
+            ) => {
+              const timeA =
+                a.createdAt
+                  ?.seconds ||
+                0;
+
+              const timeB =
+                b.createdAt
+                  ?.seconds ||
+                0;
+
+              return (
+                timeB -
+                timeA
+              );
+            }
+          );
+
+          setBagroomScans(
+            rows
+          );
+
+          setLoadingBagroomScans(
+            false
+          );
+        },
+
+        (
           error
-        );
+        ) => {
+          console.error(
+            "Bagroom scans snapshot error:",
+            error
+          );
 
-        setBagroomScans([]);
-        setLoadingBagroomScans(false);
-      }
-    );
+          setBagroomScans(
+            []
+          );
 
-    return () => unsub();
-  }, [flightId]);
+          setLoadingBagroomScans(
+            false
+          );
+
+          logSystemIncident({
+            module:
+              "GATE_CONTROLLER",
+
+            action:
+              "LOAD_BAGROOM_SCANS",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load Bagroom scans."
+              ),
+
+            user,
+
+            operationalContext,
+
+            flightId,
+
+            currentView:
+              "gate",
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    flightId,
+    user,
+    operationalContext,
+  ]);
+
+  /* =========================
+     AIRCRAFT SUBSCRIPTION
+  ========================= */
 
   useEffect(() => {
-    if (!flightId) {
-      setAircraftTotal(0);
+    if (
+      !flightId
+    ) {
+      setAircraftTotal(
+        0
+      );
 
       setZones({
         1: 0,
@@ -988,167 +2147,381 @@ export default function GateControllerPage({
         4: 0,
       });
 
-      setAircraftScans([]);
-      setLoadedAircraftTags([]);
-      setAircraftLoading(false);
-      return;
+      setAircraftScans(
+        []
+      );
+
+      setLoadedAircraftTags(
+        []
+      );
+
+      setAircraftLoading(
+        false
+      );
+
+      return undefined;
     }
 
-    setAircraftLoading(true);
-
-    const aircraftRef = collection(
-      db,
-      "flights",
-      flightId,
-      "aircraftScans"
+    setAircraftLoading(
+      true
     );
 
-    const unsub = onSnapshot(
-      aircraftRef,
-      (snap) => {
-        const rows = snap.docs.map(
-          (document) => ({
-            id: document.id,
-            ...document.data(),
-          })
-        );
+    const aircraftRef =
+      collection(
+        db,
+        "flights",
+        flightId,
+        "aircraftScans"
+      );
 
-        rows.sort((a, b) => {
-          const timeA =
-            a.createdAt?.seconds || 0;
+    const unsub =
+      onSnapshot(
+        aircraftRef,
 
-          const timeB =
-            b.createdAt?.seconds || 0;
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                document
+              ) => ({
+                id:
+                  document.id,
 
-          return timeB - timeA;
-        });
+                ...document.data(),
+              })
+            );
 
-        const zoneCounts = {
-          1: 0,
-          2: 0,
-          3: 0,
-          4: 0,
-        };
+          rows.sort(
+            (
+              a,
+              b
+            ) => {
+              const timeA =
+                a.createdAt
+                  ?.seconds ||
+                0;
 
-        const loadedTags = [];
+              const timeB =
+                b.createdAt
+                  ?.seconds ||
+                0;
 
-        for (const row of rows) {
-          const zone = Number(row.zone);
-
-          if (
-            zone >= 1 &&
-            zone <= 4
-          ) {
-            zoneCounts[zone] += 1;
-          }
-
-          const tag = onlyDigits(
-            row.bagTag ||
-              row.tag ||
-              row.bagTagNumber ||
-              row.barcode ||
-              row.id
+              return (
+                timeB -
+                timeA
+              );
+            }
           );
 
-          if (isValidTag10(tag)) {
-            loadedTags.push(tag);
+          const zoneCounts = {
+            1: 0,
+            2: 0,
+            3: 0,
+            4: 0,
+          };
+
+          const loadedTags =
+            [];
+
+          for (
+            const row of rows
+          ) {
+            const zone =
+              Number(
+                row.zone
+              );
+
+            if (
+              zone >= 1 &&
+              zone <= 4
+            ) {
+              zoneCounts[
+                zone
+              ] += 1;
+            }
+
+            const tag =
+              onlyDigits(
+                row.bagTag ||
+                  row.tag ||
+                  row.bagTagNumber ||
+                  row.barcode ||
+                  row.id
+              );
+
+            if (
+              isValidTag10(
+                tag
+              )
+            ) {
+              loadedTags.push(
+                tag
+              );
+            }
           }
-        }
 
-        setAircraftScans(rows);
-        setAircraftTotal(rows.length);
-        setZones(zoneCounts);
-        setLoadedAircraftTags(
-          loadedTags
-        );
-        setAircraftLoading(false);
-      },
-      (error) => {
-        console.error(
-          "GateControllerPage aircraft snapshot error:",
+          setAircraftScans(
+            rows
+          );
+
+          setAircraftTotal(
+            rows.length
+          );
+
+          setZones(
+            zoneCounts
+          );
+
+          setLoadedAircraftTags(
+            loadedTags
+          );
+
+          setAircraftLoading(
+            false
+          );
+        },
+
+        (
           error
-        );
+        ) => {
+          console.error(
+            "GateControllerPage aircraft snapshot error:",
+            error
+          );
 
-        setAircraftTotal(0);
+          setAircraftTotal(
+            0
+          );
 
-        setZones({
-          1: 0,
-          2: 0,
-          3: 0,
-          4: 0,
-        });
+          setZones({
+            1: 0,
+            2: 0,
+            3: 0,
+            4: 0,
+          });
 
-        setAircraftScans([]);
-        setLoadedAircraftTags([]);
-        setAircraftLoading(false);
-      }
-    );
+          setAircraftScans(
+            []
+          );
 
-    return () => unsub();
-  }, [flightId]);
+          setLoadedAircraftTags(
+            []
+          );
+
+          setAircraftLoading(
+            false
+          );
+
+          logSystemIncident({
+            module:
+              "GATE_CONTROLLER",
+
+            action:
+              "LOAD_AIRCRAFT_SCANS",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load Aircraft scans."
+              ),
+
+            user,
+
+            operationalContext,
+
+            flightId,
+
+            currentView:
+              "gate",
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    flightId,
+    user,
+    operationalContext,
+  ]);
+
+  /* =========================
+     GATE BAG SUBSCRIPTION
+  ========================= */
 
   useEffect(() => {
-    if (!flightId) {
-      setGateBagScans([]);
-      setLoadingGateBagScans(false);
-      return;
+    if (
+      !flightId
+    ) {
+      setGateBagScans(
+        []
+      );
+
+      setLoadingGateBagScans(
+        false
+      );
+
+      return undefined;
     }
 
-    setLoadingGateBagScans(true);
-
-    const gateBagRef = collection(
-      db,
-      "flights",
-      flightId,
-      "gateBagScans"
+    setLoadingGateBagScans(
+      true
     );
 
-    const unsub = onSnapshot(
-      gateBagRef,
-      (snap) => {
-        const rows = snap.docs.map(
-          (document) => ({
-            id: document.id,
-            ...document.data(),
-          })
-        );
+    const gateBagRef =
+      collection(
+        db,
+        "flights",
+        flightId,
+        "gateBagScans"
+      );
 
-        rows.sort((a, b) => {
-          const timeA =
-            a.createdAt?.seconds || 0;
+    const unsub =
+      onSnapshot(
+        gateBagRef,
 
-          const timeB =
-            b.createdAt?.seconds || 0;
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                document
+              ) => ({
+                id:
+                  document.id,
 
-          return timeB - timeA;
-        });
+                ...document.data(),
+              })
+            );
 
-        setGateBagScans(rows);
-        setLoadingGateBagScans(false);
-      },
-      (error) => {
-        console.error(
-          "Gate bag scans snapshot error:",
+          rows.sort(
+            (
+              a,
+              b
+            ) => {
+              const timeA =
+                a.createdAt
+                  ?.seconds ||
+                0;
+
+              const timeB =
+                b.createdAt
+                  ?.seconds ||
+                0;
+
+              return (
+                timeB -
+                timeA
+              );
+            }
+          );
+
+          setGateBagScans(
+            rows
+          );
+
+          setLoadingGateBagScans(
+            false
+          );
+        },
+
+        (
           error
-        );
+        ) => {
+          console.error(
+            "Gate bag scans snapshot error:",
+            error
+          );
 
-        setGateBagScans([]);
-        setLoadingGateBagScans(false);
-      }
-    );
+          setGateBagScans(
+            []
+          );
 
-    return () => unsub();
-  }, [flightId]);
+          setLoadingGateBagScans(
+            false
+          );
+
+          logSystemIncident({
+            module:
+              "GATE_CONTROLLER",
+
+            action:
+              "LOAD_GATE_BAGS",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load Gate bag scans."
+              ),
+
+            user,
+
+            operationalContext,
+
+            flightId,
+
+            currentView:
+              "gate",
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    flightId,
+    user,
+    operationalContext,
+  ]);
+
+  /* =========================
+     TIMER CLEANUP
+  ========================= */
 
   useEffect(() => {
     return () => {
-      if (debounceRef.current) {
+      if (
+        debounceRef.current
+      ) {
         clearTimeout(
           debounceRef.current
         );
       }
 
-      if (gateBagTimerRef.current) {
+      if (
+        gateBagTimerRef.current
+      ) {
         clearTimeout(
           gateBagTimerRef.current
         );
@@ -1156,14 +2529,21 @@ export default function GateControllerPage({
     };
   }, []);
 
+  /* =========================
+     MORE COMPUTED VALUES
+  ========================= */
+
   const checkedBagsTotal =
-    typeof flight?.checkedBagsTotal ===
+    typeof flight
+      ?.checkedBagsTotal ===
     "number"
-      ? flight.checkedBagsTotal
+      ? flight
+          .checkedBagsTotal
       : null;
 
   const missing =
-    checkedBagsTotal === null
+    checkedBagsTotal ===
+    null
       ? null
       : Math.max(
           0,
@@ -1171,517 +2551,782 @@ export default function GateControllerPage({
             aircraftTotal
         );
 
-  const flightStatus = normalizeStatus(
-    flight?.status
-  );
+  const flightStatus =
+    normalizeStatus(
+      flight?.status
+    );
 
   const statusStyle =
-    STATUS_COLORS[flightStatus] ||
+    STATUS_COLORS[
+      flightStatus
+    ] ||
     STATUS_COLORS.OPEN;
 
-  const manifestTagSet = useMemo(() => {
-    return new Set(allManifestTags);
-  }, [allManifestTags]);
-
-  const loadedTagSet = useMemo(() => {
-    return new Set(
-      loadedAircraftTags
-        .map((tag) =>
-          onlyDigits(tag)
-        )
-        .filter((tag) =>
-          isValidTag10(tag)
-        )
+  const manifestTagSet =
+    useMemo(
+      () =>
+        new Set(
+          allManifestTags
+        ),
+      [
+        allManifestTags,
+      ]
     );
-  }, [loadedAircraftTags]);
+
+  const loadedTagSet =
+    useMemo(
+      () => {
+        return new Set(
+          loadedAircraftTags
+            .map(
+              (
+                tag
+              ) =>
+                onlyDigits(
+                  tag
+                )
+            )
+            .filter(
+              (
+                tag
+              ) =>
+                isValidTag10(
+                  tag
+                )
+            )
+        );
+      },
+      [
+        loadedAircraftTags,
+      ]
+    );
 
   const missingManifestTags =
-    useMemo(() => {
-      return allManifestTags.filter(
-        (tag) =>
-          !loadedTagSet.has(tag)
-      );
-    }, [
-      allManifestTags,
-      loadedTagSet,
-    ]);
+    useMemo(
+      () => {
+        return allManifestTags.filter(
+          (
+            tag
+          ) =>
+            !loadedTagSet.has(
+              tag
+            )
+        );
+      },
+      [
+        allManifestTags,
+        loadedTagSet,
+      ]
+    );
 
-  /*
-   * Tracker buttons only become active
-   * when there are between 1 and 5
-   * manifest bags missing to load.
-   */
   const missingTrackerEnabled =
-    missingManifestTags.length >= 1 &&
-    missingManifestTags.length <= 5;
+    missingManifestTags.length >=
+      1 &&
+    missingManifestTags.length <=
+      5;
 
-  const bagroomMatchedTags = useMemo(() => {
-    return bagroomScans
-      .map((scan) =>
-        onlyDigits(
-          scan.tag || scan.id
-        )
-      )
-      .filter(
-        (tag) =>
-          isValidTag10(tag) &&
-          manifestTagSet.has(tag)
-      );
-  }, [
-    bagroomScans,
-    manifestTagSet,
-  ]);
+  const bagroomMatchedTags =
+    useMemo(
+      () => {
+        return bagroomScans
+          .map(
+            (
+              scan
+            ) =>
+              onlyDigits(
+                scan.tag ||
+                  scan.id
+              )
+          )
+          .filter(
+            (
+              tag
+            ) =>
+              isValidTag10(
+                tag
+              ) &&
+              manifestTagSet.has(
+                tag
+              )
+          );
+      },
+      [
+        bagroomScans,
+        manifestTagSet,
+      ]
+    );
 
   const bagroomNotInManifest =
-    useMemo(() => {
-      return bagroomScans
-        .map((scan) => ({
-          ...scan,
-          cleanTag: onlyDigits(
-            scan.tag || scan.id
-          ),
-        }))
-        .filter(
-          (scan) =>
-            isValidTag10(
-              scan.cleanTag
-            ) &&
-            !manifestTagSet.has(
-              scan.cleanTag
-            )
-        );
-    }, [
-      bagroomScans,
-      manifestTagSet,
-    ]);
+    useMemo(
+      () => {
+        return bagroomScans
+          .map(
+            (
+              scan
+            ) => ({
+              ...scan,
 
-  const bagroomByCart = useMemo(() => {
-    const groups = {};
-
-    for (const scan of bagroomScans) {
-      const cart =
-        normalizeCartNumber(
-          scan.cartNumber
-        ) || "NO CART";
-
-      if (!groups[cart]) {
-        groups[cart] = [];
-      }
-
-      groups[cart].push(scan);
-    }
-
-    return groups;
-  }, [bagroomScans]);
-
-  const gateBagTagSet = useMemo(() => {
-    return new Set(
-      gateBagScans
-        .map((scan) =>
-          onlyDigits(
-            scan.tag || scan.id
+              cleanTag:
+                onlyDigits(
+                  scan.tag ||
+                    scan.id
+                ),
+            })
           )
-        )
-        .filter((tag) =>
-          isValidTag10(tag)
-        )
-    );
-  }, [gateBagScans]);
-
-  const loadedGateBagTags =
-    useMemo(() => {
-      return gateBagScans
-        .map((scan) =>
-          onlyDigits(
-            scan.tag || scan.id
-          )
-        )
-        .filter(
-          (tag) =>
-            isValidTag10(tag) &&
-            loadedAircraftTagSet.has(
-              tag
-            )
-        );
-    }, [
-      gateBagScans,
-      loadedAircraftTagSet,
-    ]);
-
-  const pendingGateBagTags =
-    useMemo(() => {
-      return gateBagScans
-        .map((scan) =>
-          onlyDigits(
-            scan.tag || scan.id
-          )
-        )
-        .filter(
-          (tag) =>
-            isValidTag10(tag) &&
-            !loadedAircraftTagSet.has(
-              tag
-            )
-        );
-    }, [
-      gateBagScans,
-      loadedAircraftTagSet,
-    ]);
-
-  /*
-   * Closes and resets the missing bag
-   * tracking modal.
-   */
-  const closeBagTracker = () => {
-    setTrackerOpen(false);
-    setTrackerTag("");
-    setTrackerData(null);
-    setTrackerError("");
-    setTrackerLoading(false);
-  };
-
-  /*
-   * Looks for the latest baggage location.
-   *
-   * Priority:
-   * 1. Most recent document inside:
-   *    bagTags/{tag}/events
-   *
-   * 2. Summary fields stored in:
-   *    bagTags/{tag}
-   *
-   * 3. Current flight scan collections,
-   *    used as a fallback if the tracker
-   *    document or events are unavailable.
-   */
-  const openBagTracker = async (
-    rawTag
-  ) => {
-    const tag = onlyDigits(rawTag);
-
-    if (!isValidTag10(tag)) {
-      return;
-    }
-
-    setTrackerOpen(true);
-    setTrackerTag(tag);
-    setTrackerData(null);
-    setTrackerError("");
-    setTrackerLoading(true);
-
-    try {
-      const tagRef = doc(
-        db,
-        "bagTags",
-        tag
-      );
-
-      const tagSnap =
-        await getDoc(tagRef);
-
-      const tagSummary = tagSnap.exists()
-        ? {
-            id: tagSnap.id,
-            ...tagSnap.data(),
-          }
-        : null;
-
-      let latestEvent = null;
-
-      try {
-        const latestEventQuery = query(
-          collection(
-            db,
-            "bagTags",
-            tag,
-            "events"
-          ),
-          orderBy(
-            "createdAt",
-            "desc"
-          ),
-          limit(1)
-        );
-
-        const eventSnap =
-          await getDocs(
-            latestEventQuery
+          .filter(
+            (
+              scan
+            ) =>
+              isValidTag10(
+                scan.cleanTag
+              ) &&
+              !manifestTagSet.has(
+                scan.cleanTag
+              )
           );
+      },
+      [
+        bagroomScans,
+        manifestTagSet,
+      ]
+    );
 
-        if (!eventSnap.empty) {
-          const eventDoc =
-            eventSnap.docs[0];
+  const bagroomByCart =
+    useMemo(
+      () => {
+        const groups =
+          {};
 
-          latestEvent = {
-            id: eventDoc.id,
-            ...eventDoc.data(),
-          };
+        for (
+          const scan of
+            bagroomScans
+        ) {
+          const cart =
+            normalizeCartNumber(
+              scan.cartNumber
+            ) ||
+            "NO CART";
+
+          if (
+            !groups[
+              cart
+            ]
+          ) {
+            groups[
+              cart
+            ] = [];
+          }
+
+          groups[
+            cart
+          ].push(
+            scan
+          );
         }
-      } catch (eventError) {
-        console.warn(
-          "Could not query tracker events:",
-          eventError
-        );
-      }
 
-      /*
-       * Fallback scan records from the
-       * currently selected flight.
-       */
-      const currentFlightCandidates = [];
+        return groups;
+      },
+      [
+        bagroomScans,
+      ]
+    );
 
-      const bagroomRecord =
-        bagroomScans.find(
-          (scan) =>
-            onlyDigits(
-              scan.tag || scan.id
-            ) === tag
-        );
+  /* =========================
+     BAG TRACKER
+  ========================= */
 
-      if (bagroomRecord) {
-        currentFlightCandidates.push({
-          ...bagroomRecord,
-          location: "bagroom",
-          message:
-            bagroomRecord.message ||
-            `Bag scanned in Bagroom${
-              bagroomRecord.cartNumber
-                ? ` \u00B7 Cart ${bagroomRecord.cartNumber}`
-                : ""
-            }`,
-          trackerSource:
-            "Current Flight Bagroom",
-          trackerTime:
-            bagroomRecord.createdAt ||
-            bagroomRecord.scannedAt,
-        });
-      }
-
-      const gateRecord =
-        gateBagScans.find(
-          (scan) =>
-            onlyDigits(
-              scan.tag || scan.id
-            ) === tag
-        );
-
-      if (gateRecord) {
-        currentFlightCandidates.push({
-          ...gateRecord,
-          location: "gate",
-          message:
-            gateRecord.message ||
-            "Bag tagged at Gate \u00B7 Direct to Aircraft",
-          trackerSource:
-            "Current Flight Gate",
-          trackerTime:
-            gateRecord.createdAt ||
-            gateRecord.scannedAt,
-        });
-      }
-
-      const aircraftRecord =
-        aircraftScans.find(
-          (scan) =>
-            onlyDigits(
-              scan.tag ||
-                scan.bagTag ||
-                scan.bagTagNumber ||
-                scan.barcode ||
-                scan.id
-            ) === tag
-        );
-
-      if (aircraftRecord) {
-        currentFlightCandidates.push({
-          ...aircraftRecord,
-          location:
-            aircraftRecord.location ||
-            "aircraft",
-          message:
-            aircraftRecord.message ||
-            `Bag loaded on Aircraft${
-              aircraftRecord.zone
-                ? ` \u00B7 Zone ${aircraftRecord.zone}`
-                : ""
-            }`,
-          trackerSource:
-            "Current Flight Aircraft",
-          trackerTime:
-            aircraftRecord.createdAt ||
-            aircraftRecord.scannedAt,
-        });
-      }
-
-      currentFlightCandidates.sort(
-        (a, b) => {
-          const timeA =
-            a.trackerTime?.seconds ||
-            0;
-
-          const timeB =
-            b.trackerTime?.seconds ||
-            0;
-
-          return timeB - timeA;
-        }
+  const closeBagTracker =
+    () => {
+      setTrackerOpen(
+        false
       );
 
-      const latestFlightScan =
-        currentFlightCandidates[0] ||
-        null;
+      setTrackerTag(
+        ""
+      );
 
-      /*
-       * Choose the best available source.
-       */
-      let bestSource = null;
-      let sourceName = "";
+      setTrackerData(
+        null
+      );
 
-      if (latestEvent) {
-        bestSource = latestEvent;
-        sourceName =
-          "Baggage Tracker Event";
-      } else if (tagSummary) {
-        bestSource = tagSummary;
-        sourceName =
-          "Baggage Tracker Summary";
-      } else if (latestFlightScan) {
-        bestSource =
-          latestFlightScan;
-        sourceName =
-          latestFlightScan.trackerSource ||
-          "Current Flight Scan";
-      }
+      setTrackerError(
+        ""
+      );
 
-      if (!bestSource) {
-        setTrackerData({
-          tag,
-          found: false,
-        });
+      setTrackerLoading(
+        false
+      );
+    };
 
-        setTrackerError(
-          "No previous scan or location was found for this bag tag."
+  const openBagTracker =
+    async (
+      rawTag
+    ) => {
+      const tag =
+        onlyDigits(
+          rawTag
         );
 
+      if (
+        !isValidTag10(
+          tag
+        )
+      ) {
         return;
       }
 
-      const location =
-        bestSource.location ||
-        bestSource.lastSeenLocation ||
-        bestSource.currentLocation ||
-        bestSource.scanLocation ||
-        tagSummary?.lastSeenLocation ||
-        latestFlightScan?.location ||
-        "";
+      const timer =
+        startSystemTimer();
 
-      const eventTime =
-        bestSource.createdAt ||
-        bestSource.scannedAt ||
-        bestSource.updatedAt ||
-        bestSource.lastSeenAt ||
-        bestSource.timestamp ||
-        tagSummary?.lastSeenAt ||
-        latestFlightScan?.trackerTime ||
-        null;
-
-      const userName =
-        getTrackerUsername(
-          bestSource
-        ) !== "Not available"
-          ? getTrackerUsername(
-              bestSource
-            )
-          : getTrackerUsername(
-              tagSummary
-            ) !== "Not available"
-            ? getTrackerUsername(
-                tagSummary
-              )
-            : getTrackerUsername(
-                latestFlightScan
-              );
-
-      const eventLabel =
-        getTrackerEventLabel(
-          bestSource
-        );
-
-      setTrackerData({
-        tag,
-        found: true,
-        sourceName,
-        location,
-        locationLabel:
-          getTrackerLocationLabel(
-            location
-          ),
-        eventTime,
-        formattedTime:
-          formatTrackerDateTime(
-            eventTime
-          ),
-        userName,
-        eventLabel,
-        cartNumber:
-          bestSource.cartNumber ||
-          latestFlightScan?.cartNumber ||
-          null,
-        gate:
-          bestSource.gate ||
-          tagSummary?.gate ||
-          flight?.gate ||
-          null,
-        zone:
-          bestSource.zone ||
-          latestFlightScan?.zone ||
-          null,
-        flightNumber:
-          bestSource.flightNumber ||
-          tagSummary?.flightNumber ||
-          flight?.flightNumber ||
-          null,
-        flightDate:
-          bestSource.flightDate ||
-          tagSummary?.flightDate ||
-          flight?.flightDate ||
-          null,
-        bagTypeLabel:
-          bestSource.bagTypeLabel ||
-          tagSummary?.bagTypeLabel ||
-          getBagTypeLabel(
-            bestSource.bagType ||
-              tagSummary?.bagType
-          ),
-      });
-    } catch (error) {
-      console.error(
-        "Missing bag tracker error:",
-        error
+      setTrackerOpen(
+        true
       );
 
-      setTrackerData(null);
+      setTrackerTag(
+        tag
+      );
+
+      setTrackerData(
+        null
+      );
 
       setTrackerError(
-        "Could not retrieve the last baggage location. Check the connection and Firestore permissions."
+        ""
       );
-    } finally {
-      setTrackerLoading(false);
-    }
-  };
 
-  /*
-   * Allows the modal to close with
-   * the Escape key.
-   */
-  useEffect(() => {
-    if (!trackerOpen) return;
+      setTrackerLoading(
+        true
+      );
 
-    const handleEscape = (event) => {
-      if (event.key === "Escape") {
-        closeBagTracker();
+      try {
+        const tagRef =
+          doc(
+            db,
+            "bagTags",
+            tag
+          );
+
+        const tagSnap =
+          await getDoc(
+            tagRef
+          );
+
+        const tagSummary =
+          tagSnap.exists()
+            ? {
+                id:
+                  tagSnap.id,
+
+                ...tagSnap.data(),
+              }
+            : null;
+
+        let latestEvent =
+          null;
+
+        try {
+          const latestEventQuery =
+            query(
+              collection(
+                db,
+                "bagTags",
+                tag,
+                "events"
+              ),
+
+              orderBy(
+                "createdAt",
+                "desc"
+              ),
+
+              limit(
+                1
+              )
+            );
+
+          const eventSnap =
+            await getDocs(
+              latestEventQuery
+            );
+
+          if (
+            !eventSnap.empty
+          ) {
+            const eventDoc =
+              eventSnap.docs[
+                0
+              ];
+
+            latestEvent = {
+              id:
+                eventDoc.id,
+
+              ...eventDoc.data(),
+            };
+          }
+        } catch (
+          eventError
+        ) {
+          console.warn(
+            "Could not query tracker events:",
+            eventError
+          );
+        }
+
+        const currentFlightCandidates =
+          [];
+
+        const bagroomRecord =
+          bagroomScans.find(
+            (
+              scan
+            ) =>
+              onlyDigits(
+                scan.tag ||
+                  scan.id
+              ) ===
+              tag
+          );
+
+        if (
+          bagroomRecord
+        ) {
+          currentFlightCandidates.push({
+            ...bagroomRecord,
+
+            location:
+              bagroomRecord
+                .trackingLocation ||
+              bagroomRecord
+                .receivingLocation ||
+              "bagroom",
+
+            message:
+              bagroomRecord
+                .message ||
+              `Bag scanned in Bagroom${
+                bagroomRecord
+                  .cartNumber
+                  ? ` \u00B7 Cart ${bagroomRecord.cartNumber}`
+                  : ""
+              }`,
+
+            trackerSource:
+              "Current Flight Bagroom",
+
+            trackerTime:
+              bagroomRecord
+                .createdAt ||
+              bagroomRecord
+                .scannedAt,
+          });
+        }
+
+        const gateRecord =
+          gateBagScans.find(
+            (
+              scan
+            ) =>
+              onlyDigits(
+                scan.tag ||
+                  scan.id
+              ) ===
+              tag
+          );
+
+        if (
+          gateRecord
+        ) {
+          currentFlightCandidates.push({
+            ...gateRecord,
+
+            location:
+              "gate",
+
+            message:
+              gateRecord
+                .message ||
+              "Bag tagged at Gate \u00B7 Direct to Aircraft",
+
+            trackerSource:
+              "Current Flight Gate",
+
+            trackerTime:
+              gateRecord
+                .createdAt ||
+              gateRecord
+                .scannedAt,
+          });
+        }
+
+        const aircraftRecord =
+          aircraftScans.find(
+            (
+              scan
+            ) =>
+              onlyDigits(
+                scan.tag ||
+                  scan.bagTag ||
+                  scan.bagTagNumber ||
+                  scan.barcode ||
+                  scan.id
+              ) ===
+              tag
+          );
+
+        if (
+          aircraftRecord
+        ) {
+          currentFlightCandidates.push({
+            ...aircraftRecord,
+
+            location:
+              aircraftRecord
+                .location ||
+              "aircraft",
+
+            message:
+              aircraftRecord
+                .message ||
+              `Bag loaded on Aircraft${
+                aircraftRecord
+                  .zone
+                  ? ` \u00B7 Zone ${aircraftRecord.zone}`
+                  : ""
+              }`,
+
+            trackerSource:
+              "Current Flight Aircraft",
+
+            trackerTime:
+              aircraftRecord
+                .createdAt ||
+              aircraftRecord
+                .scannedAt,
+          });
+        }
+
+        currentFlightCandidates.sort(
+          (
+            a,
+            b
+          ) => {
+            const timeA =
+              a.trackerTime
+                ?.seconds ||
+              0;
+
+            const timeB =
+              b.trackerTime
+                ?.seconds ||
+              0;
+
+            return (
+              timeB -
+              timeA
+            );
+          }
+        );
+
+        const latestFlightScan =
+          currentFlightCandidates[
+            0
+          ] ||
+          null;
+
+        let bestSource =
+          null;
+
+        let sourceName =
+          "";
+
+        if (
+          latestEvent
+        ) {
+          bestSource =
+            latestEvent;
+
+          sourceName =
+            "Baggage Tracker Event";
+        } else if (
+          tagSummary
+        ) {
+          bestSource =
+            tagSummary;
+
+          sourceName =
+            "Baggage Tracker Summary";
+        } else if (
+          latestFlightScan
+        ) {
+          bestSource =
+            latestFlightScan;
+
+          sourceName =
+            latestFlightScan
+              .trackerSource ||
+            "Current Flight Scan";
+        }
+
+        if (
+          !bestSource
+        ) {
+          setTrackerData({
+            tag,
+            found:
+              false,
+          });
+
+          const message =
+            "No previous scan or location was found for this bag tag.";
+
+          setTrackerError(
+            message
+          );
+
+          await logGateIncident({
+            action:
+              "BAG_TRACKER_LOOKUP",
+
+            status:
+              "WARNING",
+
+            severity:
+              "MEDIUM",
+
+            errorType:
+              "BAG_LOCATION_NOT_FOUND",
+
+            message,
+
+            tag,
+
+            durationMs:
+              timer.elapsed(),
+          });
+
+          return;
+        }
+
+        const location =
+          bestSource
+            .location ||
+          bestSource
+            .lastSeenLocation ||
+          bestSource
+            .currentLocation ||
+          bestSource
+            .scanLocation ||
+          tagSummary
+            ?.lastSeenLocation ||
+          latestFlightScan
+            ?.location ||
+          "";
+
+        const eventTime =
+          bestSource
+            .createdAt ||
+          bestSource
+            .scannedAt ||
+          bestSource
+            .updatedAt ||
+          bestSource
+            .lastSeenAt ||
+          bestSource
+            .timestamp ||
+          tagSummary
+            ?.lastSeenAt ||
+          latestFlightScan
+            ?.trackerTime ||
+          null;
+
+        const userName =
+          getTrackerUsername(
+            bestSource
+          ) !==
+          "Not available"
+            ? getTrackerUsername(
+                bestSource
+              )
+            : getTrackerUsername(
+                tagSummary
+              ) !==
+                "Not available"
+              ? getTrackerUsername(
+                  tagSummary
+                )
+              : getTrackerUsername(
+                  latestFlightScan
+                );
+
+        const eventLabel =
+          getTrackerEventLabel(
+            bestSource
+          );
+
+        setTrackerData({
+          tag,
+
+          found:
+            true,
+
+          sourceName,
+
+          location,
+
+          locationLabel:
+            getTrackerLocationLabel(
+              location
+            ),
+
+          eventTime,
+
+          formattedTime:
+            formatTrackerDateTime(
+              eventTime
+            ),
+
+          userName,
+
+          eventLabel,
+
+          cartNumber:
+            bestSource
+              .cartNumber ||
+            latestFlightScan
+              ?.cartNumber ||
+            null,
+
+          gate:
+            bestSource
+              .gate ||
+            tagSummary
+              ?.gate ||
+            flight
+              ?.gate ||
+            null,
+
+          zone:
+            bestSource
+              .zone ||
+            latestFlightScan
+              ?.zone ||
+            null,
+
+          flightNumber:
+            bestSource
+              .flightNumber ||
+            tagSummary
+              ?.flightNumber ||
+            flight
+              ?.flightNumber ||
+            null,
+
+          flightDate:
+            bestSource
+              .flightDate ||
+            tagSummary
+              ?.flightDate ||
+            flight
+              ?.flightDate ||
+            null,
+
+          bagTypeLabel:
+            bestSource
+              .bagTypeLabel ||
+            tagSummary
+              ?.bagTypeLabel ||
+            getBagTypeLabel(
+              bestSource
+                .bagType ||
+                tagSummary
+                  ?.bagType
+            ),
+        });
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "BAG_TRACKER_LOOKUP",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } catch (
+        error
+      ) {
+        console.error(
+          "Missing bag tracker error:",
+          error
+        );
+
+        setTrackerData(
+          null
+        );
+
+        const message =
+          "Could not retrieve the last baggage location. Check the connection and Firestore permissions.";
+
+        setTrackerError(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "BAG_TRACKER_LOOKUP",
+
+          status:
+            "ERROR",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "TRACKER_LOOKUP_FAILURE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          tag,
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } finally {
+        setTrackerLoading(
+          false
+        );
       }
     };
+
+  useEffect(() => {
+    if (
+      !trackerOpen
+    ) {
+      return undefined;
+    }
+
+    const handleEscape =
+      (
+        event
+      ) => {
+        if (
+          event.key ===
+          "Escape"
+        ) {
+          closeBagTracker();
+        }
+      };
 
     window.addEventListener(
       "keydown",
@@ -1694,17 +3339,17 @@ export default function GateControllerPage({
         handleEscape
       );
     };
-  }, [trackerOpen]);
+  }, [
+    trackerOpen,
+  ]);
 
-  /*
-   * Automatically closes the modal if
-   * the selected missing bag becomes loaded.
-   */
   useEffect(() => {
     if (
       trackerOpen &&
       trackerTag &&
-      loadedTagSet.has(trackerTag)
+      loadedTagSet.has(
+        trackerTag
+      )
     ) {
       closeBagTracker();
     }
@@ -1714,9 +3359,16 @@ export default function GateControllerPage({
     loadedTagSet,
   ]);
 
+  /* =========================
+     STATUS HELPERS
+  ========================= */
+
   const ensureStatusReceiving =
     async () => {
-      if (!flightId || !flight) {
+      if (
+        !flightId ||
+        !flight
+      ) {
         return;
       }
 
@@ -1725,7 +3377,10 @@ export default function GateControllerPage({
           flight.status
         );
 
-      if (currentStatus !== "OPEN") {
+      if (
+        currentStatus !==
+        "OPEN"
+      ) {
         return;
       }
 
@@ -1736,28 +3391,62 @@ export default function GateControllerPage({
           flightId
         ),
         {
-          status: "RECEIVING",
+          status:
+            "RECEIVING",
+
           statusUpdatedAt:
             serverTimestamp(),
-          statusUpdatedBy: operationalActor,
+
+          statusUpdatedBy:
+            operationalActor,
         },
         {
-          merge: true,
+          merge:
+            true,
         }
       );
     };
+
+  /* =========================
+     SAVE GATE CONTROLLER
+  ========================= */
 
   const saveGateControllerOnDuty =
     async () => {
       const picked =
         selectedGateController.trim();
 
-      if (!picked) {
+      if (
+        !picked
+      ) {
+        const message =
+          "Please select a Gate Controller.";
+
         setGcMsg(
-          "Please select a Gate Controller."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "SET_GATE_CONTROLLER",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "GATE_CONTROLLER_REQUIRED",
+
+          message,
+        });
+
         return;
       }
+
+      const timer =
+        startSystemTimer();
 
       try {
         localStorage.setItem(
@@ -1774,12 +3463,16 @@ export default function GateControllerPage({
           {
             gateControllerOnDuty:
               picked,
+
             gateControllerUpdatedAt:
               serverTimestamp(),
-            gateControllerUpdatedBy: operationalActor,
+
+            gateControllerUpdatedBy:
+              operationalActor,
           },
           {
-            merge: true,
+            merge:
+              true,
           }
         );
 
@@ -1787,30 +3480,133 @@ export default function GateControllerPage({
           `Gate Controller saved: ${picked} \u2705`
         );
 
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "SET_GATE_CONTROLLER",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
         setTimeout(
-          () => setGcMsg(""),
+          () =>
+            setGcMsg(
+              ""
+            ),
           2500
         );
-      } catch (error) {
-        console.error(error);
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
+
+        const message =
+          "Could not save Gate Controller.";
 
         setGcMsg(
-          "Could not save Gate Controller."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "SET_GATE_CONTROLLER",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            selectedGateController:
+              picked,
+          },
+        });
       }
     };
 
-  const updateFlightStatus =
-    async (nextStatus) => {
-      setManifestMsg("");
-      setManifestErr("");
+  /* =========================
+     UPDATE STATUS
+  ========================= */
 
-      if (!canEdit) {
-        setManifestErr(
-          "You don't have permission to change flight status."
+  const updateFlightStatus =
+    async (
+      nextStatus
+    ) => {
+      setManifestMsg(
+        ""
+      );
+
+      setManifestErr(
+        ""
+      );
+
+      const normalizedNextStatus =
+        normalizeStatus(
+          nextStatus
         );
+
+      if (
+        !canEdit
+      ) {
+        const message =
+          "You don't have permission to change flight status.";
+
+        setManifestErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "UPDATE_FLIGHT_STATUS",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+
+          metadata: {
+            requestedStatus:
+              normalizedNextStatus,
+
+            currentStatus:
+              flightStatus,
+          },
+        });
+
         return;
       }
+
+      const timer =
+        startSystemTimer();
 
       try {
         await setDoc(
@@ -1820,108 +3616,345 @@ export default function GateControllerPage({
             flightId
           ),
           {
-            status: nextStatus,
+            status:
+              normalizedNextStatus,
+
             statusUpdatedAt:
               serverTimestamp(),
-            statusUpdatedBy: operationalActor,
+
+            statusUpdatedBy:
+              operationalActor,
           },
           {
-            merge: true,
+            merge:
+              true,
           }
         );
 
         setManifestMsg(
-          `Status updated to ${nextStatus} \u2705`
+          `Status updated to ${normalizedNextStatus} \u2705`
         );
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "UPDATE_FLIGHT_STATUS",
+
+          durationMs:
+            timer.elapsed(),
+        });
 
         setTimeout(
           () =>
-            setManifestMsg(""),
+            setManifestMsg(
+              ""
+            ),
           2000
         );
-      } catch (error) {
-        console.error(error);
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
+
+        const message =
+          "Could not update status. Check Firestore rules.";
 
         setManifestErr(
-          "Could not update status. Check Firestore rules."
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "UPDATE_FLIGHT_STATUS",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            requestedStatus:
+              normalizedNextStatus,
+
+            previousStatus:
+              flightStatus,
+          },
+        });
+      }
+    };
+
+  /* =========================
+     SAVE GATE TOTAL
+  ========================= */
+
+  const saveTotal =
+    async () => {
+      setSaveMsg(
+        ""
+      );
+
+      const value =
+        toIntSafe(
+          checkedTotalInput
+        );
+
+      if (
+        value ===
+        null
+      ) {
+        const message =
+          "Please enter a valid number.";
+
+        setSaveMsg(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "SAVE_GATE_TOTAL",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "INVALID_GATE_TOTAL",
+
+          message,
+
+          metadata: {
+            enteredValue:
+              checkedTotalInput,
+          },
+        });
+
+        return;
+      }
+
+      if (
+        !canEdit
+      ) {
+        const message =
+          "You don't have permission to edit this field.";
+
+        setSaveMsg(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "SAVE_GATE_TOTAL",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+
+          metadata: {
+            attemptedTotal:
+              value,
+          },
+        });
+
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
+
+      try {
+        setSaving(
+          true
+        );
+
+        await setDoc(
+          doc(
+            db,
+            "flights",
+            flightId
+          ),
+          {
+            checkedBagsTotal:
+              value,
+
+            gateTotalUpdatedAt:
+              serverTimestamp(),
+
+            gateTotalUpdatedBy:
+              operationalActor,
+
+            gateControllerOnDuty:
+              selectedGateController ||
+              null,
+          },
+          {
+            merge:
+              true,
+          }
+        );
+
+        setSaveMsg(
+          "Saved \u2705"
+        );
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "SAVE_GATE_TOTAL",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        setTimeout(
+          () =>
+            setSaveMsg(
+              ""
+            ),
+          2000
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Save gate total error:",
+          error
+        );
+
+        const message =
+          "Could not save. Check Firestore rules.";
+
+        setSaveMsg(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "SAVE_GATE_TOTAL",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            attemptedTotal:
+              value,
+
+            previousTotal:
+              flight
+                ?.checkedBagsTotal ??
+              null,
+
+            gateControllerOnDuty:
+              selectedGateController ||
+              null,
+          },
+        });
+      } finally {
+        setSaving(
+          false
         );
       }
     };
-    const saveTotal = async () => {
-    setSaveMsg("");
 
-    const value = toIntSafe(
-      checkedTotalInput
-    );
-
-    if (value === null) {
-      setSaveMsg(
-        "Please enter a valid number."
-      );
-      return;
-    }
-
-    if (!canEdit) {
-      setSaveMsg(
-        "You don't have permission to edit this field."
-      );
-      return;
-    }
-
-    try {
-      setSaving(true);
-
-      await setDoc(
-        doc(
-          db,
-          "flights",
-          flightId
-        ),
-        {
-          checkedBagsTotal: value,
-          gateTotalUpdatedAt:
-            serverTimestamp(),
-          gateTotalUpdatedBy: operationalActor,
-          gateControllerOnDuty:
-            selectedGateController ||
-            null,
-        },
-        {
-          merge: true,
-        }
-      );
-
-      setSaveMsg("Saved \u2705");
-
-      setTimeout(
-        () => setSaveMsg(""),
-        2000
-      );
-    } catch (error) {
-      console.error(
-        "Save gate total error:",
-        error
-      );
-
-      setSaveMsg(
-        "Could not save. Check Firestore rules."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
+  /* =========================
+     STRICT MANIFEST
+  ========================= */
 
   const updateStrictManifest =
-    async (nextValue) => {
-      setManifestMsg("");
-      setManifestErr("");
+    async (
+      nextValue
+    ) => {
+      setManifestMsg(
+        ""
+      );
 
-      if (!canEdit) {
+      setManifestErr(
+        ""
+      );
+
+      if (
+        !canEdit
+      ) {
+        const message =
+          "No permission to change Strict Manifest.";
+
         setManifestErr(
-          "No permission to change Strict Manifest."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "UPDATE_STRICT_MANIFEST",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+        });
+
         return;
       }
+
+      const timer =
+        startSystemTimer();
 
       try {
         await setDoc(
@@ -1932,17 +3965,26 @@ export default function GateControllerPage({
           ),
           {
             strictManifest:
-              Boolean(nextValue),
+              Boolean(
+                nextValue
+              ),
+
             strictManifestUpdatedAt:
               serverTimestamp(),
+
+            strictManifestUpdatedBy:
+              operationalActor,
           },
           {
-            merge: true,
+            merge:
+              true,
           }
         );
 
         setStrictManifest(
-          Boolean(nextValue)
+          Boolean(
+            nextValue
+          )
         );
 
         setManifestMsg(
@@ -1953,59 +3995,156 @@ export default function GateControllerPage({
           } \u2705`
         );
 
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "UPDATE_STRICT_MANIFEST",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
         setTimeout(
           () =>
-            setManifestMsg(""),
+            setManifestMsg(
+              ""
+            ),
           2000
         );
-      } catch (error) {
-        console.error(error);
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
+
+        const message =
+          "Could not update Strict Manifest (check rules).";
 
         setManifestErr(
-          "Could not update Strict Manifest (check rules)."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "UPDATE_STRICT_MANIFEST",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            requestedValue:
+              Boolean(
+                nextValue
+              ),
+          },
+        });
       }
     };
 
-  const previewFromText = (text) => {
-    setManifestMsg("");
-    setManifestErr("");
+  /* =========================
+     MANIFEST PREVIEW
+  ========================= */
 
-    const tags =
-      extractBagTagsFromText(
-        text,
-        {
-          exactLen: 10,
-        }
+  const previewFromText =
+    (
+      text
+    ) => {
+      setManifestMsg(
+        ""
       );
 
-    setManifestTagsPreview(tags);
-
-    if (tags.length === 0) {
       setManifestErr(
-        "No 10-digit bag tag numbers found. If this is a scanned PDF, use OCR upload."
+        ""
       );
-      return;
-    }
 
-    setManifestMsg(
-      `Preview: found ${tags.length} bag tags (ONLY 10 digits).`
-    );
-  };
+      const tags =
+        extractBagTagsFromText(
+          text,
+          {
+            exactLen:
+              10,
+          }
+        );
 
-  const removeFromPreview = (tag) => {
-    setManifestTagsPreview(
-      (previous) =>
-        previous.filter(
-          (item) => item !== tag
-        )
-    );
-  };
+      setManifestTagsPreview(
+        tags
+      );
+
+      if (
+        tags.length ===
+        0
+      ) {
+        setManifestErr(
+          "No 10-digit bag tag numbers found. If this is a scanned PDF, use OCR upload."
+        );
+
+        return;
+      }
+
+      setManifestMsg(
+        `Preview: found ${tags.length} bag tags (ONLY 10 digits).`
+      );
+    };
+
+  const removeFromPreview =
+    (
+      tag
+    ) => {
+      setManifestTagsPreview(
+        (
+          previous
+        ) =>
+          previous.filter(
+            (
+              item
+            ) =>
+              item !==
+              tag
+          )
+      );
+    };
+
+  /* =========================
+     FILE / PDF
+  ========================= */
 
   const handleFilePick =
-    async (file) => {
-      setManifestMsg("");
-      setManifestErr("");
+    async (
+      file
+    ) => {
+      setManifestMsg(
+        ""
+      );
+
+      setManifestErr(
+        ""
+      );
+
+      const timer =
+        startSystemTimer();
 
       try {
         const isPdf =
@@ -2013,11 +4152,16 @@ export default function GateControllerPage({
             "application/pdf" ||
           file.name
             .toLowerCase()
-            .endsWith(".pdf");
+            .endsWith(
+              ".pdf"
+            );
 
-        let text = "";
+        let text =
+          "";
 
-        if (isPdf) {
+        if (
+          isPdf
+        ) {
           setManifestMsg(
             "Reading PDF (local)..."
           );
@@ -2037,14 +4181,20 @@ export default function GateControllerPage({
             );
         }
 
-        setManifestText(text);
-        previewFromText(text);
+        setManifestText(
+          text
+        );
+
+        previewFromText(
+          text
+        );
 
         const found =
           extractBagTagsFromText(
             text,
             {
-              exactLen: 10,
+              exactLen:
+                10,
             }
           ).length;
 
@@ -2067,179 +4217,471 @@ export default function GateControllerPage({
             `PDF uploaded for OCR \u2705\n\nPath: ${uploaded.path}\n\nCloud OCR will import tags automatically.`
           );
         }
-      } catch (error) {
-        console.error(error);
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            isPdf
+              ? "READ_MANIFEST_PDF"
+              : "READ_MANIFEST_FILE",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
+
+        const message =
+          "Could not read file. If PDF is scanned, OCR upload is required.";
 
         setManifestErr(
-          "Could not read file. If PDF is scanned, OCR upload is required."
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "READ_MANIFEST_FILE",
+
+          status:
+            "ERROR",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "MANIFEST_FILE_READ",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            fileName:
+              file?.name ||
+              null,
+
+            fileType:
+              file?.type ||
+              null,
+          },
+        });
+      }
+    };
+
+  /* =========================
+     IMPORT MANIFEST
+  ========================= */
+
+  const importManifest =
+    async () => {
+      setManifestMsg(
+        ""
+      );
+
+      setManifestErr(
+        ""
+      );
+
+      if (
+        !canEdit
+      ) {
+        const message =
+          "You don't have permission to import manifest.";
+
+        setManifestErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "IMPORT_MANIFEST",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+        });
+
+        return;
+      }
+
+      const tags =
+        manifestTagsPreview;
+
+      if (
+        !tags ||
+        tags.length ===
+          0
+      ) {
+        const message =
+          "Nothing to import. Preview first.";
+
+        setManifestErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "IMPORT_MANIFEST",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "EMPTY_MANIFEST",
+
+          message,
+        });
+
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
+
+      try {
+        setImporting(
+          true
+        );
+
+        const chunkSize =
+          450;
+
+        let imported =
+          0;
+
+        for (
+          let index = 0;
+          index <
+          tags.length;
+          index +=
+            chunkSize
+        ) {
+          const chunk =
+            tags.slice(
+              index,
+              index +
+                chunkSize
+            );
+
+          const batch =
+            writeBatch(
+              db
+            );
+
+          for (
+            const tag of
+              chunk
+          ) {
+            if (
+              !isValidTag10(
+                tag
+              )
+            ) {
+              continue;
+            }
+
+            const tagRef =
+              doc(
+                db,
+                "flights",
+                flightId,
+                "allowedBagTags",
+                tag
+              );
+
+            batch.set(
+              tagRef,
+              {
+                tag,
+
+                importedAt:
+                  serverTimestamp(),
+
+                importedBy:
+                  operationalActor,
+
+                source:
+                  "import",
+              }
+            );
+
+            imported +=
+              1;
+          }
+
+          await batch.commit();
+        }
+
+        await setDoc(
+          doc(
+            db,
+            "flights",
+            flightId
+          ),
+          {
+            strictManifest:
+              true,
+
+            strictManifestUpdatedAt:
+              serverTimestamp(),
+
+            strictManifestUpdatedBy:
+              operationalActor,
+
+            manifestImportedAt:
+              serverTimestamp(),
+
+            manifestImportedBy:
+              operationalActor,
+          },
+          {
+            merge:
+              true,
+          }
+        );
+
+        setStrictManifest(
+          true
+        );
+
+        setManifestMsg(
+          `Imported ${imported} bag tags \u2705 Strict Manifest ON`
+        );
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "IMPORT_MANIFEST",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        setTimeout(
+          () =>
+            setManifestMsg(
+              ""
+            ),
+          2500
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
+
+        const message =
+          "Import failed. Check Firestore rules and try again.";
+
+        setManifestErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "IMPORT_MANIFEST",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "MANIFEST_IMPORT_FAILURE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            previewCount:
+              tags.length,
+          },
+        });
+      } finally {
+        setImporting(
+          false
         );
       }
     };
 
-  const importManifest = async () => {
-    setManifestMsg("");
-    setManifestErr("");
+  /* =========================
+     SCAN TAG INTO MANIFEST
+  ========================= */
 
-    if (!canEdit) {
-      setManifestErr(
-        "You don't have permission to import manifest."
+  const saveScannedTagToManifest =
+    async (
+      raw
+    ) => {
+      setScanMsg(
+        ""
       );
-      return;
-    }
 
-    const tags =
-      manifestTagsPreview;
-
-    if (
-      !tags ||
-      tags.length === 0
-    ) {
-      setManifestErr(
-        "Nothing to import. Preview first."
+      setScanErr(
+        ""
       );
-      return;
-    }
 
-    try {
-      setImporting(true);
-
-      const chunkSize = 450;
-      let imported = 0;
-
-      for (
-        let index = 0;
-        index < tags.length;
-        index += chunkSize
+      if (
+        !canEdit
       ) {
-        const chunk = tags.slice(
-          index,
-          index + chunkSize
+        const message =
+          "You don't have permission to scan/import manifest tags.";
+
+        setScanErr(
+          message
         );
 
-        const batch =
-          writeBatch(db);
+        await logGateIncident({
+          action:
+            "MANIFEST_TAG_SCAN",
 
-        for (const tag of chunk) {
-          if (
-            !isValidTag10(tag)
-          ) {
-            continue;
-          }
+          status:
+            "WARNING",
 
-          const tagRef = doc(
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+        });
+
+        return;
+      }
+
+      const cleaned =
+        onlyDigits(
+          cleanTagValue(
+            raw
+          )
+        );
+
+      if (
+        !cleaned
+      ) {
+        return;
+      }
+
+      if (
+        !isValidTag10(
+          cleaned
+        )
+      ) {
+        const message =
+          "Invalid bag tag. Must be exactly 10 digits.";
+
+        setScanErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "MANIFEST_TAG_SCAN",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "INVALID_TAG",
+
+          message,
+
+          tag:
+            cleaned,
+
+          metadata: {
+            receivedLength:
+              cleaned.length,
+
+            requiredLength:
+              10,
+          },
+        });
+
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
+
+      try {
+        setSavingScan(
+          true
+        );
+
+        await ensureStatusReceiving();
+
+        const tagRef =
+          doc(
             db,
             "flights",
             flightId,
             "allowedBagTags",
-            tag
+            cleaned
           );
-
-          batch.set(tagRef, {
-            tag,
-            importedAt:
-              serverTimestamp(),
-            importedBy: operationalActor,
-            source: "import",
-          });
-
-          imported += 1;
-        }
-
-        await batch.commit();
-      }
-
-      await setDoc(
-        doc(
-          db,
-          "flights",
-          flightId
-        ),
-        {
-          strictManifest: true,
-          strictManifestUpdatedAt:
-            serverTimestamp(),
-          manifestImportedAt:
-            serverTimestamp(),
-          manifestImportedBy: operationalActor,
-        },
-        {
-          merge: true,
-        }
-      );
-
-      setStrictManifest(true);
-
-      setManifestMsg(
-        `Imported ${imported} bag tags \u2705 Strict Manifest ON`
-      );
-
-      setTimeout(
-        () =>
-          setManifestMsg(""),
-        2500
-      );
-    } catch (error) {
-      console.error(error);
-
-      setManifestErr(
-        "Import failed. Check Firestore rules and try again."
-      );
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const saveScannedTagToManifest =
-    async (raw) => {
-      setScanMsg("");
-      setScanErr("");
-
-      if (!canEdit) {
-        setScanErr(
-          "You don't have permission to scan/import manifest tags."
-        );
-        return;
-      }
-
-      const cleaned = onlyDigits(
-        cleanTagValue(raw)
-      );
-
-      if (!cleaned) return;
-
-      if (
-        !isValidTag10(cleaned)
-      ) {
-        setScanErr(
-          "Invalid bag tag. Must be exactly 10 digits."
-        );
-        return;
-      }
-
-      try {
-        setSavingScan(true);
-
-        await ensureStatusReceiving();
-
-        const tagRef = doc(
-          db,
-          "flights",
-          flightId,
-          "allowedBagTags",
-          cleaned
-        );
 
         await setDoc(
           tagRef,
           {
-            tag: cleaned,
+            tag:
+              cleaned,
+
             importedAt:
               serverTimestamp(),
-            importedBy: operationalActor,
-            source: "scan",
+
+            importedBy:
+              operationalActor,
+
+            source:
+              "scan",
           },
           {
-            merge: true,
+            merge:
+              true,
           }
         );
 
@@ -2250,56 +4692,139 @@ export default function GateControllerPage({
             flightId
           ),
           {
-            strictManifest: true,
+            strictManifest:
+              true,
+
             strictManifestUpdatedAt:
               serverTimestamp(),
+
+            strictManifestUpdatedBy:
+              operationalActor,
           },
           {
-            merge: true,
+            merge:
+              true,
           }
         );
 
-        setStrictManifest(true);
+        setStrictManifest(
+          true
+        );
 
         setScanMsg(
           `Saved \u2705 ${cleaned}`
         );
 
-        setScanInput("");
+        setScanInput(
+          ""
+        );
 
-        if (scanRef.current) {
-          scanRef.current.focus();
-        }
-      } catch (error) {
-        console.error(error);
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "MANIFEST_TAG_SCAN",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        scanRef.current
+          ?.focus();
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
+
+        const message =
+          "Could not save scanned tag. Check rules/connection.";
 
         setScanErr(
-          "Could not save scanned tag. Check rules/connection."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "MANIFEST_TAG_SCAN",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          tag:
+            cleaned,
+
+          durationMs:
+            timer.elapsed(),
+        });
       } finally {
-        setSavingScan(false);
+        setSavingScan(
+          false
+        );
       }
     };
 
+  /* =========================
+     DELETE MANIFEST TAG
+  ========================= */
+
   const deleteAllowedTag =
-    async (tag) => {
-      if (!canEdit) return;
+    async (
+      tag
+    ) => {
+      if (
+        !canEdit
+      ) {
+        return;
+      }
 
-      const id = String(
-        tag || ""
-      ).trim();
+      const id =
+        String(
+          tag ||
+            ""
+        ).trim();
 
-      if (!id) return;
+      if (!id) {
+        return;
+      }
 
       const confirmed =
         window.confirm(
           `Delete this manifest tag?\n\n${id}\n\nThis cannot be undone.`
         );
 
-      if (!confirmed) return;
+      if (
+        !confirmed
+      ) {
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
 
       try {
-        setDeletingTag(id);
+        setDeletingTag(
+          id
+        );
 
         await deleteDoc(
           doc(
@@ -2310,121 +4835,237 @@ export default function GateControllerPage({
             id
           )
         );
-      } catch (error) {
-        console.error(error);
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "DELETE_MANIFEST_TAG",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } catch (
+        error
+      ) {
+        console.error(
+          error
+        );
 
         window.alert(
           "Failed to delete tag. Check Firestore rules."
         );
+
+        await logGateIncident({
+          action:
+            "DELETE_MANIFEST_TAG",
+
+          status:
+            "ERROR",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "FIRESTORE_DELETE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              "Failed to delete manifest tag."
+            ),
+
+          tag:
+            id,
+
+          durationMs:
+            timer.elapsed(),
+        });
       } finally {
-        setDeletingTag("");
+        setDeletingTag(
+          ""
+        );
       }
     };
 
+  /* =========================
+     GATE BAG HELPERS
+  ========================= */
+
   const validateGateBagOtherFlight =
-    async (tag) => {
-      const tagRef = doc(
-        db,
-        "bagTags",
-        tag
-      );
+    async (
+      tag
+    ) => {
+      const tagRef =
+        doc(
+          db,
+          "bagTags",
+          tag
+        );
 
       const tagSnap =
-        await getDoc(tagRef);
+        await getDoc(
+          tagRef
+        );
 
-      if (!tagSnap.exists()) {
+      if (
+        !tagSnap.exists()
+      ) {
         return {
-          ok: true,
+          ok:
+            true,
         };
       }
 
       const existing =
         tagSnap.data();
 
+      const existingFlightId =
+        existing
+          ?.flightId ||
+        existing
+          ?.currentFlightId ||
+        null;
+
       if (
-        existing.flightId &&
-        existing.flightId !==
+        existingFlightId &&
+        existingFlightId !==
           flightId
       ) {
         return {
-          ok: false,
+          ok:
+            false,
+
           message:
             `\u274C This bag tag belongs to another flight/date.\n\n` +
             `Current flight: ${
-              flight?.flightNumber ||
+              flight
+                ?.flightNumber ||
               flightId
             } (${
-              flight?.flightDate ||
+              flight
+                ?.flightDate ||
               "-"
             })\n` +
             `Registered flight: ${
-              existing.flightNumber ||
-              existing.flightId
+              existing
+                .flightNumber ||
+              existing
+                .currentFlightNumber ||
+              existingFlightId
             } (${
-              existing.flightDate ||
+              existing
+                .flightDate ||
               "-"
             })\n\n` +
             "Do NOT accept this bag for this flight.",
+
+          existing,
         };
       }
 
       return {
-        ok: true,
+        ok:
+          true,
       };
     };
 
   const saveGateBagTrackingEvent =
-    async (tag) => {
-      const eventRef = doc(
-        db,
-        "bagTags",
-        tag,
-        "events",
-        `gate_bag_${Date.now()}`
-      );
+    async (
+      tag
+    ) => {
+      const eventRef =
+        doc(
+          db,
+          "bagTags",
+          tag,
+          "events",
+          `gate_bag_${Date.now()}`
+        );
 
-      await setDoc(eventRef, {
-        type: "GATE_BAG_SCAN",
-        location: "gate",
-        message:
-          "Bag tag created / scanned at gate \u00B7 Direct to Aircraft",
-        tag,
-        bagType: "GATE_BAG",
-        bagTypeLabel:
-          "Bag Tagged at Gate",
-        directToAircraft: true,
-        employeeFullName:
-          operationalActor.employeeFullName,
-        operationalPosition:
-          operationalActor.operationalPosition,
-        operationalPositionLabel:
-          operationalActor.operationalPositionLabel,
-        basePosition:
-          operationalActor.basePosition,
-        flightId,
-        flightNumber:
-          flight?.flightNumber ||
-          null,
-        flightDate:
-          flight?.flightDate ||
-          null,
-        gate:
-          flight?.gate || null,
-        createdAt:
-          serverTimestamp(),
-        createdBy: operationalActor,
-      });
+      await setDoc(
+        eventRef,
+        {
+          type:
+            "GATE_BAG_SCAN",
+
+          location:
+            "gate",
+
+          message:
+            "Bag tag created / scanned at gate \u00B7 Direct to Aircraft",
+
+          tag,
+
+          bagType:
+            "GATE_BAG",
+
+          bagTypeLabel:
+            "Bag Tagged at Gate",
+
+          directToAircraft:
+            true,
+
+          employeeFullName:
+            operationalActor
+              .employeeFullName,
+
+          operationalPosition:
+            operationalActor
+              .operationalPosition,
+
+          operationalPositionLabel:
+            operationalActor
+              .operationalPositionLabel,
+
+          basePosition:
+            operationalActor
+              .basePosition,
+
+          flightId,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          flightDate:
+            flight
+              ?.flightDate ||
+            null,
+
+          gate:
+            flight
+              ?.gate ||
+            null,
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy:
+            operationalActor,
+        }
+      );
     };
 
   const saveGateBagScan =
-    async (tag) => {
-      const currentScanRef = doc(
-        db,
-        "flights",
-        flightId,
-        "gateBagScans",
-        tag
-      );
+    async (
+      tag
+    ) => {
+      const currentScanRef =
+        doc(
+          db,
+          "flights",
+          flightId,
+          "gateBagScans",
+          tag
+        );
 
       const existingScan =
         await getDoc(
@@ -2434,11 +5075,42 @@ export default function GateControllerPage({
       if (
         existingScan.exists()
       ) {
+        const message =
+          `Duplicate scan. Bag tag ${tag} was already tagged at Gate.`;
+
         setGateBagErr(
-          `Duplicate scan. Bag tag ${tag} was already tagged at Gate.`
+          message
         );
 
-        setGateBagInput("");
+        setGateBagInput(
+          ""
+        );
+
+        await logGateIncident({
+          action:
+            "GATE_BAG_SCAN",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "DUPLICATE_SCAN",
+
+          message,
+
+          tag,
+
+          metadata: {
+            bagType:
+              "GATE_BAG",
+
+            directToAircraft:
+              true,
+          },
+        });
 
         return false;
       }
@@ -2448,12 +5120,49 @@ export default function GateControllerPage({
           tag
         );
 
-      if (!crossFlight.ok) {
+      if (
+        !crossFlight.ok
+      ) {
         setGateBagErr(
           crossFlight.message
         );
 
-        setGateBagInput("");
+        setGateBagInput(
+          ""
+        );
+
+        await logGateIncident({
+          action:
+            "GATE_BAG_SCAN",
+
+          status:
+            "WARNING",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "WRONG_FLIGHT",
+
+          message:
+            crossFlight.message,
+
+          tag,
+
+          metadata: {
+            directToAircraft:
+              true,
+
+            registeredFlightId:
+              crossFlight
+                ?.existing
+                ?.flightId ||
+              crossFlight
+                ?.existing
+                ?.currentFlightId ||
+              null,
+          },
+        });
 
         return false;
       }
@@ -2462,22 +5171,40 @@ export default function GateControllerPage({
         currentScanRef,
         {
           tag,
-          location: "gate",
-          bagType: "GATE_BAG",
+
+          location:
+            "gate",
+
+          bagType:
+            "GATE_BAG",
+
           bagTypeLabel:
             "Bag Tagged at Gate",
-          directToAircraft: true,
+
+          directToAircraft:
+            true,
+
           employeeFullName:
-            operationalActor.employeeFullName,
+            operationalActor
+              .employeeFullName,
+
           operationalPosition:
-            operationalActor.operationalPosition,
+            operationalActor
+              .operationalPosition,
+
           operationalPositionLabel:
-            operationalActor.operationalPositionLabel,
+            operationalActor
+              .operationalPositionLabel,
+
           basePosition:
-            operationalActor.basePosition,
+            operationalActor
+              .basePosition,
+
           createdAt:
             serverTimestamp(),
-          scannedBy: operationalActor,
+
+          scannedBy:
+            operationalActor,
         }
       );
 
@@ -2489,37 +5216,72 @@ export default function GateControllerPage({
         ),
         {
           tag,
+
           flightId,
+
+          currentFlightId:
+            flightId,
+
           flightNumber:
-            flight?.flightNumber ||
+            flight
+              ?.flightNumber ||
             null,
+
+          currentFlightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
           flightDate:
-            flight?.flightDate ||
+            flight
+              ?.flightDate ||
             null,
+
           gate:
-            flight?.gate || null,
-          bagType: "GATE_BAG",
+            flight
+              ?.gate ||
+            null,
+
+          bagType:
+            "GATE_BAG",
+
           bagTypeLabel:
             "Bag Tagged at Gate",
-          directToAircraft: true,
+
+          directToAircraft:
+            true,
+
           employeeFullName:
-            operationalActor.employeeFullName,
+            operationalActor
+              .employeeFullName,
+
           operationalPosition:
-            operationalActor.operationalPosition,
+            operationalActor
+              .operationalPosition,
+
           operationalPositionLabel:
-            operationalActor.operationalPositionLabel,
+            operationalActor
+              .operationalPositionLabel,
+
           basePosition:
-            operationalActor.basePosition,
+            operationalActor
+              .basePosition,
+
           firstSeenAt:
             serverTimestamp(),
+
           lastSeenAt:
             serverTimestamp(),
+
           lastSeenLocation:
             "gate",
-          lastSeenBy: operationalActor,
+
+          lastSeenBy:
+            operationalActor,
         },
         {
-          merge: true,
+          merge:
+            true,
         }
       );
 
@@ -2530,46 +5292,152 @@ export default function GateControllerPage({
       return true;
     };
 
+  /* =========================
+     GATE BAG SUBMIT
+  ========================= */
+
   const handleGateBagSubmit =
-    async (forcedValue) => {
+    async (
+      forcedValue
+    ) => {
       if (
         gateBagSavingRef.current
       ) {
         return;
       }
 
-      setGateBagMsg("");
-      setGateBagErr("");
-
-      if (!canEdit) {
-        setGateBagErr(
-          "You don't have permission to create Gate bag tags."
-        );
-        return;
-      }
-
-      if (isFlightLoaded) {
-        setGateBagErr(
-          "This flight is already LOADED. Gate bag scanning is locked."
-        );
-
-        setGateBagInput("");
-        return;
-      }
-
-      const tag = onlyDigits(
-        cleanTagValue(
-          forcedValue ??
-            gateBagInput
-        )
+      setGateBagMsg(
+        ""
       );
 
-      if (!tag) return;
+      setGateBagErr(
+        ""
+      );
 
-      if (!isValidTag10(tag)) {
+      const timer =
+        startSystemTimer();
+
+      if (
+        !canEdit
+      ) {
+        const message =
+          "You don't have permission to create Gate bag tags.";
+
         setGateBagErr(
-          "Invalid bag tag. Must be exactly 10 digits."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "GATE_BAG_SCAN",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        return;
+      }
+
+      if (
+        isFlightLoaded
+      ) {
+        const message =
+          "This flight is already LOADED. Gate bag scanning is locked.";
+
+        setGateBagErr(
+          message
+        );
+
+        setGateBagInput(
+          ""
+        );
+
+        await logGateIncident({
+          action:
+            "GATE_BAG_SCAN",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "FLIGHT_LOCKED",
+
+          message,
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        return;
+      }
+
+      const tag =
+        onlyDigits(
+          cleanTagValue(
+            forcedValue ??
+              gateBagInput
+          )
+        );
+
+      if (!tag) {
+        return;
+      }
+
+      if (
+        !isValidTag10(
+          tag
+        )
+      ) {
+        const message =
+          "Invalid bag tag. Must be exactly 10 digits.";
+
+        setGateBagErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "GATE_BAG_SCAN",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "INVALID_TAG",
+
+          message,
+
+          tag,
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            receivedLength:
+              tag.length,
+
+            requiredLength:
+              10,
+          },
+        });
+
         return;
       }
 
@@ -2582,28 +5450,85 @@ export default function GateControllerPage({
             tag
           );
 
-        if (!saved) return;
+        if (
+          !saved
+        ) {
+          return;
+        }
 
         setGateBagMsg(
           `Gate bag saved \u2705 ${tag} \u00B7 Direct to Aircraft`
         );
 
-        setGateBagInput("");
+        setGateBagInput(
+          ""
+        );
 
-        if (
-          gateBagInputRef.current
-        ) {
-          gateBagInputRef.current.focus();
-        }
-      } catch (error) {
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "GATE_BAG_SCAN",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        gateBagInputRef.current
+          ?.focus();
+      } catch (
+        error
+      ) {
         console.error(
           "Gate bag scan error:",
           error
         );
 
+        const message =
+          "Could not save Gate bag. Check Firestore rules/connection.";
+
         setGateBagErr(
-          "Could not save Gate bag. Check Firestore rules/connection."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "GATE_BAG_SCAN",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          tag,
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            bagType:
+              "GATE_BAG",
+
+            directToAircraft:
+              true,
+          },
+        });
       } finally {
         gateBagSavingRef.current =
           false;
@@ -2611,7 +5536,9 @@ export default function GateControllerPage({
     };
 
   const scheduleGateBagSubmit =
-    (value) => {
+    (
+      value
+    ) => {
       if (
         gateBagTimerRef.current
       ) {
@@ -2620,30 +5547,54 @@ export default function GateControllerPage({
         );
       }
 
-      const cleaned = onlyDigits(
-        cleanTagValue(value)
-      );
+      const cleaned =
+        onlyDigits(
+          cleanTagValue(
+            value
+          )
+        );
 
       gateBagTimerRef.current =
-        setTimeout(() => {
-          if (
-            isValidTag10(cleaned)
-          ) {
-            handleGateBagSubmit(
-              cleaned
-            );
-          }
-        }, 120);
+        setTimeout(
+          () => {
+            if (
+              isValidTag10(
+                cleaned
+              )
+            ) {
+              handleGateBagSubmit(
+                cleaned
+              );
+            }
+          },
+          120
+        );
     };
 
   const handleGateBagChange =
-    (event) => {
+    (
+      event
+    ) => {
       const value =
-        event.target.value;
+        onlyDigits(
+          event.target
+            .value
+        ).slice(
+          0,
+          10
+        );
 
-      setGateBagInput(value);
+      setGateBagInput(
+        value
+      );
 
-      if (!isFlightLoaded) {
+      setGateBagErr(
+        ""
+      );
+
+      if (
+        !isFlightLoaded
+      ) {
         scheduleGateBagSubmit(
           value
         );
@@ -2651,36 +5602,113 @@ export default function GateControllerPage({
     };
 
   const handleGateBagKeyDown =
-    (event) => {
+    (
+      event
+    ) => {
       if (
-        event.key === "Enter" ||
-        event.key === "Tab"
+        event.key ===
+          "Enter" ||
+        event.key ===
+          "Tab"
       ) {
         event.preventDefault();
 
-        handleGateBagSubmit();
+        if (
+          gateBagTimerRef.current
+        ) {
+          clearTimeout(
+            gateBagTimerRef.current
+          );
+
+          gateBagTimerRef.current =
+            null;
+        }
+
+        handleGateBagSubmit(
+          event
+            .currentTarget
+            .value
+        );
       }
     };
 
+  /* =========================
+     DELETE GATE BAG
+  ========================= */
+
   const deleteGateBagScan =
-    async (scan) => {
-      const tag = onlyDigits(
-        scan?.tag || scan?.id
-      );
-
-      if (!tag) return;
-
-      if (!canDeleteGateBags) {
-        setGateBagErr(
-          "You don't have permission to delete Gate bag tags."
+    async (
+      scan
+    ) => {
+      const tag =
+        onlyDigits(
+          scan?.tag ||
+            scan?.id
         );
+
+      if (!tag) {
         return;
       }
 
-      if (isFlightLoaded) {
+      if (
+        !canDeleteGateBags
+      ) {
+        const message =
+          "You don't have permission to delete Gate bag tags.";
+
         setGateBagErr(
-          "This flight is already LOADED. Gate bag tags are locked."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "DELETE_GATE_BAG",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NO_PERMISSION",
+
+          message,
+
+          tag,
+        });
+
+        return;
+      }
+
+      if (
+        isFlightLoaded
+      ) {
+        const message =
+          "This flight is already LOADED. Gate bag tags are locked.";
+
+        setGateBagErr(
+          message
+        );
+
+        await logGateIncident({
+          action:
+            "DELETE_GATE_BAG",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "FLIGHT_LOCKED",
+
+          message,
+
+          tag,
+        });
+
         return;
       }
 
@@ -2689,9 +5717,31 @@ export default function GateControllerPage({
           tag
         )
       ) {
+        const message =
+          `Bag tag ${tag} is already loaded on Aircraft and cannot be deleted from Gate. Offload it from Aircraft first.`;
+
         setGateBagErr(
-          `Bag tag ${tag} is already loaded on Aircraft and cannot be deleted from Gate. Offload it from Aircraft first.`
+          message
         );
+
+        await logGateIncident({
+          action:
+            "DELETE_GATE_BAG",
+
+          status:
+            "WARNING",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "BAG_ALREADY_LOADED",
+
+          message,
+
+          tag,
+        });
+
         return;
       }
 
@@ -2703,15 +5753,27 @@ export default function GateControllerPage({
             "This action cannot be undone."
         );
 
-      if (!confirmed) return;
+      if (
+        !confirmed
+      ) {
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
 
       try {
         setDeletingGateBagTag(
           tag
         );
 
-        setGateBagErr("");
-        setGateBagMsg("");
+        setGateBagErr(
+          ""
+        );
+
+        setGateBagMsg(
+          ""
+        );
 
         await deleteDoc(
           doc(
@@ -2773,15 +5835,61 @@ export default function GateControllerPage({
         setGateBagMsg(
           `Gate bag deleted \u2705 ${tag}`
         );
-      } catch (error) {
+
+        await logSystemSuccess({
+          module:
+            "GATE_CONTROLLER",
+
+          action:
+            "DELETE_GATE_BAG",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } catch (
+        error
+      ) {
         console.error(
           "Delete Gate bag error:",
           error
         );
 
+        const message =
+          "Could not delete Gate bag. Check Firestore rules/connection.";
+
         setGateBagErr(
-          "Could not delete Gate bag. Check Firestore rules/connection."
+          message
         );
+
+        await logGateIncident({
+          action:
+            "DELETE_GATE_BAG",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_DELETE",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              message
+            ),
+
+          tag,
+
+          durationMs:
+            timer.elapsed(),
+        });
       } finally {
         setDeletingGateBagTag(
           ""
@@ -2789,10 +5897,17 @@ export default function GateControllerPage({
       }
     };
 
+  /* =========================
+     MANIFEST AUTO SCAN
+  ========================= */
+
   const onScanKeyDown =
-    (event) => {
+    (
+      event
+    ) => {
       if (
-        event.key === "Enter"
+        event.key ===
+        "Enter"
       ) {
         event.preventDefault();
 
@@ -2803,35 +5918,49 @@ export default function GateControllerPage({
     };
 
   useEffect(() => {
-    if (!canEdit) return;
+    if (
+      !canEdit
+    ) {
+      return undefined;
+    }
 
-    const raw = scanInput;
+    const raw =
+      scanInput;
 
-    if (!raw) return;
+    if (!raw) {
+      return undefined;
+    }
 
-    if (debounceRef.current) {
+    if (
+      debounceRef.current
+    ) {
       clearTimeout(
         debounceRef.current
       );
     }
 
     debounceRef.current =
-      setTimeout(() => {
-        const cleaned =
-          onlyDigits(
-            cleanTagValue(raw)
-          );
+      setTimeout(
+        () => {
+          const cleaned =
+            onlyDigits(
+              cleanTagValue(
+                raw
+              )
+            );
 
-        if (
-          isValidTag10(
-            cleaned
-          )
-        ) {
-          saveScannedTagToManifest(
-            cleaned
-          );
-        }
-      }, 200);
+          if (
+            isValidTag10(
+              cleaned
+            )
+          ) {
+            saveScannedTagToManifest(
+              cleaned
+            );
+          }
+        },
+        200
+      );
 
     return () => {
       if (
@@ -2844,89 +5973,172 @@ export default function GateControllerPage({
     };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scanInput]);
+  }, [
+    scanInput,
+  ]);
 
   const title =
     "Gate Controller";
+
+  /* =========================
+     RENDER
+  ========================= */
 
   return (
     <>
       <div
         style={{
-          background: "white",
+          background:
+            "white",
+
           border:
             "1px solid #e5e7eb",
-          borderRadius: isMobile ? 8 : 12,
-          padding: isMobile ? 10 : 16,
-          fontSize: isMobile ? "14px" : "16px",
+
+          borderRadius:
+            isMobile
+              ? 8
+              : 12,
+
+          padding:
+            isMobile
+              ? 10
+              : 16,
+
+          fontSize:
+            isMobile
+              ? "14px"
+              : "16px",
         }}
       >
+        {/* HEADER */}
+
         <div
           style={{
-            display: "flex",
+            display:
+              "flex",
+
             flexDirection:
-              isMobile ? "column" : "row",
+              isMobile
+                ? "column"
+                : "row",
+
             justifyContent:
               "space-between",
+
             alignItems:
-              isMobile ? "stretch" : "end",
-            gap: 12,
-            flexWrap: "wrap",
+              isMobile
+                ? "stretch"
+                : "end",
+
+            gap:
+              12,
+
+            flexWrap:
+              "wrap",
           }}
         >
           <div>
-            <h2 style={{ margin: 0 }}>
+            <h2
+              style={{
+                margin:
+                  0,
+              }}
+            >
               {title}
             </h2>
 
             <p
               style={{
-                margin: "6px 0 0",
-                color: "#6b7280",
-                fontSize: "0.9rem",
+                margin:
+                  "6px 0 0",
+
+                color:
+                  "#6b7280",
+
+                fontSize:
+                  "0.9rem",
               }}
             >
-              Verified counts,
-              Gate-tagged bags,
-              Bagroom match, and
-              manifest for Ramp
-              coordination.
+              Verified counts, Gate-tagged bags, Bagroom match, and manifest for Ramp coordination.
             </p>
 
-            {operationalContext?.operationalPositionLabel && (
+            {operationalContext
+              ?.operationalPositionLabel && (
               <div
                 style={{
-                  display: "inline-flex",
-                  marginTop: 8,
-                  padding: "5px 9px",
-                  borderRadius: 999,
-                  background: "#eff6ff",
-                  border: "1px solid #bfdbfe",
-                  color: "#1d4ed8",
-                  fontSize: "0.74rem",
-                  fontWeight: 900,
+                  display:
+                    "inline-flex",
+
+                  marginTop:
+                    8,
+
+                  padding:
+                    "5px 9px",
+
+                  borderRadius:
+                    999,
+
+                  background:
+                    "#eff6ff",
+
+                  border:
+                    "1px solid #bfdbfe",
+
+                  color:
+                    "#1d4ed8",
+
+                  fontSize:
+                    "0.74rem",
+
+                  fontWeight:
+                    900,
                 }}
               >
-                Working as: {operationalContext.operationalPositionLabel}
+                Working as:{" "}
+                {
+                  operationalContext
+                    .operationalPositionLabel
+                }
               </div>
             )}
           </div>
 
+          {/* GATE CONTROLLER ON DUTY */}
+
           <div
             style={{
               textAlign:
-                isMobile ? "left" : "right",
-              fontSize: "0.9rem",
-              minWidth: isMobile ? 0 : 260,
-              width: isMobile ? "100%" : "auto",
+                isMobile
+                  ? "left"
+                  : "right",
+
+              fontSize:
+                "0.9rem",
+
+              minWidth:
+                isMobile
+                  ? 0
+                  : 260,
+
+              width:
+                isMobile
+                  ? "100%"
+                  : "auto",
             }}
           >
             <label
               style={{
-                display: "block",
-                fontSize: "0.8rem",
-                color: "#6b7280",
-                marginBottom: 4,
+                display:
+                  "block",
+
+                fontSize:
+                  "0.8rem",
+
+                color:
+                  "#6b7280",
+
+                marginBottom:
+                  4,
               }}
             >
               Gate Controller on duty
@@ -2934,33 +6146,50 @@ export default function GateControllerPage({
 
             <div
               style={{
-                display: "flex",
-                gap: 6,
+                display:
+                  "flex",
+
+                gap:
+                  6,
               }}
             >
               <select
                 value={
                   selectedGateController
                 }
-                onChange={(event) =>
+                onChange={(
+                  event
+                ) =>
                   setSelectedGateController(
-                    event.target.value
+                    event
+                      .target
+                      .value
                   )
                 }
-                disabled={!canEdit}
+                disabled={
+                  !canEdit
+                }
                 style={{
-                  flex: 1,
-                  padding: "6px 8px",
-                  borderRadius: 8,
+                  flex:
+                    1,
+
+                  padding:
+                    "6px 8px",
+
+                  borderRadius:
+                    8,
+
                   border:
                     "1px solid #d1d5db",
-                  background: canEdit
-                    ? "white"
-                    : "#f3f4f6",
+
+                  background:
+                    canEdit
+                      ? "white"
+                      : "#f3f4f6",
                 }}
               >
                 <option value="">
-                  Select GC\u2026
+                  Select GC…
                 </option>
 
                 {gateControllers.map(
@@ -2984,24 +6213,38 @@ export default function GateControllerPage({
               </select>
 
               <button
+                type="button"
                 onClick={
                   saveGateControllerOnDuty
                 }
-                disabled={!canEdit}
+                disabled={
+                  !canEdit
+                }
                 style={{
                   padding:
                     "6px 10px",
-                  borderRadius: 8,
+
+                  borderRadius:
+                    8,
+
                   border:
                     "1px solid #2563eb",
-                  background: canEdit
-                    ? "#2563eb"
-                    : "#93c5fd",
-                  color: "white",
-                  fontWeight: 700,
-                  cursor: canEdit
-                    ? "pointer"
-                    : "not-allowed",
+
+                  background:
+                    canEdit
+                      ? "#2563eb"
+                      : "#93c5fd",
+
+                  color:
+                    "white",
+
+                  fontWeight:
+                    700,
+
+                  cursor:
+                    canEdit
+                      ? "pointer"
+                      : "not-allowed",
                 }}
               >
                 Save
@@ -3011,9 +6254,12 @@ export default function GateControllerPage({
             {gcMsg && (
               <div
                 style={{
-                  marginTop: 4,
+                  marginTop:
+                    4,
+
                   fontSize:
                     "0.78rem",
+
                   color:
                     gcMsg.includes(
                       "\u2705"
@@ -3027,108 +6273,177 @@ export default function GateControllerPage({
             )}
           </div>
         </div>
-                <hr
+
+        <hr
           style={{
-            border: "none",
+            border:
+              "none",
+
             borderTop:
               "1px solid #e5e7eb",
-            margin: "14px 0",
+
+            margin:
+              "14px 0",
           }}
         />
 
+        {/* FLIGHT INFO */}
+
         {flightLoading ? (
-          <p style={{ color: "#6b7280" }}>
+          <p
+            style={{
+              color:
+                "#6b7280",
+            }}
+          >
             Loading flight...
           </p>
         ) : !flight ? (
-          <p style={{ color: "#b91c1c" }}>
+          <p
+            style={{
+              color:
+                "#b91c1c",
+            }}
+          >
             Flight not found.
           </p>
         ) : (
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 isMobile
                   ? "repeat(2, minmax(0, 1fr))"
                   : "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 12,
-              marginBottom: 14,
+
+              gap:
+                12,
+
+              marginBottom:
+                14,
             }}
           >
             <InfoCard
               label="Flight"
               value={
-                flight.flightNumber || "-"
+                flight
+                  .flightNumber ||
+                "-"
               }
             />
 
             <InfoCard
               label="Date"
               value={
-                flight.flightDate || "-"
+                flight
+                  .flightDate ||
+                "-"
               }
             />
 
             <InfoCard
               label="Gate"
-              value={flight.gate || "-"}
+              value={
+                flight
+                  .gate ||
+                "-"
+              }
             />
 
             <InfoCard
               label="Aircraft"
               value={
-                flight.aircraftType || "-"
+                flight
+                  .aircraftType ||
+                "-"
               }
             />
           </div>
         )}
 
+        {/* FLIGHT STATUS */}
+
         <section
           style={{
             border:
               "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 14,
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            marginBottom:
+              14,
           }}
         >
           <div
             style={{
-              display: "flex",
+              display:
+                "flex",
+
               justifyContent:
                 "space-between",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
+
+              alignItems:
+                "center",
+
+              gap:
+                12,
+
+              flexWrap:
+                "wrap",
             }}
           >
             <div>
-              <h3 style={{ margin: 0 }}>
+              <h3
+                style={{
+                  margin:
+                    0,
+                }}
+              >
                 Flight Status
               </h3>
 
               <p
                 style={{
-                  margin: "6px 0 0",
-                  color: "#6b7280",
-                  fontSize: "0.9rem",
+                  margin:
+                    "6px 0 0",
+
+                  color:
+                    "#6b7280",
+
+                  fontSize:
+                    "0.9rem",
                 }}
               >
-                Open &rarr; Receiving &rarr;
-                Loading &rarr; Loaded
+                Open → Receiving → Loading → Loaded
               </p>
             </div>
 
             <span
               style={{
-                padding: "6px 12px",
-                borderRadius: 999,
-                border: `1px solid ${statusStyle.border}`,
+                padding:
+                  "6px 12px",
+
+                borderRadius:
+                  999,
+
+                border:
+                  `1px solid ${statusStyle.border}`,
+
                 background:
                   statusStyle.bg,
-                color: statusStyle.text,
-                fontWeight: 900,
+
+                color:
+                  statusStyle.text,
+
+                fontWeight:
+                  900,
+
                 letterSpacing:
                   "0.04em",
               }}
@@ -3142,87 +6457,108 @@ export default function GateControllerPage({
 
           <div
             style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
+              marginTop:
+                12,
+
+              display:
+                "flex",
+
+              gap:
+                10,
+
+              flexWrap:
+                "wrap",
             }}
           >
-            <button
-              disabled={!canEdit}
-              onClick={() =>
-                updateFlightStatus(
-                  "OPEN"
-                )
-              }
-              style={btnStatus(canEdit)}
-            >
-              Open
-            </button>
-
-            <button
-              disabled={!canEdit}
-              onClick={() =>
-                updateFlightStatus(
+            {[
+              "OPEN",
+              "RECEIVING",
+              "LOADING",
+              "LOADED",
+            ].map(
+              (
+                status
+              ) => (
+                <button
+                  key={
+                    status
+                  }
+                  type="button"
+                  disabled={
+                    !canEdit
+                  }
+                  onClick={() =>
+                    updateFlightStatus(
+                      status
+                    )
+                  }
+                  style={btnStatus(
+                    canEdit
+                  )}
+                >
+                  {status ===
                   "RECEIVING"
-                )
-              }
-              style={btnStatus(canEdit)}
-            >
-              Receiving
-            </button>
-
-            <button
-              disabled={!canEdit}
-              onClick={() =>
-                updateFlightStatus(
-                  "LOADING"
-                )
-              }
-              style={btnStatus(canEdit)}
-            >
-              Loading
-            </button>
-
-            <button
-              disabled={!canEdit}
-              onClick={() =>
-                updateFlightStatus(
-                  "LOADED"
-                )
-              }
-              style={btnStatus(canEdit)}
-            >
-              Loaded
-            </button>
+                    ? "Receiving"
+                    : status.charAt(
+                        0
+                      ) +
+                      status
+                        .slice(
+                          1
+                        )
+                        .toLowerCase()}
+                </button>
+              )
+            )}
           </div>
         </section>
+
+        {/* GATE BAG */}
 
         <section
           style={{
             border:
               "1px solid #7c3aed",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 14,
-            background: "#f5f3ff",
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            marginBottom:
+              14,
+
+            background:
+              "#f5f3ff",
           }}
         >
           <div
             style={{
-              display: "flex",
+              display:
+                "flex",
+
               justifyContent:
                 "space-between",
-              gap: 12,
-              flexWrap: "wrap",
-              alignItems: "start",
+
+              gap:
+                12,
+
+              flexWrap:
+                "wrap",
+
+              alignItems:
+                "start",
             }}
           >
             <div>
               <h3
                 style={{
-                  margin: 0,
-                  color: "#5b21b6",
+                  margin:
+                    0,
+
+                  color:
+                    "#5b21b6",
                 }}
               >
                 Gate Bag Tag Scan
@@ -3230,52 +6566,71 @@ export default function GateControllerPage({
 
               <p
                 style={{
-                  margin: "6px 0 0",
-                  color: "#6d28d9",
-                  fontSize: "0.88rem",
+                  margin:
+                    "6px 0 0",
+
+                  color:
+                    "#6d28d9",
+
+                  fontSize:
+                    "0.88rem",
                 }}
               >
-                Create or scan a bag
-                tag at the boarding
-                gate. This bag goes
-                directly from Gate to
-                Aircraft and does not
-                pass through Counter
-                or Bagroom.
+                Create or scan a bag tag at the boarding gate. This bag goes directly from Gate to Aircraft and does not pass through Counter or Bagroom.
               </p>
             </div>
 
             <span
               style={{
-                display: "inline-flex",
-                padding: "5px 10px",
-                borderRadius: 999,
+                display:
+                  "inline-flex",
+
+                padding:
+                  "5px 10px",
+
+                borderRadius:
+                  999,
+
                 border:
                   "1px solid #c4b5fd",
-                background: "#ede9fe",
-                color: "#5b21b6",
-                fontSize: "0.78rem",
-                fontWeight: 900,
+
+                background:
+                  "#ede9fe",
+
+                color:
+                  "#5b21b6",
+
+                fontSize:
+                  "0.78rem",
+
+                fontWeight:
+                  900,
               }}
             >
-              GATE &rarr; AIRCRAFT
+              GATE → AIRCRAFT
             </span>
           </div>
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(170px, 1fr))",
-              gap: 10,
-              marginTop: 12,
+
+              gap:
+                10,
+
+              marginTop:
+                12,
             }}
           >
             <InfoCard
               label="Gate Tagged"
               value={
                 loadingGateBagScans
-                  ? "\u2026"
+                  ? "…"
                   : gateBagScans.length
               }
             />
@@ -3285,7 +6640,7 @@ export default function GateControllerPage({
               value={
                 loadingGateBagScans ||
                 aircraftLoading
-                  ? "\u2026"
+                  ? "…"
                   : gateBagLoadedCount
               }
             />
@@ -3295,7 +6650,7 @@ export default function GateControllerPage({
               value={
                 loadingGateBagScans ||
                 aircraftLoading
-                  ? "\u2026"
+                  ? "…"
                   : gateBagPendingCount
               }
             />
@@ -3304,26 +6659,37 @@ export default function GateControllerPage({
               label="Aircraft Gate Bags"
               value={
                 aircraftLoading
-                  ? "\u2026"
-                  : aircraftBagTypeCounts.GATE_BAG
+                  ? "…"
+                  : aircraftBagTypeCounts
+                      .GATE_BAG
               }
             />
           </div>
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 isMobile
                   ? "1fr"
                   : "minmax(240px, 1fr) auto",
-              gap: 8,
-              marginTop: 12,
+
+              gap:
+                8,
+
+              marginTop:
+                12,
             }}
           >
             <input
-              ref={gateBagInputRef}
-              value={gateBagInput}
+              ref={
+                gateBagInputRef
+              }
+              value={
+                gateBagInput
+              }
               onChange={
                 handleGateBagChange
               }
@@ -3337,26 +6703,44 @@ export default function GateControllerPage({
               placeholder={
                 isFlightLoaded
                   ? "Flight loaded / locked"
-                  : "Scan 10-digit Gate bag tag\u2026"
+                  : "Scan 10-digit Gate bag tag…"
               }
               inputMode="numeric"
+              pattern="[0-9]*"
+              maxLength={10}
+              autoComplete="off"
               style={{
-                width: "100%",
-                padding: "11px 12px",
-                borderRadius: 12,
+                width:
+                  "100%",
+
+                padding:
+                  "11px 12px",
+
+                borderRadius:
+                  12,
+
                 border:
-                  "1px solid #c4b5fd",
+                  gateBagInput.length ===
+                  10
+                    ? "2px solid #16a34a"
+                    : "1px solid #c4b5fd",
+
                 background:
                   !canEdit ||
                   isFlightLoaded
                     ? "#f3f4f6"
                     : "white",
+
                 fontFamily:
                   "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+
+                boxSizing:
+                  "border-box",
               }}
             />
 
             <button
+              type="button"
               onClick={() =>
                 handleGateBagSubmit()
               }
@@ -3365,17 +6749,27 @@ export default function GateControllerPage({
                 isFlightLoaded
               }
               style={{
-                padding: "10px 14px",
-                borderRadius: 12,
+                padding:
+                  "10px 14px",
+
+                borderRadius:
+                  12,
+
                 border:
                   "1px solid #7c3aed",
+
                 background:
                   !canEdit ||
                   isFlightLoaded
                     ? "#c4b5fd"
                     : "#7c3aed",
-                color: "white",
-                fontWeight: 900,
+
+                color:
+                  "white",
+
+                fontWeight:
+                  900,
+
                 cursor:
                   !canEdit ||
                   isFlightLoaded
@@ -3390,9 +6784,14 @@ export default function GateControllerPage({
           {gateBagMsg && (
             <p
               style={{
-                margin: "9px 0 0",
-                color: "#16a34a",
-                fontWeight: 800,
+                margin:
+                  "9px 0 0",
+
+                color:
+                  "#16a34a",
+
+                fontWeight:
+                  800,
               }}
             >
               {gateBagMsg}
@@ -3402,9 +6801,15 @@ export default function GateControllerPage({
           {gateBagErr && (
             <p
               style={{
-                margin: "9px 0 0",
-                color: "#b91c1c",
-                fontWeight: 800,
+                margin:
+                  "9px 0 0",
+
+                color:
+                  "#b91c1c",
+
+                fontWeight:
+                  800,
+
                 whiteSpace:
                   "pre-wrap",
               }}
@@ -3415,38 +6820,47 @@ export default function GateControllerPage({
 
           <div
             style={{
-              marginTop: 12,
-              maxHeight: 320,
-              overflow: "auto",
-              WebkitOverflowScrolling: "touch",
+              marginTop:
+                12,
+
+              maxHeight:
+                320,
+
+              overflow:
+                "auto",
             }}
           >
             {loadingGateBagScans ||
             aircraftLoading ? (
               <p
                 style={{
-                  color: "#6b7280",
+                  color:
+                    "#6b7280",
                 }}
               >
-                Loading Gate bags\u2026
+                Loading Gate bags…
               </p>
             ) : gateBagScans.length ===
               0 ? (
               <p
                 style={{
-                  color: "#6b7280",
+                  color:
+                    "#6b7280",
                 }}
               >
-                No bags tagged at Gate
-                yet.
+                No bags tagged at Gate yet.
               </p>
             ) : (
               <table
                 style={{
-                  width: "100%",
+                  width:
+                    "100%",
+
                   borderCollapse:
                     "collapse",
-                  background: "white",
+
+                  background:
+                    "white",
                 }}
               >
                 <thead>
@@ -3457,19 +6871,25 @@ export default function GateControllerPage({
                     }}
                   >
                     <th
-                      style={tableHeader}
+                      style={
+                        tableHeader
+                      }
                     >
                       Bag Tag
                     </th>
 
                     <th
-                      style={tableHeader}
+                      style={
+                        tableHeader
+                      }
                     >
                       Status
                     </th>
 
                     <th
-                      style={tableHeader}
+                      style={
+                        tableHeader
+                      }
                     >
                       User
                     </th>
@@ -3488,7 +6908,9 @@ export default function GateControllerPage({
 
                 <tbody>
                   {gateBagScans.map(
-                    (scan) => {
+                    (
+                      scan
+                    ) => {
                       const tag =
                         onlyDigits(
                           scan.tag ||
@@ -3506,7 +6928,9 @@ export default function GateControllerPage({
 
                       return (
                         <tr
-                          key={scan.id}
+                          key={
+                            scan.id
+                          }
                           style={{
                             background:
                               loaded
@@ -3540,25 +6964,33 @@ export default function GateControllerPage({
                               style={{
                                 display:
                                   "inline-flex",
+
                                 padding:
                                   "4px 8px",
+
                                 borderRadius:
                                   999,
-                                border: `1px solid ${
-                                  loaded
-                                    ? "#86efac"
-                                    : "#fca5a5"
-                                }`,
+
+                                border:
+                                  `1px solid ${
+                                    loaded
+                                      ? "#86efac"
+                                      : "#fca5a5"
+                                  }`,
+
                                 background:
                                   loaded
                                     ? "#dcfce7"
                                     : "#fee2e2",
+
                                 color:
                                   loaded
                                     ? "#166534"
                                     : "#991b1b",
+
                                 fontSize:
                                   "0.75rem",
+
                                 fontWeight:
                                   900,
                               }}
@@ -3595,6 +7027,7 @@ export default function GateControllerPage({
                           >
                             {canDeleteGateBags && (
                               <button
+                                type="button"
                                 onClick={() =>
                                   deleteGateBagScan(
                                     scan
@@ -3605,34 +7038,36 @@ export default function GateControllerPage({
                                   loaded ||
                                   isFlightLoaded
                                 }
-                                title={
-                                  loaded
-                                    ? "Already loaded on Aircraft"
-                                    : "Delete Gate bag"
-                                }
                                 style={{
                                   padding:
                                     "5px 9px",
+
                                   borderRadius:
                                     999,
+
                                   border:
                                     "1px solid #ef4444",
+
                                   background:
                                     busy ||
                                     loaded ||
                                     isFlightLoaded
                                       ? "#fca5a5"
                                       : "#ef4444",
+
                                   color:
                                     "white",
+
                                   fontWeight:
                                     800,
+
                                   cursor:
                                     busy ||
                                     loaded ||
                                     isFlightLoaded
                                       ? "not-allowed"
                                       : "pointer",
+
                                   opacity:
                                     busy ||
                                     loaded
@@ -3641,7 +7076,7 @@ export default function GateControllerPage({
                                 }}
                               >
                                 {busy
-                                  ? "Deleting\u2026"
+                                  ? "Deleting…"
                                   : loaded
                                     ? "Loaded"
                                     : "Delete"}
@@ -3658,17 +7093,32 @@ export default function GateControllerPage({
           </div>
         </section>
 
+        {/* AIRCRAFT STATUS */}
+
         <section
           style={{
             border:
               "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 14,
-            background: "#f9fafb",
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            marginBottom:
+              14,
+
+            background:
+              "#f9fafb",
           }}
         >
-          <h3 style={{ margin: 0 }}>
+          <h3
+            style={{
+              margin:
+                0,
+            }}
+          >
             Aircraft Loading
           </h3>
 
@@ -3679,22 +7129,30 @@ export default function GateControllerPage({
           >
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
+                display:
+                  "flex",
+
+                alignItems:
+                  "center",
+
+                gap:
+                  12,
               }}
             >
               <div
                 style={{
-                  fontSize: "2rem",
+                  fontSize:
+                    "2rem",
                 }}
               >
                 {checkedBagsTotal ===
                 null
                   ? "\u2139\uFE0F"
-                  : missing === 0
+                  : missing ===
+                      0
                     ? "\u2705"
-                    : missing <= 3
+                    : missing <=
+                        3
                       ? "\u26A0\uFE0F"
                       : "\u274C"}
               </div>
@@ -3704,16 +7162,20 @@ export default function GateControllerPage({
                   style={{
                     fontSize:
                       "1.05rem",
-                    fontWeight: 900,
+
+                    fontWeight:
+                      900,
                   }}
                 >
                   {checkedBagsTotal ===
                   null
                     ? "Gate total pending"
-                    : missing === 0
+                    : missing ===
+                        0
                       ? "All bags accounted for"
                       : `${missing} bag${
-                          missing === 1
+                          missing ===
+                          1
                             ? ""
                             : "s"
                         } missing to load`}
@@ -3723,15 +7185,19 @@ export default function GateControllerPage({
                   style={{
                     fontSize:
                       "0.85rem",
-                    marginTop: 3,
+
+                    marginTop:
+                      3,
                   }}
                 >
                   {checkedBagsTotal ===
                   null
                     ? "Enter Gate total to calculate missing bags."
-                    : missing === 0
+                    : missing ===
+                        0
                       ? "All expected bags have been loaded."
-                      : missing <= 3
+                      : missing <=
+                          3
                         ? "Almost complete. Verify the remaining bags."
                         : "Attention required. Several bags are still missing."}
                 </div>
@@ -3740,13 +7206,17 @@ export default function GateControllerPage({
 
             <div
               style={{
-                textAlign: "right",
+                textAlign:
+                  "right",
               }}
             >
               <div
                 style={{
-                  fontSize: "0.8rem",
-                  fontWeight: 700,
+                  fontSize:
+                    "0.8rem",
+
+                  fontWeight:
+                    700,
                 }}
               >
                 Total loaded
@@ -3754,18 +7224,22 @@ export default function GateControllerPage({
 
               <div
                 style={{
-                  fontSize: "1.6rem",
-                  fontWeight: 900,
+                  fontSize:
+                    "1.6rem",
+
+                  fontWeight:
+                    900,
                 }}
               >
                 {aircraftLoading
-                  ? "\u2026"
+                  ? "…"
                   : aircraftTotal}
               </div>
 
               <div
                 style={{
-                  fontSize: "0.8rem",
+                  fontSize:
+                    "0.8rem",
                 }}
               >
                 of{" "}
@@ -3779,65 +7253,62 @@ export default function GateControllerPage({
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(150px, 1fr))",
-              gap: 10,
-              marginTop: 12,
+
+              gap:
+                10,
+
+              marginTop:
+                12,
             }}
           >
-            <InfoCard
-              label="Zone 1"
-              value={
-                aircraftLoading
-                  ? "\u2026"
-                  : zones[1]
-              }
-            />
-
-            <InfoCard
-              label="Zone 2"
-              value={
-                aircraftLoading
-                  ? "\u2026"
-                  : zones[2]
-              }
-            />
-
-            <InfoCard
-              label="Zone 3"
-              value={
-                aircraftLoading
-                  ? "\u2026"
-                  : zones[3]
-              }
-            />
-
-            <InfoCard
-              label="Zone 4"
-              value={
-                aircraftLoading
-                  ? "\u2026"
-                  : zones[4]
-              }
-            />
+            {[1, 2, 3, 4].map(
+              (
+                zone
+              ) => (
+                <InfoCard
+                  key={
+                    zone
+                  }
+                  label={`Zone ${zone}`}
+                  value={
+                    aircraftLoading
+                      ? "…"
+                      : zones[
+                          zone
+                        ]
+                  }
+                />
+              )
+            )}
           </div>
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(160px, 1fr))",
-              gap: 10,
-              marginTop: 12,
+
+              gap:
+                10,
+
+              marginTop:
+                12,
             }}
           >
             <InfoCard
               label="Checked Bags Loaded"
               value={
                 aircraftLoading
-                  ? "\u2026"
-                  : aircraftBagTypeCounts.CHECKED_BAG
+                  ? "…"
+                  : aircraftBagTypeCounts
+                      .CHECKED_BAG
               }
             />
 
@@ -3845,8 +7316,9 @@ export default function GateControllerPage({
               label="Gate Checks Loaded"
               value={
                 aircraftLoading
-                  ? "\u2026"
-                  : aircraftBagTypeCounts.GATE_CHECK
+                  ? "…"
+                  : aircraftBagTypeCounts
+                      .GATE_CHECK
               }
             />
 
@@ -3854,8 +7326,9 @@ export default function GateControllerPage({
               label="Oversize Loaded"
               value={
                 aircraftLoading
-                  ? "\u2026"
-                  : aircraftBagTypeCounts.OVERSIZE
+                  ? "…"
+                  : aircraftBagTypeCounts
+                      .OVERSIZE
               }
             />
 
@@ -3863,41 +7336,63 @@ export default function GateControllerPage({
               label="Gate Tagged Loaded"
               value={
                 aircraftLoading
-                  ? "\u2026"
-                  : aircraftBagTypeCounts.GATE_BAG
+                  ? "…"
+                  : aircraftBagTypeCounts
+                      .GATE_BAG
               }
             />
           </div>
         </section>
 
+        {/* BAGROOM MATCH */}
+
         <section
           style={{
             border:
               "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 14,
-            background: "#f9fafb",
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            marginBottom:
+              14,
+
+            background:
+              "#f9fafb",
           }}
         >
-          <h3 style={{ margin: 0 }}>
+          <h3
+            style={{
+              margin:
+                0,
+            }}
+          >
             Bagroom Manifest Match
           </h3>
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 10,
-              marginTop: 12,
+
+              gap:
+                10,
+
+              marginTop:
+                12,
             }}
           >
             <InfoCard
               label="Manifest Tags"
               value={
                 loadingAllowed
-                  ? "\u2026"
+                  ? "…"
                   : allManifestTags.length
               }
             />
@@ -3906,7 +7401,7 @@ export default function GateControllerPage({
               label="Bagroom Scanned"
               value={
                 loadingBagroomScans
-                  ? "\u2026"
+                  ? "…"
                   : bagroomScans.length
               }
             />
@@ -3916,7 +7411,7 @@ export default function GateControllerPage({
               value={
                 loadingAllowed ||
                 loadingBagroomScans
-                  ? "\u2026"
+                  ? "…"
                   : bagroomMatchedTags.length
               }
             />
@@ -3926,7 +7421,7 @@ export default function GateControllerPage({
               value={
                 loadingAllowed ||
                 loadingBagroomScans
-                  ? "\u2026"
+                  ? "…"
                   : bagroomNotInManifest.length
               }
             />
@@ -3934,13 +7429,21 @@ export default function GateControllerPage({
 
           <div
             style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
+              marginTop:
+                12,
+
+              display:
+                "flex",
+
+              gap:
+                8,
+
+              flexWrap:
+                "wrap",
             }}
           >
             <button
+              type="button"
               onClick={() =>
                 setActiveBagroomTab(
                   "summary"
@@ -3955,6 +7458,7 @@ export default function GateControllerPage({
             </button>
 
             <button
+              type="button"
               onClick={() =>
                 setActiveBagroomTab(
                   "matched"
@@ -3970,6 +7474,7 @@ export default function GateControllerPage({
             </button>
 
             <button
+              type="button"
               onClick={() =>
                 setActiveBagroomTab(
                   "notManifest"
@@ -3981,27 +7486,31 @@ export default function GateControllerPage({
               )}
             >
               Not in Manifest (
-              {
-                bagroomNotInManifest.length
-              }
-              )
+              {bagroomNotInManifest.length})
             </button>
           </div>
 
-          <div style={{ marginTop: 12 }}>
+          <div
+            style={{
+              marginTop:
+                12,
+            }}
+          >
             {loadingBagroomScans ? (
               <p
                 style={{
-                  color: "#6b7280",
+                  color:
+                    "#6b7280",
                 }}
               >
-                Loading Bagroom scans\u2026
+                Loading Bagroom scans…
               </p>
             ) : bagroomScans.length ===
               0 ? (
               <p
                 style={{
-                  color: "#6b7280",
+                  color:
+                    "#6b7280",
                 }}
               >
                 No Bagroom scans yet.
@@ -4010,128 +7519,167 @@ export default function GateControllerPage({
               "summary" ? (
               <div
                 style={{
-                  display: "grid",
-                  gap: 12,
+                  display:
+                    "grid",
+
+                  gap:
+                    12,
                 }}
               >
                 {Object.keys(
                   bagroomByCart
                 )
-                  .sort((a, b) =>
-                    String(
-                      a
-                    ).localeCompare(
-                      String(b),
-                      undefined,
-                      {
-                        numeric: true,
-                      }
-                    )
+                  .sort(
+                    (
+                      a,
+                      b
+                    ) =>
+                      String(
+                        a
+                      ).localeCompare(
+                        String(
+                          b
+                        ),
+                        undefined,
+                        {
+                          numeric:
+                            true,
+                        }
+                      )
                   )
-                  .map((cart) => {
-                    const rows =
-                      bagroomByCart[
-                        cart
-                      ];
+                  .map(
+                    (
+                      cart
+                    ) => {
+                      const rows =
+                        bagroomByCart[
+                          cart
+                        ];
 
-                    const matched =
-                      rows.filter(
-                        (scan) =>
-                          manifestTagSet.has(
-                            onlyDigits(
-                              scan.tag ||
-                                scan.id
+                      const matched =
+                        rows.filter(
+                          (
+                            scan
+                          ) =>
+                            manifestTagSet.has(
+                              onlyDigits(
+                                scan.tag ||
+                                  scan.id
+                              )
                             )
-                          )
+                        );
+
+                      return (
+                        <div
+                          key={
+                            cart
+                          }
+                          style={{
+                            border:
+                              "1px solid #e5e7eb",
+
+                            borderRadius:
+                              12,
+
+                            background:
+                              "white",
+
+                            padding:
+                              10,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display:
+                                "flex",
+
+                              justifyContent:
+                                "space-between",
+
+                              gap:
+                                10,
+
+                              fontWeight:
+                                900,
+                            }}
+                          >
+                            <span>
+                              Cart{" "}
+                              {cart}
+                            </span>
+
+                            <span>
+                              {
+                                matched.length
+                              }
+                              /
+                              {
+                                rows.length
+                              }{" "}
+                              matched
+                            </span>
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop:
+                                8,
+
+                              display:
+                                "flex",
+
+                              flexWrap:
+                                "wrap",
+
+                              gap:
+                                6,
+                            }}
+                          >
+                            {rows.map(
+                              (
+                                scan
+                              ) => {
+                                const tag =
+                                  onlyDigits(
+                                    scan.tag ||
+                                      scan.id
+                                  );
+
+                                const matchedManifest =
+                                  manifestTagSet.has(
+                                    tag
+                                  );
+
+                                return (
+                                  <span
+                                    key={
+                                      scan.id
+                                    }
+                                    style={{
+                                      ...tagPill,
+
+                                      background:
+                                        matchedManifest
+                                          ? "#DCFCE7"
+                                          : "#FEF2F2",
+
+                                      color:
+                                        matchedManifest
+                                          ? "#166534"
+                                          : "#991B1B",
+                                    }}
+                                  >
+                                    {tag ||
+                                      scan.tag}
+                                  </span>
+                                );
+                              }
+                            )}
+                          </div>
+                        </div>
                       );
-
-                    return (
-                      <div
-                        key={cart}
-                        style={{
-                          border:
-                            "1px solid #e5e7eb",
-                          borderRadius:
-                            12,
-                          background:
-                            "white",
-                          padding: 10,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display:
-                              "flex",
-                            justifyContent:
-                              "space-between",
-                            gap: 10,
-                            fontWeight:
-                              900,
-                          }}
-                        >
-                          <span>
-                            Cart {cart}
-                          </span>
-
-                          <span>
-                            {
-                              matched.length
-                            }
-                            /{rows.length}{" "}
-                            matched
-                          </span>
-                        </div>
-
-                        <div
-                          style={{
-                            marginTop: 8,
-                            display:
-                              "flex",
-                            flexWrap:
-                              "wrap",
-                            gap: 6,
-                          }}
-                        >
-                          {rows.map(
-                            (scan) => {
-                              const tag =
-                                onlyDigits(
-                                  scan.tag ||
-                                    scan.id
-                                );
-
-                              const matchedManifest =
-                                manifestTagSet.has(
-                                  tag
-                                );
-
-                              return (
-                                <span
-                                  key={
-                                    scan.id
-                                  }
-                                  style={{
-                                    ...tagPill,
-                                    background:
-                                      matchedManifest
-                                        ? "#DCFCE7"
-                                        : "#FEF2F2",
-                                    color:
-                                      matchedManifest
-                                        ? "#166534"
-                                        : "#991B1B",
-                                  }}
-                                >
-                                  {tag ||
-                                    scan.tag}
-                                </span>
-                              );
-                            }
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                    }
+                  )}
               </div>
             ) : activeBagroomTab ===
               "matched" ? (
@@ -4139,28 +7687,39 @@ export default function GateControllerPage({
               0 ? (
                 <p
                   style={{
-                    color: "#6b7280",
+                    color:
+                      "#6b7280",
                   }}
                 >
-                  No matched Bagroom
-                  tags yet.
+                  No matched Bagroom tags yet.
                 </p>
               ) : (
                 <div
                   style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 6,
+                    display:
+                      "flex",
+
+                    flexWrap:
+                      "wrap",
+
+                    gap:
+                      6,
                   }}
                 >
                   {bagroomMatchedTags.map(
-                    (tag) => (
+                    (
+                      tag
+                    ) => (
                       <span
-                        key={tag}
+                        key={
+                          tag
+                        }
                         style={{
                           ...tagPill,
+
                           background:
                             "#DCFCE7",
+
                           color:
                             "#166534",
                         }}
@@ -4175,35 +7734,47 @@ export default function GateControllerPage({
               0 ? (
               <p
                 style={{
-                  color: "#16a34a",
-                  fontWeight: 800,
+                  color:
+                    "#16a34a",
+
+                  fontWeight:
+                    800,
                 }}
               >
-                All Bagroom scans are
-                in the manifest \u2705
+                All Bagroom scans are in the manifest \u2705
               </p>
             ) : (
               <div
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 6,
+                  display:
+                    "flex",
+
+                  flexWrap:
+                    "wrap",
+
+                  gap:
+                    6,
                 }}
               >
                 {bagroomNotInManifest.map(
-                  (scan) => (
+                  (
+                    scan
+                  ) => (
                     <span
-                      key={scan.id}
+                      key={
+                        scan.id
+                      }
                       style={{
                         ...tagPill,
+
                         background:
                           "#FEF2F2",
+
                         color:
                           "#991B1B",
                       }}
                     >
-                      {scan.cleanTag} &middot;
-                      Cart{" "}
+                      {scan.cleanTag} · Cart{" "}
                       {scan.cartNumber ||
                         "-"}
                     </span>
@@ -4214,15 +7785,24 @@ export default function GateControllerPage({
           </div>
         </section>
 
+        {/* MANIFEST LOADING STATUS */}
+
         <section
           style={{
             border:
               missingTrackerEnabled
                 ? "2px solid #f59e0b"
                 : "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-            marginBottom: 14,
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            marginBottom:
+              14,
+
             background:
               missingTrackerEnabled
                 ? "#fffbeb"
@@ -4231,34 +7811,49 @@ export default function GateControllerPage({
         >
           <div
             style={{
-              display: "flex",
+              display:
+                "flex",
+
               justifyContent:
                 "space-between",
-              gap: 12,
-              flexWrap: "wrap",
-              alignItems: "start",
+
+              gap:
+                12,
+
+              flexWrap:
+                "wrap",
+
+              alignItems:
+                "start",
             }}
           >
             <div>
-              <h3 style={{ margin: 0 }}>
+              <h3
+                style={{
+                  margin:
+                    0,
+                }}
+              >
                 Manifest Loading Status
               </h3>
 
               {missingTrackerEnabled && (
                 <p
                   style={{
-                    margin: "6px 0 0",
-                    color: "#92400e",
+                    margin:
+                      "6px 0 0",
+
+                    color:
+                      "#92400e",
+
                     fontSize:
                       "0.86rem",
-                    fontWeight: 800,
+
+                    fontWeight:
+                      800,
                   }}
                 >
-                  {"\u26A0\uFE0F"} Final bag search
-                  activated. Click a
-                  missing bag tag to
-                  view its last scanned
-                  location.
+                  \u26A0\uFE0F Final bag search activated. Click a missing bag tag to view its last scanned location.
                 </p>
               )}
             </div>
@@ -4268,17 +7863,30 @@ export default function GateControllerPage({
                 style={{
                   display:
                     "inline-flex",
-                  alignItems: "center",
-                  padding: "5px 10px",
-                  borderRadius: 999,
+
+                  alignItems:
+                    "center",
+
+                  padding:
+                    "5px 10px",
+
+                  borderRadius:
+                    999,
+
                   border:
                     "1px solid #f59e0b",
+
                   background:
                     "#fef3c7",
-                  color: "#92400e",
+
+                  color:
+                    "#92400e",
+
                   fontSize:
                     "0.76rem",
-                  fontWeight: 900,
+
+                  fontWeight:
+                    900,
                 }}
               >
                 BAG TRACKER ACTIVE
@@ -4288,18 +7896,24 @@ export default function GateControllerPage({
 
           <div
             style={{
-              display: "grid",
+              display:
+                "grid",
+
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 10,
-              marginTop: 12,
+
+              gap:
+                10,
+
+              marginTop:
+                12,
             }}
           >
             <InfoCard
               label="Manifest Tags"
               value={
                 loadingAllowed
-                  ? "\u2026"
+                  ? "…"
                   : allManifestTags.length
               }
             />
@@ -4308,7 +7922,7 @@ export default function GateControllerPage({
               label="Aircraft Loaded"
               value={
                 aircraftLoading
-                  ? "\u2026"
+                  ? "…"
                   : loadedAircraftTags.length
               }
             />
@@ -4318,7 +7932,7 @@ export default function GateControllerPage({
               value={
                 loadingAllowed ||
                 aircraftLoading
-                  ? "\u2026"
+                  ? "…"
                   : missingManifestTags.length
               }
             />
@@ -4326,13 +7940,21 @@ export default function GateControllerPage({
 
           <div
             style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
+              marginTop:
+                12,
+
+              display:
+                "flex",
+
+              gap:
+                8,
+
+              flexWrap:
+                "wrap",
             }}
           >
             <button
+              type="button"
               onClick={() =>
                 setActiveManifestTab(
                   "recent"
@@ -4347,6 +7969,7 @@ export default function GateControllerPage({
             </button>
 
             <button
+              type="button"
               onClick={() =>
                 setActiveManifestTab(
                   "missing"
@@ -4358,18 +7981,20 @@ export default function GateControllerPage({
               )}
             >
               Missing to Load (
-              {
-                missingManifestTags.length
-              }
-              )
+              {missingManifestTags.length})
             </button>
           </div>
 
           <div
             style={{
-              marginTop: 12,
-              maxHeight: 300,
-              overflow: "auto",
+              marginTop:
+                12,
+
+              maxHeight:
+                300,
+
+              overflow:
+                "auto",
             }}
           >
             {activeManifestTab ===
@@ -4377,31 +8002,39 @@ export default function GateControllerPage({
               loadingAllowed ? (
                 <p
                   style={{
-                    color: "#6b7280",
+                    color:
+                      "#6b7280",
                   }}
                 >
-                  Loading manifest\u2026
+                  Loading manifest…
                 </p>
               ) : recentAllowed.length ===
                 0 ? (
                 <p
                   style={{
-                    color: "#6b7280",
+                    color:
+                      "#6b7280",
                   }}
                 >
-                  No manifest tags
-                  uploaded yet.
+                  No manifest tags uploaded yet.
                 </p>
               ) : (
                 <div
                   style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    gap: 6,
+                    display:
+                      "flex",
+
+                    flexWrap:
+                      "wrap",
+
+                    gap:
+                      6,
                   }}
                 >
                   {recentAllowed.map(
-                    (row) => {
+                    (
+                      row
+                    ) => {
                       const tag =
                         row.tag ||
                         row.id;
@@ -4412,13 +8045,18 @@ export default function GateControllerPage({
 
                       return (
                         <span
-                          key={row.id}
-                          style={tagPill}
+                          key={
+                            row.id
+                          }
+                          style={
+                            tagPill
+                          }
                         >
                           {tag}
 
                           {canEdit && (
                             <button
+                              type="button"
                               onClick={() =>
                                 deleteAllowedTag(
                                   tag
@@ -4427,28 +8065,27 @@ export default function GateControllerPage({
                               disabled={
                                 busy
                               }
-                              title="Delete tag"
                               style={{
                                 border:
                                   "none",
+
                                 background:
                                   "transparent",
+
                                 cursor:
                                   busy
                                     ? "not-allowed"
                                     : "pointer",
+
                                 fontWeight:
                                   900,
+
                                 color:
                                   "#b91c1c",
-                                opacity:
-                                  busy
-                                    ? 0.6
-                                    : 1,
                               }}
                             >
                               {busy
-                                ? "\u2026"
+                                ? "…"
                                 : "\u2715"}
                             </button>
                           )}
@@ -4462,59 +8099,74 @@ export default function GateControllerPage({
               aircraftLoading ? (
               <p
                 style={{
-                  color: "#6b7280",
+                  color:
+                    "#6b7280",
                 }}
               >
-                Loading missing tags\u2026
+                Loading missing tags…
               </p>
             ) : missingManifestTags.length ===
               0 ? (
               <p
                 style={{
-                  color: "#16a34a",
-                  fontWeight: 800,
+                  color:
+                    "#16a34a",
+
+                  fontWeight:
+                    800,
                 }}
               >
-                All manifest tags are
-                loaded {"\u2705"}
+                All manifest tags are loaded \u2705
               </p>
             ) : (
               <div
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: 8,
+                  display:
+                    "flex",
+
+                  flexWrap:
+                    "wrap",
+
+                  gap:
+                    8,
                 }}
               >
                 {missingManifestTags.map(
-                  (tag) =>
+                  (
+                    tag
+                  ) =>
                     missingTrackerEnabled ? (
                       <button
-                        key={tag}
+                        key={
+                          tag
+                        }
                         type="button"
                         onClick={() =>
                           openBagTracker(
                             tag
                           )
                         }
-                        title={`View last scanned location for ${tag}`}
                         style={{
                           ...tagPill,
+
                           background:
                             "#fee2e2",
+
                           color:
                             "#991b1b",
+
                           border:
                             "1px solid #f87171",
+
                           cursor:
                             "pointer",
-                          fontWeight: 900,
-                          boxShadow:
-                            "0 1px 2px rgba(0, 0, 0, 0.08)",
+
+                          fontWeight:
+                            900,
                         }}
                       >
                         <span>
-                          {"\uD83D\uDCCD"}
+                          \uD83D\uDCCD
                         </span>
 
                         <span>
@@ -4525,6 +8177,7 @@ export default function GateControllerPage({
                           style={{
                             fontSize:
                               "0.72rem",
+
                             color:
                               "#b91c1c",
                           }}
@@ -4534,15 +8187,18 @@ export default function GateControllerPage({
                       </button>
                     ) : (
                       <span
-                        key={tag}
+                        key={
+                          tag
+                        }
                         style={{
                           ...tagPill,
+
                           background:
                             "#FEF2F2",
+
                           color:
                             "#991B1B",
                         }}
-                        title="Bag Tracker becomes available when 5 or fewer bags remain."
                       >
                         {tag}
                       </span>
@@ -4552,67 +8208,124 @@ export default function GateControllerPage({
             )}
           </div>
         </section>
-                <section
+
+        {/* CHECKED BAGS TOTAL */}
+
+        <section
           style={{
             border:
               "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
-            background: "#f9fafb",
-            marginBottom: 14,
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            background:
+              "#f9fafb",
+
+            marginBottom:
+              14,
           }}
         >
-          <h3 style={{ margin: 0 }}>
+          <h3
+            style={{
+              margin:
+                0,
+            }}
+          >
             Checked Bags Total
           </h3>
 
           <div
             style={{
-              display: "flex",
-              gap: 8,
-              marginTop: 12,
+              display:
+                "flex",
+
+              gap:
+                8,
+
+              marginTop:
+                12,
             }}
           >
             <input
               type="number"
               min="0"
-              value={checkedTotalInput}
-              onChange={(event) =>
+              value={
+                checkedTotalInput
+              }
+              onChange={(
+                event
+              ) =>
                 setCheckedTotalInput(
-                  event.target.value
+                  event
+                    .target
+                    .value
                 )
               }
               placeholder="0"
-              disabled={!canEdit}
+              disabled={
+                !canEdit
+              }
               style={{
-                flex: 1,
-                padding: "10px 12px",
-                borderRadius: 12,
+                flex:
+                  1,
+
+                padding:
+                  "10px 12px",
+
+                borderRadius:
+                  12,
+
                 border:
                   "1px solid #d1d5db",
-                background: canEdit
-                  ? "white"
-                  : "#f3f4f6",
+
+                background:
+                  canEdit
+                    ? "white"
+                    : "#f3f4f6",
               }}
             />
 
             <button
-              onClick={saveTotal}
-              disabled={!canEdit || saving}
+              type="button"
+              onClick={
+                saveTotal
+              }
+              disabled={
+                !canEdit ||
+                saving
+              }
               style={{
-                padding: "10px 12px",
-                borderRadius: 12,
+                padding:
+                  "10px 12px",
+
+                borderRadius:
+                  12,
+
                 border:
                   "1px solid #1d4ed8",
+
                 background:
-                  !canEdit || saving
+                  !canEdit ||
+                  saving
                     ? "#93c5fd"
                     : "#2563eb",
-                color: "white",
-                fontWeight: 700,
-                minWidth: 90,
+
+                color:
+                  "white",
+
+                fontWeight:
+                  700,
+
+                minWidth:
+                  90,
+
                 cursor:
-                  !canEdit || saving
+                  !canEdit ||
+                  saving
                     ? "not-allowed"
                     : "pointer",
               }}
@@ -4626,13 +8339,18 @@ export default function GateControllerPage({
           {saveMsg && (
             <p
               style={{
-                margin: "8px 0 0",
-                fontSize: "0.85rem",
-                color: saveMsg.includes(
-                  "\u2705"
-                )
-                  ? "#16a34a"
-                  : "#b91c1c",
+                margin:
+                  "8px 0 0",
+
+                fontSize:
+                  "0.85rem",
+
+                color:
+                  saveMsg.includes(
+                    "\u2705"
+                  )
+                    ? "#16a34a"
+                    : "#b91c1c",
               }}
             >
               {saveMsg}
@@ -4640,50 +8358,85 @@ export default function GateControllerPage({
           )}
         </section>
 
+        {/* MANIFEST IMPORT */}
+
         <section
           style={{
             border:
               "1px solid #e5e7eb",
-            borderRadius: 12,
-            padding: 12,
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
           }}
         >
-          <h3 style={{ margin: 0 }}>
-            Flight Bag Tag Manifest
-            (Import)
+          <h3
+            style={{
+              margin:
+                0,
+            }}
+          >
+            Flight Bag Tag Manifest (Import)
           </h3>
 
           <div
             style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-              alignItems: "center",
+              marginTop:
+                12,
+
+              display:
+                "flex",
+
+              gap:
+                10,
+
+              flexWrap:
+                "wrap",
+
+              alignItems:
+                "center",
             }}
           >
             <input
               type="file"
               accept=".csv,.txt,.pdf,text/csv,text/plain,application/pdf"
-              disabled={!canEdit}
-              onChange={(event) => {
+              disabled={
+                !canEdit
+              }
+              onChange={(
+                event
+              ) => {
                 const file =
-                  event.target.files?.[0];
+                  event.target
+                    .files?.[
+                    0
+                  ];
 
-                if (file) {
-                  handleFilePick(file);
+                if (
+                  file
+                ) {
+                  handleFilePick(
+                    file
+                  );
                 }
               }}
             />
 
             <button
-              disabled={!canEdit}
+              type="button"
+              disabled={
+                !canEdit
+              }
               onClick={() =>
                 updateStrictManifest(
                   !strictManifest
                 )
               }
-              style={btnStatus(canEdit)}
+              style={btnStatus(
+                canEdit
+              )}
             >
               Strict Manifest:{" "}
               {strictManifest
@@ -4693,51 +8446,89 @@ export default function GateControllerPage({
           </div>
 
           <textarea
-            value={manifestText}
-            onChange={(event) =>
+            value={
+              manifestText
+            }
+            onChange={(
+              event
+            ) =>
               setManifestText(
-                event.target.value
+                event
+                  .target
+                  .value
               )
             }
-            disabled={!canEdit}
+            disabled={
+              !canEdit
+            }
             rows={6}
             placeholder="Paste manifest text here..."
             style={{
-              marginTop: 12,
-              width: "100%",
-              padding: "10px 12px",
-              borderRadius: 12,
+              marginTop:
+                12,
+
+              width:
+                "100%",
+
+              boxSizing:
+                "border-box",
+
+              padding:
+                "10px 12px",
+
+              borderRadius:
+                12,
+
               border:
                 "1px solid #d1d5db",
-              background: canEdit
-                ? "white"
-                : "#f3f4f6",
+
+              background:
+                canEdit
+                  ? "white"
+                  : "#f3f4f6",
             }}
           />
 
           <div
             style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 10,
-              justifyContent: "flex-end",
-              flexWrap: "wrap",
+              marginTop:
+                12,
+
+              display:
+                "flex",
+
+              gap:
+                10,
+
+              justifyContent:
+                "flex-end",
+
+              flexWrap:
+                "wrap",
             }}
           >
             <button
+              type="button"
               onClick={() =>
                 previewFromText(
                   manifestText
                 )
               }
-              disabled={!canEdit}
-              style={btnStatus(canEdit)}
+              disabled={
+                !canEdit
+              }
+              style={btnStatus(
+                canEdit
+              )}
             >
               Preview Tags
             </button>
 
             <button
-              onClick={importManifest}
+              type="button"
+              onClick={
+                importManifest
+              }
               disabled={
                 !canEdit ||
                 importing ||
@@ -4745,10 +8536,15 @@ export default function GateControllerPage({
                   0
               }
               style={{
-                padding: "8px 12px",
-                borderRadius: 12,
+                padding:
+                  "8px 12px",
+
+                borderRadius:
+                  12,
+
                 border:
                   "1px solid #1d4ed8",
+
                 background:
                   !canEdit ||
                   importing ||
@@ -4756,8 +8552,13 @@ export default function GateControllerPage({
                     0
                     ? "#93c5fd"
                     : "#2563eb",
-                color: "white",
-                fontWeight: 800,
+
+                color:
+                  "white",
+
+                fontWeight:
+                  800,
+
                 cursor:
                   !canEdit ||
                   importing ||
@@ -4777,19 +8578,36 @@ export default function GateControllerPage({
             0 && (
             <div
               style={{
-                marginTop: 12,
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 6,
-                maxHeight: 180,
-                overflow: "auto",
+                marginTop:
+                  12,
+
+                display:
+                  "flex",
+
+                flexWrap:
+                  "wrap",
+
+                gap:
+                  6,
+
+                maxHeight:
+                  180,
+
+                overflow:
+                  "auto",
               }}
             >
               {manifestTagsPreview.map(
-                (tag) => (
+                (
+                  tag
+                ) => (
                   <span
-                    key={tag}
-                    style={tagPill}
+                    key={
+                      tag
+                    }
+                    style={
+                      tagPill
+                    }
                   >
                     {tag}
 
@@ -4800,20 +8618,29 @@ export default function GateControllerPage({
                           tag
                         )
                       }
-                      disabled={!canEdit}
-                      title="Remove from preview"
+                      disabled={
+                        !canEdit
+                      }
                       style={{
-                        border: "none",
+                        border:
+                          "none",
+
                         background:
                           "transparent",
-                        color: "#b91c1c",
-                        cursor: canEdit
-                          ? "pointer"
-                          : "not-allowed",
-                        fontWeight: 900,
+
+                        color:
+                          "#b91c1c",
+
+                        cursor:
+                          canEdit
+                            ? "pointer"
+                            : "not-allowed",
+
+                        fontWeight:
+                          900,
                       }}
                     >
-                      {"\u2715"}
+                      \u2715
                     </button>
                   </span>
                 )
@@ -4824,8 +8651,11 @@ export default function GateControllerPage({
           {manifestMsg && (
             <p
               style={{
-                color: "#16a34a",
-                whiteSpace: "pre-wrap",
+                color:
+                  "#16a34a",
+
+                whiteSpace:
+                  "pre-wrap",
               }}
             >
               {manifestMsg}
@@ -4835,8 +8665,11 @@ export default function GateControllerPage({
           {manifestErr && (
             <p
               style={{
-                color: "#b91c1c",
-                whiteSpace: "pre-wrap",
+                color:
+                  "#b91c1c",
+
+                whiteSpace:
+                  "pre-wrap",
               }}
             >
               {manifestErr}
@@ -4845,12 +8678,15 @@ export default function GateControllerPage({
         </section>
       </div>
 
+      {/* BAG TRACKER MODAL */}
+
       {trackerOpen && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={`Bag tracker ${trackerTag}`}
-          onMouseDown={(event) => {
+          onMouseDown={(
+            event
+          ) => {
             if (
               event.target ===
               event.currentTarget
@@ -4859,57 +8695,96 @@ export default function GateControllerPage({
             }
           }}
           style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 9999,
+            position:
+              "fixed",
+
+            inset:
+              0,
+
+            zIndex:
+              9999,
+
             background:
               "rgba(17, 24, 39, 0.66)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            justifyContent:
+              "center",
+
+            padding:
+              16,
           }}
         >
           <div
             style={{
-              width: "100%",
-              maxWidth: 560,
-              maxHeight: "90vh",
-              overflowY: "auto",
-              borderRadius: 18,
-              background: "white",
+              width:
+                "100%",
+
+              maxWidth:
+                560,
+
+              maxHeight:
+                "90vh",
+
+              overflowY:
+                "auto",
+
+              borderRadius:
+                18,
+
+              background:
+                "white",
+
               border:
                 "1px solid #e5e7eb",
+
               boxShadow:
-                "0 25px 50px rgba(0, 0, 0, 0.28)",
+                "0 25px 50px rgba(0,0,0,0.28)",
             }}
           >
             <div
               style={{
-                display: "flex",
+                display:
+                  "flex",
+
                 justifyContent:
                   "space-between",
-                alignItems: "center",
-                gap: 12,
-                padding: "16px 18px",
-                borderBottom:
-                  "1px solid #e5e7eb",
-                background: "#111827",
-                color: "white",
-                borderTopLeftRadius: 18,
-                borderTopRightRadius: 18,
+
+                alignItems:
+                  "center",
+
+                gap:
+                  12,
+
+                padding:
+                  "16px 18px",
+
+                background:
+                  "#111827",
+
+                color:
+                  "white",
               }}
             >
               <div>
                 <div
                   style={{
-                    fontSize: "0.76rem",
+                    fontSize:
+                      "0.76rem",
+
                     textTransform:
                       "uppercase",
-                    letterSpacing:
-                      "0.08em",
-                    color: "#d1d5db",
-                    fontWeight: 800,
+
+                    color:
+                      "#d1d5db",
+
+                    fontWeight:
+                      800,
                   }}
                 >
                   Last Bag Location
@@ -4917,11 +8792,17 @@ export default function GateControllerPage({
 
                 <div
                   style={{
-                    marginTop: 3,
-                    fontSize: "1.2rem",
-                    fontWeight: 900,
+                    marginTop:
+                      3,
+
+                    fontSize:
+                      "1.2rem",
+
+                    fontWeight:
+                      900,
+
                     fontFamily:
-                      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                      "ui-monospace, monospace",
                   }}
                 >
                   {trackerTag}
@@ -4933,128 +8814,153 @@ export default function GateControllerPage({
                 onClick={
                   closeBagTracker
                 }
-                aria-label="Close bag tracker"
                 style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 999,
+                  width:
+                    36,
+
+                  height:
+                    36,
+
+                  borderRadius:
+                    999,
+
                   border:
                     "1px solid #4b5563",
-                  background: "#374151",
-                  color: "white",
-                  fontSize: "1.1rem",
-                  fontWeight: 900,
-                  cursor: "pointer",
+
+                  background:
+                    "#374151",
+
+                  color:
+                    "white",
+
+                  fontWeight:
+                    900,
+
+                  cursor:
+                    "pointer",
                 }}
               >
-                {"\u2715"}
+                \u2715
               </button>
             </div>
 
             <div
               style={{
-                padding: 18,
+                padding:
+                  18,
               }}
             >
               {trackerLoading ? (
                 <div
                   style={{
-                    minHeight: 180,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
+                    minHeight:
+                      180,
+
+                    display:
+                      "flex",
+
+                    flexDirection:
+                      "column",
+
+                    alignItems:
+                      "center",
+
                     justifyContent:
                       "center",
-                    gap: 10,
-                    textAlign: "center",
+
+                    gap:
+                      10,
+
+                    textAlign:
+                      "center",
                   }}
                 >
                   <div
                     style={{
-                      fontSize: "2rem",
+                      fontSize:
+                        "2rem",
                     }}
                   >
-                    {"\uD83D\uDD0E"}
+                    \uD83D\uDD0E
                   </div>
 
-                  <div
-                    style={{
-                      fontWeight: 900,
-                      color: "#111827",
-                    }}
-                  >
-                    Searching baggage
-                    history...
-                  </div>
-
-                  <div
-                    style={{
-                      color: "#6b7280",
-                      fontSize: "0.88rem",
-                    }}
-                  >
-                    Checking the latest
-                    tracker event and
-                    current flight scans.
-                  </div>
+                  <strong>
+                    Searching baggage history...
+                  </strong>
                 </div>
               ) : trackerError &&
-                !trackerData?.found ? (
+                !trackerData
+                  ?.found ? (
                 <div
                   style={{
                     border:
                       "1px solid #fca5a5",
-                    background: "#fef2f2",
-                    color: "#991b1b",
-                    borderRadius: 12,
-                    padding: 14,
+
+                    background:
+                      "#fef2f2",
+
+                    color:
+                      "#991b1b",
+
+                    borderRadius:
+                      12,
+
+                    padding:
+                      14,
                   }}
                 >
-                  <div
-                    style={{
-                      fontWeight: 900,
-                    }}
-                  >
+                  <strong>
                     No location found
-                  </div>
+                  </strong>
 
                   <div
                     style={{
-                      marginTop: 5,
-                      fontSize: "0.88rem",
-                      lineHeight: 1.5,
+                      marginTop:
+                        5,
                     }}
                   >
                     {trackerError}
                   </div>
                 </div>
-              ) : trackerData?.found ? (
+              ) : trackerData
+                  ?.found ? (
                 <>
                   <div
                     style={{
-                      border: `1px solid ${getTrackerLocationStyle(
-                        trackerData.location
-                      ).border}`,
+                      border:
+                        `1px solid ${
+                          getTrackerLocationStyle(
+                            trackerData.location
+                          ).border
+                        }`,
+
                       background:
                         getTrackerLocationStyle(
                           trackerData.location
                         ).background,
+
                       color:
                         getTrackerLocationStyle(
                           trackerData.location
                         ).color,
-                      borderRadius: 14,
-                      padding: 16,
+
+                      borderRadius:
+                        14,
+
+                      padding:
+                        16,
                     }}
                   >
                     <div
                       style={{
-                        fontSize: "0.75rem",
-                        fontWeight: 900,
+                        fontSize:
+                          "0.75rem",
+
+                        fontWeight:
+                          900,
+
                         textTransform:
                           "uppercase",
-                        letterSpacing:
-                          "0.06em",
                       }}
                     >
                       Last Known Location
@@ -5062,33 +8968,33 @@ export default function GateControllerPage({
 
                     <div
                       style={{
-                        marginTop: 6,
-                        display: "flex",
-                        alignItems:
-                          "center",
-                        gap: 10,
-                        fontSize: "1.35rem",
-                        fontWeight: 900,
+                        marginTop:
+                          6,
+
+                        fontSize:
+                          "1.35rem",
+
+                        fontWeight:
+                          900,
                       }}
                     >
-                      <span>
-                        {getTrackerLocationStyle(
+                      {
+                        getTrackerLocationStyle(
                           trackerData.location
-                        ).icon}
-                      </span>
-
-                      <span>
-                        {
-                          trackerData.locationLabel
-                        }
-                      </span>
+                        ).icon
+                      }{" "}
+                      {
+                        trackerData.locationLabel
+                      }
                     </div>
 
                     <div
                       style={{
-                        marginTop: 8,
-                        fontSize: "0.88rem",
-                        fontWeight: 700,
+                        marginTop:
+                          8,
+
+                        fontWeight:
+                          700,
                       }}
                     >
                       {
@@ -5099,11 +9005,17 @@ export default function GateControllerPage({
 
                   <div
                     style={{
-                      display: "grid",
+                      display:
+                        "grid",
+
                       gridTemplateColumns:
                         "repeat(auto-fit, minmax(180px, 1fr))",
-                      gap: 10,
-                      marginTop: 14,
+
+                      gap:
+                        10,
+
+                      marginTop:
+                        14,
                     }}
                   >
                     <TrackerInfoCard
@@ -5123,32 +9035,28 @@ export default function GateControllerPage({
                     <TrackerInfoCard
                       label="Flight"
                       value={
-                        trackerData.flightNumber ||
-                        "-"
+                        trackerData.flightNumber
                       }
                     />
 
                     <TrackerInfoCard
                       label="Flight Date"
                       value={
-                        trackerData.flightDate ||
-                        "-"
+                        trackerData.flightDate
                       }
                     />
 
                     <TrackerInfoCard
                       label="Gate"
                       value={
-                        trackerData.gate ||
-                        "-"
+                        trackerData.gate
                       }
                     />
 
                     <TrackerInfoCard
                       label="Bag Type"
                       value={
-                        trackerData.bagTypeLabel ||
-                        "-"
+                        trackerData.bagTypeLabel
                       }
                     />
 
@@ -5170,84 +9078,37 @@ export default function GateControllerPage({
                       />
                     )}
                   </div>
-
-                  <div
-                    style={{
-                      marginTop: 14,
-                      padding: 12,
-                      borderRadius: 12,
-                      border:
-                        "1px solid #dbeafe",
-                      background: "#eff6ff",
-                      color: "#1e3a8a",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize:
-                          "0.75rem",
-                        fontWeight: 900,
-                        textTransform:
-                          "uppercase",
-                        letterSpacing:
-                          "0.05em",
-                      }}
-                    >
-                      Tracking Source
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: 4,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {
-                        trackerData.sourceName
-                      }
-                    </div>
-                  </div>
-
-                  {trackerError && (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        color: "#92400e",
-                        background:
-                          "#fffbeb",
-                        border:
-                          "1px solid #fcd34d",
-                        borderRadius: 10,
-                        padding: 10,
-                        fontSize:
-                          "0.82rem",
-                      }}
-                    >
-                      {trackerError}
-                    </div>
-                  )}
                 </>
               ) : (
                 <div
                   style={{
-                    color: "#6b7280",
-                    textAlign: "center",
-                    padding: 20,
+                    textAlign:
+                      "center",
+
+                    color:
+                      "#6b7280",
+
+                    padding:
+                      20,
                   }}
                 >
-                  No tracking information
-                  available.
+                  No tracking information available.
                 </div>
               )}
 
               <div
                 style={{
-                  marginTop: 16,
-                  display: "flex",
+                  marginTop:
+                    16,
+
+                  display:
+                    "flex",
+
                   justifyContent:
                     "flex-end",
-                  gap: 8,
-                  flexWrap: "wrap",
+
+                  gap:
+                    8,
                 }}
               >
                 <button
@@ -5261,16 +9122,26 @@ export default function GateControllerPage({
                     trackerLoading
                   }
                   style={{
-                    padding: "9px 12px",
-                    borderRadius: 10,
+                    padding:
+                      "9px 12px",
+
+                    borderRadius:
+                      10,
+
                     border:
                       "1px solid #2563eb",
+
                     background:
                       trackerLoading
                         ? "#bfdbfe"
                         : "#2563eb",
-                    color: "white",
-                    fontWeight: 800,
+
+                    color:
+                      "white",
+
+                    fontWeight:
+                      800,
+
                     cursor:
                       trackerLoading
                         ? "not-allowed"
@@ -5286,14 +9157,23 @@ export default function GateControllerPage({
                     closeBagTracker
                   }
                   style={{
-                    padding: "9px 12px",
-                    borderRadius: 10,
+                    padding:
+                      "9px 12px",
+
+                    borderRadius:
+                      10,
+
                     border:
                       "1px solid #d1d5db",
-                    background: "white",
-                    color: "#111827",
-                    fontWeight: 800,
-                    cursor: "pointer",
+
+                    background:
+                      "white",
+
+                    fontWeight:
+                      800,
+
+                    cursor:
+                      "pointer",
                   }}
                 >
                   Close
@@ -5307,42 +9187,81 @@ export default function GateControllerPage({
   );
 }
 
-function btnStatus(canEdit) {
+/* =========================
+   UI HELPERS
+========================= */
+
+function btnStatus(
+  canEdit
+) {
   return {
-    padding: "8px 12px",
-    borderRadius: 12,
-    border: "1px solid #d1d5db",
-    background: canEdit
-      ? "white"
-      : "#f3f4f6",
-    cursor: canEdit
-      ? "pointer"
-      : "not-allowed",
-    fontWeight: 700,
+    padding:
+      "8px 12px",
+
+    borderRadius:
+      12,
+
+    border:
+      "1px solid #d1d5db",
+
+    background:
+      canEdit
+        ? "white"
+        : "#f3f4f6",
+
+    cursor:
+      canEdit
+        ? "pointer"
+        : "not-allowed",
+
+    fontWeight:
+      700,
   };
 }
 
-function tabBtn(active) {
+function tabBtn(
+  active
+) {
   return {
-    padding: "6px 12px",
-    borderRadius: 999,
-    border: active
-      ? "1px solid #111827"
-      : "1px solid #d1d5db",
-    background: active
-      ? "#111827"
-      : "white",
-    color: active
-      ? "white"
-      : "#111827",
-    cursor: "pointer",
-    fontWeight: 800,
-    fontSize: "0.82rem",
+    padding:
+      "6px 12px",
+
+    borderRadius:
+      999,
+
+    border:
+      active
+        ? "1px solid #111827"
+        : "1px solid #d1d5db",
+
+    background:
+      active
+        ? "#111827"
+        : "white",
+
+    color:
+      active
+        ? "white"
+        : "#111827",
+
+    cursor:
+      "pointer",
+
+    fontWeight:
+      800,
+
+    fontSize:
+      "0.82rem",
   };
 }
 
-function aircraftStatusBox(missing) {
-  if (missing === null) {
+function aircraftStatusBox(
+  missing
+) {
+  if (
+    missing ===
+    null
+  ) {
     return baseAircraftBox(
       "#d1d5db",
       "#f9fafb",
@@ -5350,7 +9269,10 @@ function aircraftStatusBox(missing) {
     );
   }
 
-  if (missing === 0) {
+  if (
+    missing ===
+    0
+  ) {
     return baseAircraftBox(
       "#22c55e",
       "#dcfce7",
@@ -5358,7 +9280,10 @@ function aircraftStatusBox(missing) {
     );
   }
 
-  if (missing <= 3) {
+  if (
+    missing <=
+    3
+  ) {
     return baseAircraftBox(
       "#f59e0b",
       "#fef3c7",
@@ -5379,199 +9304,368 @@ function baseAircraftBox(
   color
 ) {
   return {
-    marginTop: 12,
-    padding: 14,
-    borderRadius: 12,
-    border: `1px solid ${border}`,
+    marginTop:
+      12,
+
+    padding:
+      14,
+
+    borderRadius:
+      12,
+
+    border:
+      `1px solid ${border}`,
+
     background,
+
     color,
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-    flexWrap: "wrap",
+
+    display:
+      "flex",
+
+    justifyContent:
+      "space-between",
+
+    alignItems:
+      "center",
+
+    gap:
+      12,
+
+    flexWrap:
+      "wrap",
   };
 }
 
-/*
- * Color and icon used by the tracking modal
- * based on the last known baggage location.
- */
 function getTrackerLocationStyle(
   locationValue
 ) {
-  const location = String(
-    locationValue || ""
-  )
-    .trim()
-    .toLowerCase();
+  const location =
+    String(
+      locationValue ||
+        ""
+    )
+      .trim()
+      .toLowerCase();
 
   if (
-    location === "aircraft" ||
-    location === "aircraft_hold" ||
-    location === "hold" ||
-    location === "loaded"
+    [
+      "aircraft",
+      "aircraft_hold",
+      "hold",
+      "loaded",
+    ].includes(
+      location
+    )
   ) {
     return {
-      border: "#22c55e",
-      background: "#dcfce7",
-      color: "#166534",
-      icon: "\u2708\uFE0F",
-    };
-  }
+      border:
+        "#22c55e",
 
-  if (
-    location === "gate" ||
-    location === "jetbridge" ||
-    location === "ramp"
-  ) {
-    return {
-      border: "#eab308",
-      background: "#fef9c3",
-      color: "#854d0e",
-      icon: "\uD83D\uDEAA",
-    };
-  }
+      background:
+        "#dcfce7",
 
-  if (
-    location === "bagroom" ||
-    location === "bag_room" ||
-    location === "baggage_room" ||
-    location === "makeup" ||
-    location === "makeup_area"
-  ) {
-    return {
-      border: "#3b82f6",
-      background: "#dbeafe",
-      color: "#1e3a8a",
-      icon: "\uD83D\uDEC4",
+      color:
+        "#166534",
+
+      icon:
+        "\u2708\uFE0F",
     };
   }
 
   if (
-    location === "tsa" ||
-    location === "security"
+    [
+      "gate",
+      "jetbridge",
+      "ramp",
+    ].includes(
+      location
+    )
   ) {
     return {
-      border: "#8b5cf6",
-      background: "#ede9fe",
-      color: "#5b21b6",
-      icon: "\uD83D\uDEC2",
+      border:
+        "#eab308",
+
+      background:
+        "#fef9c3",
+
+      color:
+        "#854d0e",
+
+      icon:
+        "\uD83D\uDEAA",
     };
   }
 
   if (
-    location === "counter" ||
-    location === "ticket_counter" ||
-    location === "checkin" ||
-    location === "check_in"
+    [
+      "bagroom",
+      "bag_room",
+      "baggage_room",
+      "makeup",
+      "makeup_area",
+    ].includes(
+      location
+    )
   ) {
     return {
-      border: "#f97316",
-      background: "#ffedd5",
-      color: "#9a3412",
-      icon: "\uD83C\uDFAB",
+      border:
+        "#3b82f6",
+
+      background:
+        "#dbeafe",
+
+      color:
+        "#1e3a8a",
+
+      icon:
+        "\uD83D\uDEC4",
     };
   }
 
   if (
-    location === "oversize" ||
-    location === "oversize_belt"
+    [
+      "tsa",
+      "security",
+    ].includes(
+      location
+    )
   ) {
     return {
-      border: "#ec4899",
-      background: "#fce7f3",
-      color: "#9d174d",
-      icon: "\uD83D\uDCE6",
+      border:
+        "#8b5cf6",
+
+      background:
+        "#ede9fe",
+
+      color:
+        "#5b21b6",
+
+      icon:
+        "\uD83D\uDEC2",
     };
   }
 
   if (
-    location === "customs" ||
-    location === "cbp"
+    [
+      "counter",
+      "ticket_counter",
+      "checkin",
+      "check_in",
+    ].includes(
+      location
+    )
   ) {
     return {
-      border: "#0f766e",
-      background: "#ccfbf1",
-      color: "#115e59",
-      icon: "\uD83D\uDEC3",
+      border:
+        "#f97316",
+
+      background:
+        "#ffedd5",
+
+      color:
+        "#9a3412",
+
+      icon:
+        "\uD83C\uDFAB",
     };
   }
 
-  if (location === "transfer") {
+  if (
+    [
+      "oversize",
+      "oversize_belt",
+    ].includes(
+      location
+    )
+  ) {
     return {
-      border: "#06b6d4",
-      background: "#cffafe",
-      color: "#155e75",
-      icon: "\uD83D\uDD04",
+      border:
+        "#ec4899",
+
+      background:
+        "#fce7f3",
+
+      color:
+        "#9d174d",
+
+      icon:
+        "\uD83D\uDCE6",
     };
   }
 
-  if (location === "offloaded") {
+  if (
+    [
+      "customs",
+      "cbp",
+    ].includes(
+      location
+    )
+  ) {
     return {
-      border: "#ef4444",
-      background: "#fee2e2",
-      color: "#991b1b",
-      icon: "\u2B07\uFE0F",
+      border:
+        "#0f766e",
+
+      background:
+        "#ccfbf1",
+
+      color:
+        "#115e59",
+
+      icon:
+        "\uD83D\uDEC3",
+    };
+  }
+
+  if (
+    location ===
+    "transfer"
+  ) {
+    return {
+      border:
+        "#06b6d4",
+
+      background:
+        "#cffafe",
+
+      color:
+        "#155e75",
+
+      icon:
+        "\uD83D\uDD04",
+    };
+  }
+
+  if (
+    location ===
+    "offloaded"
+  ) {
+    return {
+      border:
+        "#ef4444",
+
+      background:
+        "#fee2e2",
+
+      color:
+        "#991b1b",
+
+      icon:
+        "\u2B07\uFE0F",
     };
   }
 
   return {
-    border: "#9ca3af",
-    background: "#f3f4f6",
-    color: "#374151",
-    icon: "\uD83D\uDCCD",
+    border:
+      "#9ca3af",
+
+    background:
+      "#f3f4f6",
+
+    color:
+      "#374151",
+
+    icon:
+      "\uD83D\uDCCD",
   };
 }
 
 const tagPill = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-  padding: "3px 8px",
-  borderRadius: 999,
-  border: "1px solid #e5e7eb",
-  background: "#f9fafb",
-  fontSize: "0.82rem",
+  display:
+    "inline-flex",
+
+  alignItems:
+    "center",
+
+  gap:
+    6,
+
+  padding:
+    "3px 8px",
+
+  borderRadius:
+    999,
+
+  border:
+    "1px solid #e5e7eb",
+
+  background:
+    "#f9fafb",
+
+  fontSize:
+    "0.82rem",
+
   fontFamily:
     "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
 };
 
 const tableHeader = {
-  textAlign: "left",
-  padding: "10px 8px",
+  textAlign:
+    "left",
+
+  padding:
+    "10px 8px",
+
   borderBottom:
     "1px solid #ddd6fe",
-  fontSize: "0.78rem",
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
-  color: "#5b21b6",
-  whiteSpace: "nowrap",
+
+  fontSize:
+    "0.78rem",
+
+  textTransform:
+    "uppercase",
+
+  letterSpacing:
+    "0.04em",
+
+  color:
+    "#5b21b6",
+
+  whiteSpace:
+    "nowrap",
 };
 
 const tableCell = {
-  padding: "10px 8px",
+  padding:
+    "10px 8px",
+
   borderBottom:
     "1px solid #f3f4f6",
-  color: "#111827",
-  verticalAlign: "middle",
+
+  color:
+    "#111827",
+
+  verticalAlign:
+    "middle",
 };
 
-function InfoCard({ label, value }) {
+function InfoCard({
+  label,
+  value,
+}) {
   return (
     <div
       style={{
         border:
           "1px solid #e5e7eb",
-        borderRadius: 12,
-        padding: 10,
-        background: "white",
+
+        borderRadius:
+          12,
+
+        padding:
+          10,
+
+        background:
+          "white",
       }}
     >
       <div
         style={{
-          fontSize: "0.8rem",
-          color: "#6b7280",
+          fontSize:
+            "0.8rem",
+
+          color:
+            "#6b7280",
         }}
       >
         {label}
@@ -5579,8 +9673,11 @@ function InfoCard({ label, value }) {
 
       <div
         style={{
-          fontSize: "1.1rem",
-          fontWeight: 800,
+          fontSize:
+            "1.1rem",
+
+          fontWeight:
+            800,
         }}
       >
         {value}
@@ -5598,18 +9695,33 @@ function TrackerInfoCard({
       style={{
         border:
           "1px solid #e5e7eb",
-        borderRadius: 12,
-        padding: 11,
-        background: "#f9fafb",
+
+        borderRadius:
+          12,
+
+        padding:
+          11,
+
+        background:
+          "#f9fafb",
       }}
     >
       <div
         style={{
-          fontSize: "0.73rem",
-          color: "#6b7280",
-          fontWeight: 800,
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
+          fontSize:
+            "0.73rem",
+
+          color:
+            "#6b7280",
+
+          fontWeight:
+            800,
+
+          textTransform:
+            "uppercase",
+
+          letterSpacing:
+            "0.04em",
         }}
       >
         {label}
@@ -5617,11 +9729,20 @@ function TrackerInfoCard({
 
       <div
         style={{
-          marginTop: 4,
-          color: "#111827",
-          fontSize: "0.92rem",
-          fontWeight: 800,
-          overflowWrap: "anywhere",
+          marginTop:
+            4,
+
+          color:
+            "#111827",
+
+          fontSize:
+            "0.92rem",
+
+          fontWeight:
+            800,
+
+          overflowWrap:
+            "anywhere",
         }}
       >
         {value || "-"}
