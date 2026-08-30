@@ -3115,8 +3115,8 @@ export default function GateControllerPage({
                   fontSize: "0.9rem",
                 }}
               >
-                Open \u2192 Receiving \u2192
-                Loading \u2192 Loaded
+                Open &rarr; Receiving &rarr;
+                Loading &rarr; Loaded
               </p>
             </div>
 
@@ -3258,7 +3258,7 @@ export default function GateControllerPage({
                 fontWeight: 900,
               }}
             >
-              GATE \u2192 AIRCRAFT
+              GATE &rarr; AIRCRAFT
             </span>
           </div>
 
@@ -3771,7 +3771,7 @@ export default function GateControllerPage({
                 of{" "}
                 {checkedBagsTotal ===
                 null
-                  ? "â"
+                  ? "-"
                   : checkedBagsTotal}
               </div>
             </div>
@@ -4202,7 +4202,7 @@ export default function GateControllerPage({
                           "#991B1B",
                       }}
                     >
-                      {scan.cleanTag} \u00B7
+                      {scan.cleanTag} &middot;
                       Cart{" "}
                       {scan.cartNumber ||
                         "-"}
@@ -4254,7 +4254,7 @@ export default function GateControllerPage({
                     fontWeight: 800,
                   }}
                 >
-                  \u26A0\uFE0F Final bag search
+                  {"\u26A0\uFE0F"} Final bag search
                   activated. Click a
                   missing bag tag to
                   view its last scanned
@@ -4449,7 +4449,7 @@ export default function GateControllerPage({
                             >
                               {busy
                                 ? "\u2026"
-                                : "â"}
+                                : "{"\u2715"}"}
                             </button>
                           )}
                         </span>
@@ -4476,7 +4476,7 @@ export default function GateControllerPage({
                 }}
               >
                 All manifest tags are
-                loaded \u2705
+                loaded {"\u2705"}
               </p>
             ) : (
               <div
@@ -4514,7 +4514,7 @@ export default function GateControllerPage({
                         }}
                       >
                         <span>
-                          ð
+                          {"\uD83D\uDCCD"}
                         </span>
 
                         <span>
@@ -4813,7 +4813,7 @@ export default function GateControllerPage({
                         fontWeight: 900,
                       }}
                     >
-                      â
+                      {"\u2715"}
                     </button>
                   </span>
                 )
@@ -4947,7 +4947,7 @@ export default function GateControllerPage({
                   cursor: "pointer",
                 }}
               >
-                â
+                {"\u2715"}
               </button>
             </div>
 
@@ -4974,7 +4974,7 @@ export default function GateControllerPage({
                       fontSize: "2rem",
                     }}
                   >
-                    ð
+                    {"\uD83D\uDD0E"}
                   </div>
 
                   <div
@@ -5416,7 +5416,7 @@ function getTrackerLocationStyle(
       border: "#22c55e",
       background: "#dcfce7",
       color: "#166534",
-      icon: "\u2708ï¸",
+      icon: "\u2708\uFE0F",
     };
   }
 
@@ -5456,7 +5456,7 @@ function getTrackerLocationStyle(
       border: "#8b5cf6",
       background: "#ede9fe",
       color: "#5b21b6",
-      icon: "ð",
+      icon: "\uD83D\uDEC2",
     };
   }
 
@@ -5470,7 +5470,7 @@ function getTrackerLocationStyle(
       border: "#f97316",
       background: "#ffedd5",
       color: "#9a3412",
-      icon: "ð«",
+      icon: "\uD83C\uDFAB",
     };
   }
 
@@ -5494,7 +5494,7 @@ function getTrackerLocationStyle(
       border: "#0f766e",
       background: "#ccfbf1",
       color: "#115e59",
-      icon: "ð",
+      icon: "\uD83D\uDEC3",
     };
   }
 
@@ -5503,7 +5503,7 @@ function getTrackerLocationStyle(
       border: "#06b6d4",
       background: "#cffafe",
       color: "#155e75",
-      icon: "ð",
+      icon: "\uD83D\uDD04",
     };
   }
 
@@ -5512,7 +5512,7 @@ function getTrackerLocationStyle(
       border: "#ef4444",
       background: "#fee2e2",
       color: "#991b1b",
-      icon: "â¬ï¸",
+      icon: "\u2B07\uFE0F",
     };
   }
 
@@ -5520,7 +5520,7 @@ function getTrackerLocationStyle(
     border: "#9ca3af",
     background: "#f3f4f6",
     color: "#374151",
-    icon: "ð",
+    icon: "\uD83D\uDCCD",
   };
 }
 
