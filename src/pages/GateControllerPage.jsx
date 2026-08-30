@@ -130,7 +130,7 @@ function userCanWorkGateController(
 
           return (
             normalized ===
-              "GATE_CONTROLLER" ||
+              "GATE" ||
             normalized ===
               "GATE CONTROLLER"
           );
@@ -961,7 +961,7 @@ export default function GateControllerPage({
     }) => {
       await logSystemIncident({
         module:
-          "GATE_CONTROLLER",
+          "GATE",
 
         action,
 
@@ -1554,7 +1554,7 @@ export default function GateControllerPage({
 
           await logSystemSuccess({
             module:
-              "GATE_CONTROLLER",
+              "GATE",
 
             action:
               "LOAD_GATE_CONTROLLERS",
@@ -1655,7 +1655,7 @@ export default function GateControllerPage({
 
             logSystemIncident({
               module:
-                "GATE_CONTROLLER",
+                "GATE",
 
               action:
                 "LOAD_FLIGHT",
@@ -1761,7 +1761,7 @@ export default function GateControllerPage({
 
           logSystemIncident({
             module:
-              "GATE_CONTROLLER",
+              "GATE",
 
             action:
               "LOAD_FLIGHT",
@@ -1939,7 +1939,7 @@ export default function GateControllerPage({
 
           logSystemIncident({
             module:
-              "GATE_CONTROLLER",
+              "GATE",
 
             action:
               "LOAD_MANIFEST",
@@ -2083,7 +2083,7 @@ export default function GateControllerPage({
 
           logSystemIncident({
             module:
-              "GATE_CONTROLLER",
+              "GATE",
 
             action:
               "LOAD_BAGROOM_SCANS",
@@ -2316,7 +2316,7 @@ export default function GateControllerPage({
 
           logSystemIncident({
             module:
-              "GATE_CONTROLLER",
+              "GATE",
 
             action:
               "LOAD_AIRCRAFT_SCANS",
@@ -2460,7 +2460,7 @@ export default function GateControllerPage({
 
           logSystemIncident({
             module:
-              "GATE_CONTROLLER",
+              "GATE",
 
             action:
               "LOAD_GATE_BAGS",
@@ -3246,7 +3246,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "BAG_TRACKER_LOOKUP",
@@ -3482,7 +3482,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "SET_GATE_CONTROLLER",
@@ -3637,7 +3637,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "UPDATE_FLIGHT_STATUS",
@@ -3829,7 +3829,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "SAVE_GATE_TOTAL",
@@ -3997,7 +3997,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "UPDATE_STRICT_MANIFEST",
@@ -4220,7 +4220,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             isPdf
@@ -4476,7 +4476,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "IMPORT_MANIFEST",
@@ -4721,7 +4721,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "MANIFEST_TAG_SCAN",
@@ -4838,7 +4838,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "DELETE_MANIFEST_TAG",
@@ -5466,7 +5466,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "GATE_BAG_SCAN",
@@ -5838,7 +5838,7 @@ export default function GateControllerPage({
 
         await logSystemSuccess({
           module:
-            "GATE_CONTROLLER",
+            "GATE",
 
           action:
             "DELETE_GATE_BAG",
