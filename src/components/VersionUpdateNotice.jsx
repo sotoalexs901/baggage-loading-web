@@ -13,10 +13,7 @@ export default function VersionUpdateNotice() {
         STORAGE_KEY
       );
 
-    return (
-      savedVersion !==
-      CURRENT_VERSION
-    );
+    return savedVersion !== CURRENT_VERSION;
   });
 
   const handleRefresh = () => {
@@ -37,79 +34,212 @@ export default function VersionUpdateNotice() {
   return (
     <div
       style={{
-        marginBottom: 14,
-        padding: "13px 14px",
-        borderRadius: 12,
-        border: "1px solid #bfdbfe",
-        background: "#eff6ff",
+        position: "fixed",
+        inset: 0,
+        zIndex: 9999,
+
         display: "flex",
-        justifyContent: "space-between",
         alignItems: "center",
-        gap: 12,
-        flexWrap: "wrap",
+        justifyContent: "center",
+
+        padding: 16,
+
+        background:
+          "rgba(15, 23, 42, 0.55)",
+
+        backdropFilter:
+          "blur(3px)",
       }}
     >
       <div
         style={{
-          flex: 1,
-          minWidth: 220,
+          width: "100%",
+          maxWidth: 360,
+
+          background: "white",
+
+          borderRadius: 18,
+
+          padding: "22px 20px",
+
+          boxShadow:
+            "0 24px 70px rgba(15,23,42,0.35)",
+
+          border:
+            "1px solid #dbeafe",
+
+          textAlign: "center",
         }}
       >
+        {/* VERSION BADGE */}
+
         <div
           style={{
             display: "inline-flex",
-            padding: "4px 8px",
+
+            padding: "5px 10px",
+
             borderRadius: 999,
-            background: "#dbeafe",
-            color: "#1d4ed8",
-            fontSize: "0.7rem",
-            fontWeight: 900,
-            marginBottom: 5,
+
+            background:
+              "#dbeafe",
+
+            color:
+              "#1d4ed8",
+
+            fontSize:
+              "0.7rem",
+
+            fontWeight:
+              900,
+
+            letterSpacing:
+              "0.06em",
+
+            marginBottom:
+              12,
           }}
         >
           NEW UPDATE · v{CURRENT_VERSION}
         </div>
 
-        <div
-          style={{
-            color: "#1e3a8a",
-            fontWeight: 900,
-            fontSize: "0.95rem",
-          }}
-        >
-          BLCS Version {CURRENT_VERSION} is now available
-        </div>
+        {/* ICON */}
 
         <div
           style={{
-            marginTop: 3,
-            color: "#475569",
-            fontSize: "0.8rem",
-            lineHeight: 1.45,
+            width: 54,
+            height: 54,
+
+            margin:
+              "0 auto 12px",
+
+            borderRadius:
+              "50%",
+
+            background:
+              "#eff6ff",
+
+            display:
+              "flex",
+
+            alignItems:
+              "center",
+
+            justifyContent:
+              "center",
+
+            fontSize:
+              "1.6rem",
           }}
         >
-          The system has been updated with new features and improvements.
-          Please refresh BLCS to ensure you are using the latest version.
+          ↻
+        </div>
+
+        {/* TITLE */}
+
+        <h3
+          style={{
+            margin:
+              "0 0 8px",
+
+            color:
+              "#0f172a",
+
+            fontSize:
+              "1.15rem",
+
+            fontWeight:
+              900,
+          }}
+        >
+          BLCS Version {CURRENT_VERSION}
+        </h3>
+
+        {/* MESSAGE */}
+
+        <p
+          style={{
+            margin:
+              "0 auto",
+
+            maxWidth:
+              300,
+
+            color:
+              "#64748b",
+
+            fontSize:
+              "0.82rem",
+
+            lineHeight:
+              1.5,
+          }}
+        >
+          A new version of BLCS is available with
+          new features and improvements.
+          Please refresh the system before continuing.
+        </p>
+
+        {/* BUTTON */}
+
+        <button
+          type="button"
+          onClick={
+            handleRefresh
+          }
+          style={{
+            width:
+              "100%",
+
+            minHeight:
+              46,
+
+            marginTop:
+              18,
+
+            borderRadius:
+              12,
+
+            border:
+              "none",
+
+            background:
+              "#2563eb",
+
+            color:
+              "white",
+
+            fontSize:
+              "0.9rem",
+
+            fontWeight:
+              900,
+
+            cursor:
+              "pointer",
+
+            boxShadow:
+              "0 8px 18px rgba(37,99,235,0.22)",
+          }}
+        >
+          Refresh Now
+        </button>
+
+        <div
+          style={{
+            marginTop:
+              10,
+
+            color:
+              "#94a3b8",
+
+            fontSize:
+              "0.68rem",
+          }}
+        >
+          BLCS · Baggage Loading Control System
         </div>
       </div>
-
-      <button
-        type="button"
-        onClick={handleRefresh}
-        style={{
-          minHeight: 42,
-          padding: "9px 16px",
-          borderRadius: 10,
-          border: "1px solid #2563eb",
-          background: "#2563eb",
-          color: "white",
-          fontWeight: 900,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-        }}
-      >
-        Refresh Now
-      </button>
     </div>
   );
 }
