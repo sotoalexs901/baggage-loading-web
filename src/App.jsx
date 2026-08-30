@@ -11,6 +11,7 @@ import {
 import { db } from "./firebase";
 
 import LoginPage from "./pages/LoginPage.jsx";
+
 import PrivacyNoticePage, {
   PRIVACY_NOTICE_VERSION,
 } from "./pages/PrivacyNoticePage.jsx";
@@ -31,13 +32,9 @@ function normalizeRole(role) {
     .toLowerCase();
 }
 
-function getSessionJson(
-  key,
-  fallback = null
-) {
+function getSessionJson(key, fallback = null) {
   try {
-    const saved =
-      sessionStorage.getItem(key);
+    const saved = sessionStorage.getItem(key);
 
     return saved
       ? JSON.parse(saved)
@@ -99,13 +96,6 @@ export default function App() {
   const [refreshKey, setRefreshKey] =
     useState(0);
 
-  /*
-   * Privacy state:
-   *
-   * checking  -> checking Firestore
-   * required  -> user must accept
-   * accepted  -> continue to BLCS
-   */
   const [
     privacyStatus,
     setPrivacyStatus,
@@ -156,11 +146,10 @@ export default function App() {
           data?.privacyConsent
             ?.accepted === true;
 
-        const version =
-          String(
-            data?.privacyConsent
-              ?.version || ""
-          );
+        const version = String(
+          data?.privacyConsent
+            ?.version || ""
+        );
 
         if (
           accepted &&
@@ -177,12 +166,6 @@ export default function App() {
           error
         );
 
-        /*
-         * Safer behavior:
-         * don't enter the operational
-         * system until consent can be
-         * verified.
-         */
         if (active) {
           setPrivacyStatus("required");
         }
@@ -364,7 +347,7 @@ export default function App() {
           <div
             style={{
               fontSize: "1.2rem",
-              fontWeight: 800,
+              fontWeight: 900,
             }}
           >
             BLCS
@@ -398,12 +381,27 @@ export default function App() {
   }
 
   /* =========================
-     PERMISSIONS
+     USER / PERMISSIONS
   ========================= */
 
   const role = normalizeRole(
     user.role
   );
+
+  const displayName =
+    user?.fullName ||
+    user?.name ||
+    user?.displayName ||
+    user?.username ||
+    "User";
+
+  const roleLabel = String(
+    user?.role || "user"
+  )
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) =>
+      letter.toUpperCase()
+    );
 
   const isStationManager =
     role === "station_manager";
@@ -551,10 +549,18 @@ export default function App() {
 
     if (!selectedFlightId) {
       return (
-        <p>
-          Please select a flight
-          first.
-        </p>
+        <div
+          style={{
+            padding: 20,
+            background: "white",
+            borderRadius: 14,
+            border:
+              "1px solid #e5e7eb",
+            color: "#64748b",
+          }}
+        >
+          Please select a flight first.
+        </div>
       );
     }
 
@@ -651,9 +657,12 @@ export default function App() {
           marginBottom: 16,
         }}
       >
-        <h1>
-          Baggage Loading Control
-          System
+        <h1
+          style={{
+            marginBottom: 12,
+          }}
+        >
+          Baggage Loading Control System
         </h1>
 
         <div
@@ -661,8 +670,8 @@ export default function App() {
             display: "flex",
             justifyContent:
               "space-between",
-            alignItems: "center",
-            gap: 12,
+            alignItems: "flex-start",
+            gap: 16,
             flexWrap: "wrap",
           }}
         >
@@ -672,6 +681,7 @@ export default function App() {
               display: "flex",
               gap: 8,
               flexWrap: "wrap",
+              flex: "1 1 620px",
             }}
           >
             <button
@@ -768,83 +778,183 @@ export default function App() {
             )}
           </nav>
 
+          {/* USER PROFILE */}
+
           <div
             style={{
-              textAlign: "right",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: 8,
+              minWidth: 205,
             }}
           >
             <div
               style={{
-                fontSize:
-                  "0.85rem",
+                textAlign: "right",
+                lineHeight: 1.25,
               }}
             >
-              Logged in as{" "}
-              <strong>
-                {user.username}
-              </strong>
+              <div
+                style={{
+                  fontSize: "0.95rem",
+                  color: "#0f172a",
+                  fontWeight: 900,
+                }}
+              >
+                {displayName}
+              </div>
 
-              {user.role && (
-                <> ({user.role})</>
-              )}
+              <div
+                style={{
+                  marginTop: 3,
+                  fontSize: "0.72rem",
+                  color: "#64748b",
+                }}
+              >
+                @{user?.username} ·{" "}
+                {roleLabel}
+              </div>
+
+              {gateControllerOnDuty &&
+                role !==
+                  "gate_controller" && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      fontSize: "0.72rem",
+                      color: "#475569",
+                    }}
+                  >
+                    Gate Controller:{" "}
+                    <strong>
+                      {
+                        gateControllerOnDuty
+                      }
+                    </strong>
+                  </div>
+                )}
             </div>
 
-            {gateControllerOnDuty &&
-              role !==
-                "gate_controller" && (
-                <div
+            <div
+              style={{
+                display: "flex",
+                gap: 7,
+                justifyContent:
+                  "flex-end",
+                flexWrap: "wrap",
+              }}
+            >
+              <button
+                type="button"
+                onClick={
+                  handleSoftRefresh
+                }
+                title="Refresh current page"
+                style={{
+                  display:
+                    "inline-flex",
+                  alignItems: "center",
+                  justifyContent:
+                    "center",
+                  gap: 6,
+                  minHeight: 37,
+                  padding: "7px 12px",
+                  borderRadius: 10,
+                  border:
+                    "1px solid #cbd5e1",
+                  background: "white",
+                  color: "#334155",
+                  fontWeight: 800,
+                  fontSize: "0.78rem",
+                  cursor: "pointer",
+                  boxShadow:
+                    "0 1px 3px rgba(15,23,42,0.06)",
+                }}
+              >
+                <span
                   style={{
-                    fontSize:
-                      "0.85rem",
-                    marginTop: 2,
+                    fontSize: "1rem",
                   }}
                 >
-                  Gate Controller:{" "}
-                  <strong>
-                    {
-                      gateControllerOnDuty
-                    }
-                  </strong>
-                </div>
-              )}
+                  ↻
+                </span>
 
-            <button
-              onClick={
-                handleSoftRefresh
-              }
-              style={{
-                marginTop: 6,
-                marginRight: 6,
-              }}
-            >
-              Refresh
-            </button>
+                Refresh
+              </button>
 
-            <button
-              onClick={
-                handleLogout
-              }
-              style={{
-                marginTop: 6,
-              }}
-            >
-              Logout
-            </button>
+              <button
+                type="button"
+                onClick={
+                  handleLogout
+                }
+                title="Sign out"
+                style={{
+                  display:
+                    "inline-flex",
+                  alignItems: "center",
+                  justifyContent:
+                    "center",
+                  gap: 6,
+                  minHeight: 37,
+                  padding: "7px 12px",
+                  borderRadius: 10,
+                  border:
+                    "1px solid #fecaca",
+                  background: "#fff7f7",
+                  color: "#b91c1c",
+                  fontWeight: 800,
+                  fontSize: "0.78rem",
+                  cursor: "pointer",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "0.95rem",
+                  }}
+                >
+                  ↪
+                </span>
+
+                Logout
+              </button>
+            </div>
           </div>
         </div>
 
         {selectedFlightId && (
-          <p
+          <div
             style={{
-              marginTop: 8,
+              marginTop: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 10px",
+              borderRadius: 10,
+              background: "#eff6ff",
+              border:
+                "1px solid #dbeafe",
+              color: "#1e40af",
+              fontSize: "0.82rem",
             }}
           >
+            <span>
+              ✈
+            </span>
+
             <strong>
               Flight selected:
-            </strong>{" "}
-            {selectedFlightNumber ||
-              selectedFlightId}
-          </p>
+            </strong>
+
+            <span
+              style={{
+                fontWeight: 900,
+              }}
+            >
+              {selectedFlightNumber ||
+                selectedFlightId}
+            </span>
+          </div>
         )}
       </header>
 
