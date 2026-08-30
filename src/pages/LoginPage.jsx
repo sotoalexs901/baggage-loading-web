@@ -1,5 +1,5 @@
 // src/pages/LoginPage.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   collection,
   query,
@@ -14,18 +14,151 @@ function normalizeRole(role) {
     .toLowerCase();
 }
 
-export default function LoginPage({ onLogin }) {
-  const [username, setUsername] = useState("");
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+const OPERATIONAL_POSITIONS = [
+  {
+    value: "COUNTER_SCAN",
+    label: "Counter Scan",
+    description: "Ticket counter bag tag scanning",
+  },
+  {
+    value: "GATE_CONTROLLER",
+    label: "Gate Controller",
+    description: "Gate baggage control and coordination",
+  },
+  {
+    value: "BAGROOM_SCAN",
+    label: "Bagroom Scan",
+    description: "Bagroom receiving and cart scanning",
+  },
+  {
+    value: "AIRCRAFT_RAMP",
+    label: "Aircraft / Ramp",
+    description: "Aircraft loading and ramp scanning",
+  },
+  {
+    value: "SUPERVISOR",
+    label: "Supervisor",
+    description: "Operational supervision for the shift",
+  },
+];
 
-  const [isCompact, setIsCompact] =
-    useState(window.innerWidth < 760);
+function normalizeOperationalPosition(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function getOperationalPositionLabel(value) {
+  const normalized =
+    normalizeOperationalPosition(value);
+
+  return (
+    OPERATIONAL_POSITIONS.find(
+      (item) => item.value === normalized
+    )?.label ||
+    normalized ||
+    "-"
+  );
+}
+
+function getLegacyOperationalPositions(role) {
+  const normalizedRole =
+    normalizeRole(role);
+
+  if (normalizedRole === "gate_controller") {
+    return ["GATE_CONTROLLER"];
+  }
+
+  if (
+    normalizedRole === "station_manager" ||
+    normalizedRole === "duty_manager" ||
+    normalizedRole === "supervisor"
+  ) {
+    return ["SUPERVISOR"];
+  }
+
+  return ["COUNTER_SCAN"];
+}
+
+function getAllowedOperationalPositions(userData) {
+  const configured =
+    Array.isArray(
+      userData?.allowedOperationalPositions
+    )
+      ? userData.allowedOperationalPositions
+          .map(normalizeOperationalPosition)
+          .filter(Boolean)
+      : [];
+
+  const validValues =
+    new Set(
+      OPERATIONAL_POSITIONS.map(
+        (item) => item.value
+      )
+    );
+
+  const uniqueConfigured = [
+    ...new Set(
+      configured.filter((value) =>
+        validValues.has(value)
+      )
+    ),
+  ];
+
+  if (uniqueConfigured.length > 0) {
+    return uniqueConfigured;
+  }
+
+  return getLegacyOperationalPositions(
+    userData?.role
+  );
+}
+
+export default function LoginPage({
+  onLogin,
+}) {
+  const [username, setUsername] =
+    useState("");
+
+  const [pin, setPin] =
+    useState("");
+
+  const [error, setError] =
+    useState("");
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [
+    isCompact,
+    setIsCompact,
+  ] = useState(
+    typeof window !== "undefined"
+      ? window.innerWidth < 760
+      : false
+  );
+
+  /*
+   * STEP 2 state.
+   * Credentials are validated first.
+   * Then the employee selects the job
+   * they are performing for this login.
+   */
+  const [
+    verifiedUser,
+    setVerifiedUser,
+  ] = useState(null);
+
+  const [
+    selectedOperationalPosition,
+    setSelectedOperationalPosition,
+  ] = useState("");
 
   useEffect(() => {
     const handleResize = () => {
-      setIsCompact(window.innerWidth < 760);
+      setIsCompact(
+        window.innerWidth < 760
+      );
     };
 
     window.addEventListener(
@@ -41,18 +174,45 @@ export default function LoginPage({ onLogin }) {
     };
   }, []);
 
-  const handleLogin = async () => {
+  const allowedOperationalPositions =
+    useMemo(() => {
+      if (!verifiedUser) {
+        return [];
+      }
+
+      return getAllowedOperationalPositions(
+        verifiedUser
+      );
+    }, [verifiedUser]);
+
+  const operationalPositionCards =
+    useMemo(() => {
+      return allowedOperationalPositions
+        .map((value) => {
+          return OPERATIONAL_POSITIONS.find(
+            (item) =>
+              item.value === value
+          );
+        })
+        .filter(Boolean);
+    }, [allowedOperationalPositions]);
+
+  const handleCredentials = async () => {
     if (loading) return;
 
     setError("");
 
-    const cleanUsername = username.trim();
-    const cleanPin = pin.trim();
+    const cleanUsername =
+      username.trim().toLowerCase();
+
+    const cleanPin =
+      pin.trim();
 
     if (!cleanUsername || !cleanPin) {
       setError(
         "Please enter your username and PIN."
       );
+
       return;
     }
 
@@ -61,20 +221,28 @@ export default function LoginPage({ onLogin }) {
 
       const qUser = query(
         collection(db, "users"),
+
         where(
           "username",
           "==",
           cleanUsername
         ),
-        where("pin", "==", cleanPin)
+
+        where(
+          "pin",
+          "==",
+          cleanPin
+        )
       );
 
-      const snap = await getDocs(qUser);
+      const snap =
+        await getDocs(qUser);
 
       if (snap.empty) {
         setError(
           "Username or PIN is incorrect."
         );
+
         return;
       }
 
@@ -83,21 +251,46 @@ export default function LoginPage({ onLogin }) {
         ...snap.docs[0].data(),
       };
 
-      const role = normalizeRole(
-        userData.role
+      if (userData.active === false) {
+        setError(
+          "This employee account is inactive. Contact a Station Manager."
+        );
+
+        return;
+      }
+
+      const allowed =
+        getAllowedOperationalPositions(
+          userData
+        );
+
+      if (allowed.length === 0) {
+        setError(
+          "No operational position is assigned to this employee."
+        );
+
+        return;
+      }
+
+      const configuredDefault =
+        normalizeOperationalPosition(
+          userData.defaultOperationalPosition
+        );
+
+      const nextDefault =
+        allowed.includes(
+          configuredDefault
+        )
+          ? configuredDefault
+          : allowed[0];
+
+      setVerifiedUser(userData);
+
+      setSelectedOperationalPosition(
+        nextDefault
       );
 
-      const savedGateController =
-        role === "gate_controller"
-          ? userData.username
-          : localStorage.getItem(
-              "gateControllerOnDuty"
-            ) || null;
-
-      onLogin(userData, {
-        gateControllerUsername:
-          savedGateController,
-      });
+      setError("");
     } catch (err) {
       console.error(
         "BLCS login error:",
@@ -112,24 +305,136 @@ export default function LoginPage({ onLogin }) {
     }
   };
 
+  const completeLogin = () => {
+    if (!verifiedUser) {
+      setError(
+        "Please verify your credentials first."
+      );
+
+      return;
+    }
+
+    const operationalPosition =
+      normalizeOperationalPosition(
+        selectedOperationalPosition
+      );
+
+    if (
+      !allowedOperationalPositions.includes(
+        operationalPosition
+      )
+    ) {
+      setError(
+        "Please select an authorized operational position."
+      );
+
+      return;
+    }
+
+    const operationalPositionLabel =
+      getOperationalPositionLabel(
+        operationalPosition
+      );
+
+    /*
+     * Gate Controller on duty should reflect
+     * the actual operational position selected
+     * for this login - not only the employee's
+     * permanent System Role.
+     */
+    const gateControllerUsername =
+      operationalPosition ===
+      "GATE_CONTROLLER"
+        ? verifiedUser.username
+        : localStorage.getItem(
+            "gateControllerOnDuty"
+          ) || null;
+
+    onLogin(verifiedUser, {
+      gateControllerUsername,
+
+      operationalPosition,
+
+      operationalPositionLabel,
+
+      employeeFullName:
+        verifiedUser.fullName ||
+        verifiedUser.username ||
+        "",
+
+      basePosition:
+        verifiedUser.position ||
+        "",
+
+      systemRole:
+        verifiedUser.role ||
+        null,
+
+      loginAt:
+        new Date().toISOString(),
+    });
+  };
+
   const handleKeyDown = (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      handleLogin();
+    if (e.key !== "Enter") {
+      return;
+    }
+
+    e.preventDefault();
+
+    if (verifiedUser) {
+      completeLogin();
+    } else {
+      handleCredentials();
     }
   };
+
+  const goBackToCredentials = () => {
+    setVerifiedUser(null);
+
+    setSelectedOperationalPosition(
+      ""
+    );
+
+    setError("");
+
+    setPin("");
+
+    window.setTimeout(() => {
+      document
+        .getElementById(
+          "blcs-pin"
+        )
+        ?.focus();
+    }, 150);
+  };
+
+  const displayName =
+    verifiedUser?.fullName ||
+    verifiedUser?.username ||
+    "Employee";
 
   return (
     <div
       style={{
         minHeight: "100dvh",
+
         background:
           "linear-gradient(135deg, #020617 0%, #0f172a 50%, #172554 100%)",
+
         display: "flex",
+
         alignItems: "center",
+
         justifyContent: "center",
-        padding: isCompact ? 14 : 28,
+
+        padding:
+          isCompact
+            ? 14
+            : 28,
+
         boxSizing: "border-box",
+
         fontFamily:
           "Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       }}
@@ -138,19 +443,25 @@ export default function LoginPage({ onLogin }) {
         style={{
           width: "100%",
           maxWidth: 980,
-          minHeight: isCompact
-            ? "auto"
-            : 560,
+
+          minHeight:
+            isCompact
+              ? "auto"
+              : 560,
 
           display: "grid",
-          gridTemplateColumns: isCompact
-            ? "1fr"
-            : "1.05fr 0.95fr",
+
+          gridTemplateColumns:
+            isCompact
+              ? "1fr"
+              : "1.05fr 0.95fr",
 
           background: "#ffffff",
-          borderRadius: isCompact
-            ? 20
-            : 28,
+
+          borderRadius:
+            isCompact
+              ? 20
+              : 28,
 
           overflow: "hidden",
 
@@ -161,20 +472,21 @@ export default function LoginPage({ onLogin }) {
             "1px solid rgba(255,255,255,0.15)",
         }}
       >
-        {/* =================================
-            BAGGAGE / BRAND PANEL
-        ================================= */}
+        {/* BRAND PANEL */}
 
         <div
           style={{
             position: "relative",
-            minHeight: isCompact
-              ? 175
-              : "100%",
 
-            padding: isCompact
-              ? "22px 20px"
-              : "42px",
+            minHeight:
+              isCompact
+                ? 175
+                : "100%",
+
+            padding:
+              isCompact
+                ? "22px 20px"
+                : "42px",
 
             boxSizing: "border-box",
 
@@ -184,23 +496,27 @@ export default function LoginPage({ onLogin }) {
             color: "white",
 
             display: "flex",
+
             flexDirection: "column",
+
             justifyContent:
               "space-between",
 
             overflow: "hidden",
           }}
         >
-          {/* Decorative circles */}
-
           <div
             style={{
               position: "absolute",
+
               width: 280,
               height: 280,
+
               borderRadius: "50%",
+
               background:
                 "rgba(255,255,255,0.07)",
+
               right: -90,
               top: -110,
             }}
@@ -209,11 +525,15 @@ export default function LoginPage({ onLogin }) {
           <div
             style={{
               position: "absolute",
+
               width: 180,
               height: 180,
+
               borderRadius: "50%",
+
               background:
                 "rgba(255,255,255,0.05)",
+
               left: -80,
               bottom: -90,
             }}
@@ -228,7 +548,9 @@ export default function LoginPage({ onLogin }) {
             <div
               style={{
                 display: "inline-flex",
+
                 alignItems: "center",
+
                 gap: 8,
 
                 padding: "6px 10px",
@@ -242,25 +564,31 @@ export default function LoginPage({ onLogin }) {
                 borderRadius: 999,
 
                 fontSize: "0.72rem",
+
                 fontWeight: 800,
+
                 letterSpacing: "0.08em",
               }}
             >
-              TPA · BAGGAGE OPERATIONS
+              TPA - BAGGAGE OPERATIONS
             </div>
 
             <h1
               style={{
-                margin: isCompact
-                  ? "14px 0 3px"
-                  : "26px 0 6px",
+                margin:
+                  isCompact
+                    ? "14px 0 3px"
+                    : "26px 0 6px",
 
-                fontSize: isCompact
-                  ? "2rem"
-                  : "3rem",
+                fontSize:
+                  isCompact
+                    ? "2rem"
+                    : "3rem",
 
                 lineHeight: 1,
-                letterSpacing: "-0.04em",
+
+                letterSpacing:
+                  "-0.04em",
               }}
             >
               BLCS
@@ -268,19 +596,19 @@ export default function LoginPage({ onLogin }) {
 
             <div
               style={{
-                fontSize: isCompact
-                  ? "0.9rem"
-                  : "1.05rem",
+                fontSize:
+                  isCompact
+                    ? "0.9rem"
+                    : "1.05rem",
 
                 color: "#dbeafe",
+
                 fontWeight: 600,
               }}
             >
               Baggage Loading Control System
             </div>
           </div>
-
-          {/* BAG ICON / VISUAL */}
 
           {!isCompact && (
             <div
@@ -289,10 +617,15 @@ export default function LoginPage({ onLogin }) {
                 zIndex: 1,
 
                 display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
 
-                padding: "20px 0",
+                justifyContent:
+                  "center",
+
+                alignItems:
+                  "center",
+
+                padding:
+                  "20px 0",
               }}
             >
               <div
@@ -300,7 +633,8 @@ export default function LoginPage({ onLogin }) {
                   width: 210,
                   height: 210,
 
-                  borderRadius: "50%",
+                  borderRadius:
+                    "50%",
 
                   background:
                     "rgba(255,255,255,0.10)",
@@ -308,24 +642,34 @@ export default function LoginPage({ onLogin }) {
                   border:
                     "1px solid rgba(255,255,255,0.16)",
 
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
+                  display:
+                    "flex",
+
+                  alignItems:
+                    "center",
+
+                  justifyContent:
+                    "center",
 
                   boxShadow:
                     "inset 0 0 40px rgba(255,255,255,0.05)",
                 }}
               >
+                {/*
+                  ASCII-safe baggage symbol.
+                  The escape is interpreted by JavaScript.
+                */}
                 <span
                   role="img"
                   aria-label="Baggage"
                   style={{
                     fontSize: 110,
+
                     filter:
                       "drop-shadow(0 14px 15px rgba(0,0,0,0.22))",
                   }}
                 >
-                  🧳
+                  {"\uD83E\uDDF3"}
                 </span>
               </div>
             </div>
@@ -336,316 +680,824 @@ export default function LoginPage({ onLogin }) {
               position: "relative",
               zIndex: 1,
 
-              display: isCompact
-                ? "none"
-                : "block",
+              display:
+                isCompact
+                  ? "none"
+                  : "block",
 
-              fontSize: "0.78rem",
-              color: "#bfdbfe",
-              lineHeight: 1.6,
+              fontSize:
+                "0.78rem",
+
+              color:
+                "#bfdbfe",
+
+              lineHeight:
+                1.6,
             }}
           >
-            Counter · Bagroom · Gate · Aircraft
+            Counter - Bagroom - Gate - Aircraft
             <br />
             Real-time baggage tracking
           </div>
         </div>
 
-        {/* =================================
-            LOGIN PANEL
-        ================================= */}
+        {/* LOGIN / POSITION PANEL */}
 
         <div
           style={{
-            padding: isCompact
-              ? "26px 20px 22px"
-              : "52px 50px",
+            padding:
+              isCompact
+                ? "26px 20px 22px"
+                : "52px 50px",
 
             boxSizing: "border-box",
 
             display: "flex",
+
             flexDirection: "column",
+
             justifyContent: "center",
 
             background: "#ffffff",
           }}
         >
-          <div
-            style={{
-              marginBottom: 26,
-            }}
-          >
-            <div
-              style={{
-                color: "#2563eb",
-                fontSize: "0.75rem",
-                fontWeight: 900,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                marginBottom: 7,
-              }}
-            >
-              Secure Access
-            </div>
+          {!verifiedUser ? (
+            <>
+              <div
+                style={{
+                  marginBottom: 26,
+                }}
+              >
+                <div
+                  style={{
+                    color: "#2563eb",
 
-            <h2
-              style={{
-                margin: 0,
-                color: "#0f172a",
-                fontSize: isCompact
-                  ? "1.55rem"
-                  : "1.8rem",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              Welcome back
-            </h2>
+                    fontSize:
+                      "0.75rem",
 
-            <p
-              style={{
-                margin: "7px 0 0",
-                color: "#64748b",
-                fontSize: "0.88rem",
-                lineHeight: 1.5,
-              }}
-            >
-              Sign in to access baggage
-              operations.
-            </p>
-          </div>
+                    fontWeight:
+                      900,
 
-          {/* USERNAME */}
+                    letterSpacing:
+                      "0.08em",
 
-          <div
-            style={{
-              marginBottom: 18,
-            }}
-          >
-            <label
-              htmlFor="blcs-username"
-              style={{
-                display: "block",
-                marginBottom: 7,
-                color: "#334155",
-                fontSize: "0.82rem",
-                fontWeight: 800,
-              }}
-            >
-              Username
-            </label>
+                    textTransform:
+                      "uppercase",
 
-            <input
-              id="blcs-username"
-              type="text"
-              value={username}
-              autoComplete="username"
-              autoCapitalize="none"
-              spellCheck={false}
-              disabled={loading}
-              onChange={(e) =>
-                setUsername(e.target.value)
-              }
-              onKeyDown={handleKeyDown}
-              placeholder="Enter username"
-              style={{
-                width: "100%",
-                height: isCompact
-                  ? 54
-                  : 50,
+                    marginBottom:
+                      7,
+                  }}
+                >
+                  Secure Access
+                </div>
 
-                padding: "0 15px",
-                boxSizing: "border-box",
+                <h2
+                  style={{
+                    margin: 0,
 
-                borderRadius: 12,
-                border:
-                  "1px solid #cbd5e1",
+                    color:
+                      "#0f172a",
 
-                background: loading
-                  ? "#f1f5f9"
-                  : "#f8fafc",
+                    fontSize:
+                      isCompact
+                        ? "1.55rem"
+                        : "1.8rem",
 
-                color: "#0f172a",
+                    letterSpacing:
+                      "-0.02em",
+                  }}
+                >
+                  Welcome back
+                </h2>
 
-                fontSize: isCompact
-                  ? "1rem"
-                  : "0.95rem",
+                <p
+                  style={{
+                    margin:
+                      "7px 0 0",
 
-                outline: "none",
-              }}
-            />
-          </div>
+                    color:
+                      "#64748b",
 
-          {/* PIN */}
+                    fontSize:
+                      "0.88rem",
 
-          <div
-            style={{
-              marginBottom: 18,
-            }}
-          >
-            <label
-              htmlFor="blcs-pin"
-              style={{
-                display: "block",
-                marginBottom: 7,
-                color: "#334155",
-                fontSize: "0.82rem",
-                fontWeight: 800,
-              }}
-            >
-              PIN
-            </label>
+                    lineHeight:
+                      1.5,
+                  }}
+                >
+                  Sign in to access baggage operations.
+                </p>
+              </div>
 
-            <input
-              id="blcs-pin"
-              type="password"
-              value={pin}
-              inputMode="numeric"
-              autoComplete="current-password"
-              disabled={loading}
-              onChange={(e) =>
-                setPin(e.target.value)
-              }
-              onKeyDown={handleKeyDown}
-              placeholder="Enter PIN"
-              style={{
-                width: "100%",
-                height: isCompact
-                  ? 58
-                  : 50,
+              <div
+                style={{
+                  marginBottom: 18,
+                }}
+              >
+                <label
+                  htmlFor="blcs-username"
+                  style={{
+                    display: "block",
 
-                padding: "0 15px",
-                boxSizing: "border-box",
+                    marginBottom:
+                      7,
 
-                borderRadius: 12,
-                border:
-                  "1px solid #cbd5e1",
+                    color:
+                      "#334155",
 
-                background: loading
-                  ? "#f1f5f9"
-                  : "#f8fafc",
+                    fontSize:
+                      "0.82rem",
 
-                color: "#0f172a",
+                    fontWeight:
+                      800,
+                  }}
+                >
+                  Username
+                </label>
 
-                fontSize: isCompact
-                  ? "1.15rem"
-                  : "1rem",
+                <input
+                  id="blcs-username"
 
-                letterSpacing: "0.12em",
-                outline: "none",
-              }}
-            />
-          </div>
+                  type="text"
 
-          {/* ERROR */}
+                  value={
+                    username
+                  }
 
-          {error && (
-            <div
-              role="alert"
-              style={{
-                marginBottom: 16,
-                padding: "11px 12px",
+                  autoComplete="username"
 
-                borderRadius: 10,
+                  autoCapitalize="none"
 
-                background: "#fef2f2",
-                border:
-                  "1px solid #fecaca",
+                  spellCheck={false}
 
-                color: "#b91c1c",
+                  disabled={
+                    loading
+                  }
 
-                fontSize: "0.82rem",
-                fontWeight: 700,
-                lineHeight: 1.4,
-              }}
-            >
-              {error}
-            </div>
+                  onChange={(e) =>
+                    setUsername(
+                      e.target.value
+                    )
+                  }
+
+                  onKeyDown={
+                    handleKeyDown
+                  }
+
+                  placeholder="Enter username"
+
+                  style={{
+                    width: "100%",
+
+                    height:
+                      isCompact
+                        ? 54
+                        : 50,
+
+                    padding:
+                      "0 15px",
+
+                    boxSizing:
+                      "border-box",
+
+                    borderRadius:
+                      12,
+
+                    border:
+                      "1px solid #cbd5e1",
+
+                    background:
+                      loading
+                        ? "#f1f5f9"
+                        : "#f8fafc",
+
+                    color:
+                      "#0f172a",
+
+                    fontSize:
+                      isCompact
+                        ? "1rem"
+                        : "0.95rem",
+
+                    outline:
+                      "none",
+                  }}
+                />
+              </div>
+
+              <div
+                style={{
+                  marginBottom: 18,
+                }}
+              >
+                <label
+                  htmlFor="blcs-pin"
+                  style={{
+                    display: "block",
+
+                    marginBottom:
+                      7,
+
+                    color:
+                      "#334155",
+
+                    fontSize:
+                      "0.82rem",
+
+                    fontWeight:
+                      800,
+                  }}
+                >
+                  PIN
+                </label>
+
+                <input
+                  id="blcs-pin"
+
+                  type="password"
+
+                  value={
+                    pin
+                  }
+
+                  inputMode="numeric"
+
+                  autoComplete="current-password"
+
+                  disabled={
+                    loading
+                  }
+
+                  onChange={(e) =>
+                    setPin(
+                      e.target.value
+                    )
+                  }
+
+                  onKeyDown={
+                    handleKeyDown
+                  }
+
+                  placeholder="Enter PIN"
+
+                  style={{
+                    width:
+                      "100%",
+
+                    height:
+                      isCompact
+                        ? 58
+                        : 50,
+
+                    padding:
+                      "0 15px",
+
+                    boxSizing:
+                      "border-box",
+
+                    borderRadius:
+                      12,
+
+                    border:
+                      "1px solid #cbd5e1",
+
+                    background:
+                      loading
+                        ? "#f1f5f9"
+                        : "#f8fafc",
+
+                    color:
+                      "#0f172a",
+
+                    fontSize:
+                      isCompact
+                        ? "1.15rem"
+                        : "1rem",
+
+                    letterSpacing:
+                      "0.12em",
+
+                    outline:
+                      "none",
+                  }}
+                />
+              </div>
+
+              {error && (
+                <ErrorBox>
+                  {error}
+                </ErrorBox>
+              )}
+
+              <button
+                type="button"
+
+                onClick={
+                  handleCredentials
+                }
+
+                disabled={
+                  loading
+                }
+
+                style={{
+                  width: "100%",
+
+                  minHeight:
+                    isCompact
+                      ? 58
+                      : 52,
+
+                  borderRadius:
+                    12,
+
+                  border:
+                    "none",
+
+                  background:
+                    loading
+                      ? "#94a3b8"
+                      : "#2563eb",
+
+                  color:
+                    "white",
+
+                  fontSize:
+                    isCompact
+                      ? "1rem"
+                      : "0.95rem",
+
+                  fontWeight:
+                    900,
+
+                  cursor:
+                    loading
+                      ? "wait"
+                      : "pointer",
+
+                  boxShadow:
+                    loading
+                      ? "none"
+                      : "0 8px 20px rgba(37,99,235,0.24)",
+                }}
+              >
+                {loading
+                  ? "Checking..."
+                  : "Continue"}
+              </button>
+
+              <div
+                style={{
+                  marginTop:
+                    18,
+
+                  padding:
+                    "10px 12px",
+
+                  borderRadius:
+                    10,
+
+                  background:
+                    "#f8fafc",
+
+                  border:
+                    "1px solid #e2e8f0",
+
+                  color:
+                    "#64748b",
+
+                  fontSize:
+                    "0.75rem",
+
+                  lineHeight:
+                    1.5,
+
+                  textAlign:
+                    "center",
+                }}
+              >
+                Use your assigned{" "}
+                <strong>
+                  username
+                </strong>{" "}
+                and{" "}
+                <strong>
+                  PIN
+                </strong>
+                .
+              </div>
+            </>
+          ) : (
+            <>
+              <div
+                style={{
+                  marginBottom:
+                    18,
+                }}
+              >
+                <div
+                  style={{
+                    color:
+                      "#2563eb",
+
+                    fontSize:
+                      "0.75rem",
+
+                    fontWeight:
+                      900,
+
+                    letterSpacing:
+                      "0.08em",
+
+                    textTransform:
+                      "uppercase",
+
+                    marginBottom:
+                      7,
+                  }}
+                >
+                  Shift Assignment
+                </div>
+
+                <h2
+                  style={{
+                    margin: 0,
+
+                    color:
+                      "#0f172a",
+
+                    fontSize:
+                      isCompact
+                        ? "1.45rem"
+                        : "1.75rem",
+
+                    letterSpacing:
+                      "-0.02em",
+                  }}
+                >
+                  Welcome, {displayName}
+                </h2>
+
+                <p
+                  style={{
+                    margin:
+                      "7px 0 0",
+
+                    color:
+                      "#64748b",
+
+                    fontSize:
+                      "0.86rem",
+
+                    lineHeight:
+                      1.5,
+                  }}
+                >
+                  Select the position you are working for this login.
+                  This position will be recorded with your operational activity.
+                </p>
+              </div>
+
+              <div
+                style={{
+                  display:
+                    "grid",
+
+                  gridTemplateColumns:
+                    isCompact
+                      ? "1fr"
+                      : "repeat(2, minmax(0, 1fr))",
+
+                  gap:
+                    9,
+
+                  marginBottom:
+                    16,
+                }}
+              >
+                {operationalPositionCards.map(
+                  (position) => {
+                    const active =
+                      selectedOperationalPosition ===
+                      position.value;
+
+                    return (
+                      <button
+                        key={
+                          position.value
+                        }
+
+                        type="button"
+
+                        onClick={() => {
+                          setSelectedOperationalPosition(
+                            position.value
+                          );
+
+                          setError("");
+                        }}
+
+                        style={{
+                          minHeight:
+                            isCompact
+                              ? 68
+                              : 76,
+
+                          padding:
+                            "10px 12px",
+
+                          borderRadius:
+                            12,
+
+                          border:
+                            active
+                              ? "2px solid #2563eb"
+                              : "1px solid #cbd5e1",
+
+                          background:
+                            active
+                              ? "#eff6ff"
+                              : "#ffffff",
+
+                          color:
+                            active
+                              ? "#1d4ed8"
+                              : "#334155",
+
+                          textAlign:
+                            "left",
+
+                          cursor:
+                            "pointer",
+
+                          boxShadow:
+                            active
+                              ? "0 6px 16px rgba(37,99,235,0.10)"
+                              : "none",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize:
+                              "0.9rem",
+
+                            fontWeight:
+                              900,
+                          }}
+                        >
+                          {position.label}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop:
+                              4,
+
+                            color:
+                              active
+                                ? "#1e40af"
+                                : "#64748b",
+
+                            fontSize:
+                              "0.72rem",
+
+                            lineHeight:
+                              1.35,
+
+                            fontWeight:
+                              600,
+                          }}
+                        >
+                          {position.description}
+                        </div>
+                      </button>
+                    );
+                  }
+                )}
+              </div>
+
+              <div
+                style={{
+                  padding:
+                    "10px 12px",
+
+                  borderRadius:
+                    10,
+
+                  background:
+                    "#f8fafc",
+
+                  border:
+                    "1px solid #e2e8f0",
+
+                  color:
+                    "#475569",
+
+                  fontSize:
+                    "0.75rem",
+
+                  lineHeight:
+                    1.45,
+
+                  marginBottom:
+                    14,
+                }}
+              >
+                <strong>
+                  System Role:
+                </strong>{" "}
+                {String(
+                  verifiedUser.role ||
+                  "-"
+                ).replaceAll(
+                  "_",
+                  " "
+                )}
+                <br />
+
+                <strong>
+                  Base Position:
+                </strong>{" "}
+                {verifiedUser.position ||
+                  "-"}
+              </div>
+
+              {error && (
+                <ErrorBox>
+                  {error}
+                </ErrorBox>
+              )}
+
+              <button
+                type="button"
+
+                onClick={
+                  completeLogin
+                }
+
+                disabled={
+                  !selectedOperationalPosition
+                }
+
+                style={{
+                  width:
+                    "100%",
+
+                  minHeight:
+                    isCompact
+                      ? 58
+                      : 52,
+
+                  borderRadius:
+                    12,
+
+                  border:
+                    "none",
+
+                  background:
+                    selectedOperationalPosition
+                      ? "#16a34a"
+                      : "#94a3b8",
+
+                  color:
+                    "white",
+
+                  fontSize:
+                    isCompact
+                      ? "1rem"
+                      : "0.95rem",
+
+                  fontWeight:
+                    900,
+
+                  cursor:
+                    selectedOperationalPosition
+                      ? "pointer"
+                      : "not-allowed",
+
+                  boxShadow:
+                    selectedOperationalPosition
+                      ? "0 8px 20px rgba(22,163,74,0.22)"
+                      : "none",
+                }}
+              >
+                Start Shift as{" "}
+                {selectedOperationalPosition
+                  ? getOperationalPositionLabel(
+                      selectedOperationalPosition
+                    )
+                  : "Selected Position"}
+              </button>
+
+              <button
+                type="button"
+
+                onClick={
+                  goBackToCredentials
+                }
+
+                style={{
+                  width:
+                    "100%",
+
+                  minHeight:
+                    42,
+
+                  marginTop:
+                    8,
+
+                  borderRadius:
+                    10,
+
+                  border:
+                    "1px solid #cbd5e1",
+
+                  background:
+                    "white",
+
+                  color:
+                    "#475569",
+
+                  fontWeight:
+                    800,
+
+                  cursor:
+                    "pointer",
+                }}
+              >
+                Back
+              </button>
+            </>
           )}
 
-          {/* LOGIN BUTTON */}
-
-          <button
-            type="button"
-            onClick={handleLogin}
-            disabled={loading}
-            style={{
-              width: "100%",
-
-              minHeight: isCompact
-                ? 58
-                : 52,
-
-              borderRadius: 12,
-              border: "none",
-
-              background: loading
-                ? "#94a3b8"
-                : "#2563eb",
-
-              color: "white",
-
-              fontSize: isCompact
-                ? "1rem"
-                : "0.95rem",
-
-              fontWeight: 900,
-
-              cursor: loading
-                ? "wait"
-                : "pointer",
-
-              boxShadow: loading
-                ? "none"
-                : "0 8px 20px rgba(37,99,235,0.24)",
-
-              transition:
-                "transform 0.15s ease, background 0.15s ease",
-            }}
-          >
-            {loading
-              ? "Signing in..."
-              : "Sign In"}
-          </button>
-
-          {/* DEVICE TIP */}
-
           <div
             style={{
-              marginTop: 18,
-              padding: "10px 12px",
-              borderRadius: 10,
-              background: "#f8fafc",
-              border:
-                "1px solid #e2e8f0",
-              color: "#64748b",
-              fontSize: "0.75rem",
-              lineHeight: 1.5,
-              textAlign: "center",
-            }}
-          >
-            Use your assigned{" "}
-            <strong>username</strong> and{" "}
-            <strong>PIN</strong>.
-          </div>
+              marginTop:
+                22,
 
-          {/* OWNERSHIP */}
+              textAlign:
+                "center",
 
-          <div
-            style={{
-              marginTop: 22,
-              textAlign: "center",
-              color: "#94a3b8",
-              fontSize: "0.66rem",
-              lineHeight: 1.5,
+              color:
+                "#94a3b8",
+
+              fontSize:
+                "0.66rem",
+
+              lineHeight:
+                1.5,
             }}
           >
             Authorized operational use only.
             <br />
             System managed by{" "}
-            <strong>ANapoles Solutions</strong>
+            <strong>
+              ANapoles Solutions
+            </strong>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ErrorBox({
+  children,
+}) {
+  return (
+    <div
+      role="alert"
+
+      style={{
+        marginBottom:
+          16,
+
+        padding:
+          "11px 12px",
+
+        borderRadius:
+          10,
+
+        background:
+          "#fef2f2",
+
+        border:
+          "1px solid #fecaca",
+
+        color:
+          "#b91c1c",
+
+        fontSize:
+          "0.82rem",
+
+        fontWeight:
+          700,
+
+        lineHeight:
+          1.4,
+      }}
+    >
+      {children}
     </div>
   );
 }
