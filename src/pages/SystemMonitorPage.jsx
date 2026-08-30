@@ -9,20 +9,16 @@ import React, {
 import {
   collection,
   doc,
-  getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
   updateDoc,
   where,
 } from "firebase/firestore";
 
-import {
-  db,
-} from "../firebase";
-
-import SystemHealthCard from "../components/SystemHealthCard.jsx";
+import { db } from "../firebase";
 
 import {
   BLCS_VERSION,
@@ -41,19 +37,24 @@ const MODULES = [
   "BACKEND",
 ];
 
-function normalizeRole(
-  value
-) {
-  return String(
-    value || ""
-  )
+/* =========================
+   HELPERS
+========================= */
+
+function normalizeRole(value) {
+  return String(value || "")
     .trim()
     .toLowerCase();
 }
 
+function normalizeModule(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
 function getTodayKey() {
-  const now =
-    new Date();
+  const now = new Date();
 
   const year =
     now.getFullYear();
@@ -61,58 +62,111 @@ function getTodayKey() {
   const month =
     String(
       now.getMonth() + 1
-    ).padStart(
-      2,
-      "0"
-    );
+    ).padStart(2, "0");
 
   const day =
     String(
       now.getDate()
-    ).padStart(
-      2,
-      "0"
-    );
+    ).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
 }
 
-function formatTimestamp(
-  value
-) {
+function timestampToDate(value) {
   if (!value) {
-    return "-";
+    return null;
   }
 
   try {
-    const date =
-      value.toDate
-        ? value.toDate()
-        : new Date(
-            value
-          );
+    if (
+      typeof value.toDate ===
+      "function"
+    ) {
+      return value.toDate();
+    }
 
-    return date.toLocaleString();
+    if (
+      typeof value.seconds ===
+      "number"
+    ) {
+      return new Date(
+        value.seconds * 1000
+      );
+    }
+
+    const date =
+      new Date(value);
+
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return null;
+    }
+
+    return date;
   } catch {
-    return "-";
+    return null;
   }
 }
 
-function getPerformanceLabel(
-  milliseconds
-) {
+function formatTimestamp(value) {
+  const date =
+    timestampToDate(value);
+
+  if (!date) {
+    return "-";
+  }
+
+  return date.toLocaleString();
+}
+
+function isTodayTimestamp(value) {
+  const date =
+    timestampToDate(value);
+
+  if (!date) {
+    return false;
+  }
+
+  const now =
+    new Date();
+
+  return (
+    date.getFullYear() ===
+      now.getFullYear() &&
+    date.getMonth() ===
+      now.getMonth() &&
+    date.getDate() ===
+      now.getDate()
+  );
+}
+
+function safeNumber(value) {
+  const number =
+    Number(value);
+
+  return Number.isFinite(
+    number
+  )
+    ? number
+    : 0;
+}
+
+function getPerformanceLabel(milliseconds) {
   const value =
-    Number(
-      milliseconds ||
-        0
+    safeNumber(
+      milliseconds
     );
 
-  if (!value) {
+  if (value <= 0) {
     return {
       label:
         "No Data",
-      color:
-        "#64748b",
+
+      tone:
+        "neutral",
     };
   }
 
@@ -120,8 +174,9 @@ function getPerformanceLabel(
     return {
       label:
         "Fast",
-      color:
-        "#166534",
+
+      tone:
+        "good",
     };
   }
 
@@ -129,8 +184,9 @@ function getPerformanceLabel(
     return {
       label:
         "Normal",
-      color:
-        "#1d4ed8",
+
+      tone:
+        "blue",
     };
   }
 
@@ -138,18 +194,172 @@ function getPerformanceLabel(
     return {
       label:
         "Slow",
-      color:
-        "#92400e",
+
+      tone:
+        "warning",
     };
   }
 
   return {
     label:
       "Critical",
-    color:
-      "#991b1b",
+
+    tone:
+      "danger",
   };
 }
+
+function getModuleHealth(metric) {
+  if (!metric) {
+    return {
+      status:
+        "NO DATA",
+
+      tone:
+        "neutral",
+
+      successRate:
+        null,
+
+      total:
+        0,
+
+      success:
+        0,
+
+      warning:
+        0,
+
+      error:
+        0,
+
+      averageMs:
+        0,
+    };
+  }
+
+  const total =
+    safeNumber(
+      metric.totalActions
+    );
+
+  const success =
+    safeNumber(
+      metric.statusCounts
+        ?.SUCCESS
+    );
+
+  const warning =
+    safeNumber(
+      metric.statusCounts
+        ?.WARNING
+    );
+
+  const error =
+    safeNumber(
+      metric.statusCounts
+        ?.ERROR
+    );
+
+  const performanceSamples =
+    safeNumber(
+      metric.performanceSamples
+    );
+
+  const totalDurationMs =
+    safeNumber(
+      metric.totalDurationMs
+    );
+
+  const averageMs =
+    performanceSamples > 0
+      ? totalDurationMs /
+        performanceSamples
+      : 0;
+
+  if (total <= 0) {
+    return {
+      status:
+        "NO DATA",
+
+      tone:
+        "neutral",
+
+      successRate:
+        null,
+
+      total,
+      success,
+      warning,
+      error,
+      averageMs,
+    };
+  }
+
+  const successRate =
+    (success / total) *
+    100;
+
+  if (
+    error > 0 ||
+    successRate < 80
+  ) {
+    return {
+      status:
+        "ATTENTION",
+
+      tone:
+        "danger",
+
+      successRate,
+      total,
+      success,
+      warning,
+      error,
+      averageMs,
+    };
+  }
+
+  if (
+    warning > 0 ||
+    successRate < 95 ||
+    averageMs >= 4000
+  ) {
+    return {
+      status:
+        "WARNING",
+
+      tone:
+        "warning",
+
+      successRate,
+      total,
+      success,
+      warning,
+      error,
+      averageMs,
+    };
+  }
+
+  return {
+    status:
+      "HEALTHY",
+
+    tone:
+      "good",
+
+    successRate,
+    total,
+    success,
+    warning,
+    error,
+    averageMs,
+  };
+}
+
+/* =========================
+   PAGE
+========================= */
 
 export default function SystemMonitorPage({
   user,
@@ -180,9 +390,24 @@ export default function SystemMonitorPage({
   ] = useState(null);
 
   const [
-    loading,
-    setLoading,
+    loadingMetrics,
+    setLoadingMetrics,
   ] = useState(true);
+
+  const [
+    loadingIncidents,
+    setLoadingIncidents,
+  ] = useState(true);
+
+  const [
+    loadingPresence,
+    setLoadingPresence,
+  ] = useState(true);
+
+  const [
+    resolvingIncident,
+    setResolvingIncident,
+  ] = useState(false);
 
   const today =
     useMemo(
@@ -196,12 +421,17 @@ export default function SystemMonitorPage({
   ========================= */
 
   useEffect(() => {
+    setLoadingMetrics(
+      true
+    );
+
     const metricsQuery =
       query(
         collection(
           db,
           "systemMetricsDaily"
         ),
+
         where(
           "date",
           "==",
@@ -213,36 +443,37 @@ export default function SystemMonitorPage({
       onSnapshot(
         metricsQuery,
 
-        (
-          snapshot
-        ) => {
-          setMetrics(
+        (snapshot) => {
+          const rows =
             snapshot.docs.map(
-              (
-                document
-              ) => ({
+              (document) => ({
                 id:
                   document.id,
 
                 ...document.data(),
               })
-            )
+            );
+
+          setMetrics(
+            rows
           );
 
-          setLoading(
+          setLoadingMetrics(
             false
           );
         },
 
-        (
-          error
-        ) => {
+        (error) => {
           console.error(
             "System metrics error:",
             error
           );
 
-          setLoading(
+          setMetrics(
+            []
+          );
+
+          setLoadingMetrics(
             false
           );
         }
@@ -250,13 +481,19 @@ export default function SystemMonitorPage({
 
     return () =>
       unsubscribe();
-  }, [today]);
+  }, [
+    today,
+  ]);
 
   /* =========================
      INCIDENTS
   ========================= */
 
   useEffect(() => {
+    setLoadingIncidents(
+      true
+    );
+
     const incidentsQuery =
       query(
         collection(
@@ -276,29 +513,38 @@ export default function SystemMonitorPage({
       onSnapshot(
         incidentsQuery,
 
-        (
-          snapshot
-        ) => {
-          setIncidents(
+        (snapshot) => {
+          const rows =
             snapshot.docs.map(
-              (
-                document
-              ) => ({
+              (document) => ({
                 id:
                   document.id,
 
                 ...document.data(),
               })
-            )
+            );
+
+          setIncidents(
+            rows
+          );
+
+          setLoadingIncidents(
+            false
           );
         },
 
-        (
-          error
-        ) => {
+        (error) => {
           console.error(
             "System incidents error:",
             error
+          );
+
+          setIncidents(
+            []
+          );
+
+          setLoadingIncidents(
+            false
           );
         }
       );
@@ -312,6 +558,10 @@ export default function SystemMonitorPage({
   ========================= */
 
   useEffect(() => {
+    setLoadingPresence(
+      true
+    );
+
     const unsubscribe =
       onSnapshot(
         collection(
@@ -319,29 +569,38 @@ export default function SystemMonitorPage({
           "systemPresence"
         ),
 
-        (
-          snapshot
-        ) => {
-          setPresence(
+        (snapshot) => {
+          const rows =
             snapshot.docs.map(
-              (
-                document
-              ) => ({
+              (document) => ({
                 id:
                   document.id,
 
                 ...document.data(),
               })
-            )
+            );
+
+          setPresence(
+            rows
+          );
+
+          setLoadingPresence(
+            false
           );
         },
 
-        (
-          error
-        ) => {
+        (error) => {
           console.error(
             "Presence error:",
             error
+          );
+
+          setPresence(
+            []
+          );
+
+          setLoadingPresence(
+            false
           );
         }
       );
@@ -350,93 +609,103 @@ export default function SystemMonitorPage({
       unsubscribe();
   }, []);
 
+  /* =========================
+     METRICS BY MODULE
+  ========================= */
+
   const metricsByModule =
     useMemo(() => {
       const map =
         new Map();
 
       metrics.forEach(
-        (
-          metric
-        ) => {
+        (metric) => {
+          const module =
+            normalizeModule(
+              metric.module
+            );
+
+          if (!module) {
+            return;
+          }
+
           map.set(
-            metric.module,
+            module,
             metric
           );
         }
       );
 
       return map;
-    }, [metrics]);
+    }, [
+      metrics,
+    ]);
+
+  /* =========================
+     OVERALL
+  ========================= */
 
   const overall =
     useMemo(() => {
       let total = 0;
+
       let success = 0;
+
       let warning = 0;
+
       let errors = 0;
 
       let duration = 0;
+
       let performanceSamples =
         0;
 
       metrics.forEach(
-        (
-          metric
-        ) => {
+        (metric) => {
           total +=
-            Number(
-              metric.totalActions ||
-                0
+            safeNumber(
+              metric.totalActions
             );
 
           success +=
-            Number(
-              metric
-                .statusCounts
-                ?.SUCCESS ||
-                0
+            safeNumber(
+              metric.statusCounts
+                ?.SUCCESS
             );
 
           warning +=
-            Number(
-              metric
-                .statusCounts
-                ?.WARNING ||
-                0
+            safeNumber(
+              metric.statusCounts
+                ?.WARNING
             );
 
           errors +=
-            Number(
-              metric
-                .statusCounts
-                ?.ERROR ||
-                0
+            safeNumber(
+              metric.statusCounts
+                ?.ERROR
             );
 
           duration +=
-            Number(
-              metric.totalDurationMs ||
-                0
+            safeNumber(
+              metric.totalDurationMs
             );
 
           performanceSamples +=
-            Number(
-              metric.performanceSamples ||
-                0
+            safeNumber(
+              metric.performanceSamples
             );
         }
       );
 
       const successRate =
-        total
+        total > 0
           ? (success /
               total) *
             100
-          : 100;
+          : null;
 
       const averageMs =
-        performanceSamples
+        performanceSamples > 0
           ? duration /
             performanceSamples
           : 0;
@@ -448,47 +717,251 @@ export default function SystemMonitorPage({
         errors,
         successRate,
         averageMs,
+        performanceSamples,
       };
-    }, [metrics]);
+    }, [
+      metrics,
+    ]);
+
+  /* =========================
+     INCIDENT SUMMARY
+  ========================= */
+
+  const todayIncidents =
+    useMemo(() => {
+      return incidents.filter(
+        (incident) =>
+          isTodayTimestamp(
+            incident.createdAt
+          )
+      );
+    }, [
+      incidents,
+    ]);
+
+  const unresolvedIncidents =
+    useMemo(() => {
+      return incidents.filter(
+        (incident) =>
+          incident.resolved !==
+          true
+      );
+    }, [
+      incidents,
+    ]);
+
+  const unresolvedToday =
+    useMemo(() => {
+      return todayIncidents.filter(
+        (incident) =>
+          incident.resolved !==
+          true
+      );
+    }, [
+      todayIncidents,
+    ]);
+
+  const criticalToday =
+    useMemo(() => {
+      return todayIncidents.filter(
+        (incident) => {
+          const severity =
+            String(
+              incident.severity ||
+                ""
+            ).toUpperCase();
+
+          return (
+            severity ===
+              "HIGH" ||
+            severity ===
+              "CRITICAL"
+          );
+        }
+      );
+    }, [
+      todayIncidents,
+    ]);
+
+  /* =========================
+     ACTIVE USERS
+  ========================= */
 
   const activeUsers =
     useMemo(() => {
-      return presence.filter(
-        (
-          item
-        ) =>
-          isPresenceOnline(
-            item.lastSeenAt
-          )
-      );
-    }, [presence]);
+      return presence
+        .filter(
+          (item) =>
+            isPresenceOnline(
+              item.lastSeenAt
+            )
+        )
+        .sort(
+          (a, b) => {
+            const timeA =
+              timestampToDate(
+                a.lastSeenAt
+              )?.getTime() ||
+              0;
+
+            const timeB =
+              timestampToDate(
+                b.lastSeenAt
+              )?.getTime() ||
+              0;
+
+            return (
+              timeB -
+              timeA
+            );
+          }
+        );
+    }, [
+      presence,
+    ]);
 
   const outdatedUsers =
     useMemo(() => {
       return activeUsers.filter(
-        (
-          item
-        ) =>
+        (item) =>
           String(
             item.appVersion ||
               ""
           ) !==
-          BLCS_VERSION
+          String(
+            BLCS_VERSION
+          )
       );
     }, [
       activeUsers,
     ]);
+
+  /* =========================
+     MODULE COVERAGE
+  ========================= */
+
+  const modulesWithData =
+    useMemo(() => {
+      return MODULES.filter(
+        (module) => {
+          const metric =
+            metricsByModule.get(
+              module
+            );
+
+          return (
+            safeNumber(
+              metric?.totalActions
+            ) > 0
+          );
+        }
+      ).length;
+    }, [
+      metricsByModule,
+    ]);
+
+  const modulesWithoutData =
+    MODULES.length -
+    modulesWithData;
+
+  /* =========================
+     OVERALL DISPLAY
+  ========================= */
 
   const performance =
     getPerformanceLabel(
       overall.averageMs
     );
 
+  const overallHealth =
+    useMemo(() => {
+      if (
+        overall.total ===
+        0
+      ) {
+        return {
+          label:
+            "NO DATA",
+
+          message:
+            "No monitored activity has been recorded today.",
+
+          color:
+            "#cbd5e1",
+        };
+      }
+
+      if (
+        overall.errors > 0 ||
+        criticalToday.length >
+          0
+      ) {
+        return {
+          label:
+            `${overall.successRate.toFixed(
+              1
+            )}%`,
+
+          message:
+            `${overall.errors} error(s) and ${criticalToday.length} high/critical incident(s) detected today.`,
+
+          color:
+            "#fca5a5",
+        };
+      }
+
+      if (
+        overall.warning > 0
+      ) {
+        return {
+          label:
+            `${overall.successRate.toFixed(
+              1
+            )}%`,
+
+          message:
+            `${overall.warning} warning(s) detected today.`,
+
+          color:
+            "#fde68a",
+        };
+      }
+
+      return {
+        label:
+          `${overall.successRate.toFixed(
+            1
+          )}%`,
+
+        message:
+          "System operating normally based on recorded activity.",
+
+        color:
+          "#86efac",
+      };
+    }, [
+      overall,
+      criticalToday.length,
+    ]);
+
+  /* =========================
+     RESOLVE INCIDENT
+  ========================= */
+
   const markResolved =
-    async (
-      incident
-    ) => {
+    async (incident) => {
+      if (
+        !incident?.id ||
+        resolvingIncident
+      ) {
+        return;
+      }
+
       try {
+        setResolvingIncident(
+          true
+        );
+
         await updateDoc(
           doc(
             db,
@@ -498,6 +971,28 @@ export default function SystemMonitorPage({
           {
             resolved:
               true,
+
+            resolvedAt:
+              serverTimestamp(),
+
+            resolvedBy: {
+              userId:
+                user?.id ||
+                null,
+
+              username:
+                user?.username ||
+                null,
+
+              fullName:
+                user?.fullName ||
+                user?.username ||
+                null,
+
+              role:
+                user?.role ||
+                null,
+            },
           }
         );
 
@@ -508,14 +1003,23 @@ export default function SystemMonitorPage({
         error
       ) {
         console.error(
+          "Resolve incident error:",
           error
         );
 
         window.alert(
           "Unable to update incident."
         );
+      } finally {
+        setResolvingIncident(
+          false
+        );
       }
     };
+
+  /* =========================
+     SECURITY
+  ========================= */
 
   if (
     role !==
@@ -548,6 +1052,10 @@ export default function SystemMonitorPage({
     );
   }
 
+  /* =========================
+     UI
+  ========================= */
+
   return (
     <div
       style={{
@@ -558,6 +1066,8 @@ export default function SystemMonitorPage({
           14,
       }}
     >
+      {/* HEADER */}
+
       <section
         style={{
           background:
@@ -609,10 +1119,45 @@ export default function SystemMonitorPage({
               "#64748b",
           }}
         >
-          Operational health, performance,
-          activity and incident monitoring.
+          Real-time monitoring of BLCS activity,
+          performance, users, modules and incidents.
         </p>
+
+        <div
+          style={{
+            marginTop:
+              9,
+
+            display:
+              "inline-flex",
+
+            padding:
+              "5px 9px",
+
+            borderRadius:
+              999,
+
+            background:
+              "#f8fafc",
+
+            border:
+              "1px solid #e2e8f0",
+
+            color:
+              "#475569",
+
+            fontSize:
+              "0.73rem",
+
+            fontWeight:
+              800,
+          }}
+        >
+          BLCS Version {BLCS_VERSION} · {today}
+        </div>
       </section>
+
+      {/* OVERALL HEALTH */}
 
       <section
         style={{
@@ -655,6 +1200,9 @@ export default function SystemMonitorPage({
 
                 fontWeight:
                   900,
+
+                letterSpacing:
+                  "0.06em",
               }}
             >
               OVERALL HEALTH
@@ -670,12 +1218,14 @@ export default function SystemMonitorPage({
 
                 fontWeight:
                   900,
+
+                color:
+                  overallHealth.color,
               }}
             >
-              {overall.successRate.toFixed(
-                1
-              )}
-              %
+              {
+                overallHealth.label
+              }
             </div>
 
             <div
@@ -685,12 +1235,14 @@ export default function SystemMonitorPage({
 
                 marginTop:
                   3,
+
+                maxWidth:
+                  520,
               }}
             >
-              {overall.errors ===
-              0
-                ? "System operating normally"
-                : `${overall.errors} error(s) detected today`}
+              {
+                overallHealth.message
+              }
             </div>
           </div>
 
@@ -700,7 +1252,7 @@ export default function SystemMonitorPage({
                 "grid",
 
               gridTemplateColumns:
-                "repeat(3, minmax(90px,1fr))",
+                "repeat(3, minmax(90px, 1fr))",
 
               gap:
                 8,
@@ -709,14 +1261,17 @@ export default function SystemMonitorPage({
             <TopStat
               label="Active Users"
               value={
-                activeUsers.length
+                loadingPresence
+                  ? "..."
+                  : activeUsers.length
               }
             />
 
             <TopStat
               label="Response"
               value={
-                overall.averageMs
+                overall.averageMs >
+                0
                   ? `${(
                       overall.averageMs /
                       1000
@@ -735,7 +1290,147 @@ export default function SystemMonitorPage({
             />
           </div>
         </div>
+
+        <div
+          style={{
+            marginTop:
+              14,
+
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(110px, 1fr))",
+
+            gap:
+              8,
+          }}
+        >
+          <DarkInfoBox
+            label="Actions"
+            value={
+              overall.total
+            }
+          />
+
+          <DarkInfoBox
+            label="Success"
+            value={
+              overall.success
+            }
+          />
+
+          <DarkInfoBox
+            label="Warnings"
+            value={
+              overall.warning
+            }
+          />
+
+          <DarkInfoBox
+            label="Errors"
+            value={
+              overall.errors
+            }
+          />
+
+          <DarkInfoBox
+            label="Unresolved"
+            value={
+              unresolvedToday.length
+            }
+          />
+        </div>
       </section>
+
+      {/* COVERAGE */}
+
+      <section
+        style={{
+          background:
+            "white",
+
+          border:
+            "1px solid #e5e7eb",
+
+          borderRadius:
+            14,
+
+          padding:
+            14,
+        }}
+      >
+        <h3
+          style={{
+            margin:
+              0,
+          }}
+        >
+          Monitoring Coverage
+        </h3>
+
+        <p
+          style={{
+            margin:
+              "5px 0 0",
+
+            color:
+              "#64748b",
+
+            fontSize:
+              "0.82rem",
+          }}
+        >
+          A module with no recorded activity is shown as
+          NO DATA instead of being considered healthy.
+        </p>
+
+        <div
+          style={{
+            marginTop:
+              12,
+
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(150px, 1fr))",
+
+            gap:
+              8,
+          }}
+        >
+          <InfoBox
+            label="Modules"
+            value={
+              MODULES.length
+            }
+          />
+
+          <InfoBox
+            label="Reporting"
+            value={
+              modulesWithData
+            }
+          />
+
+          <InfoBox
+            label="No Data"
+            value={
+              modulesWithoutData
+            }
+          />
+
+          <InfoBox
+            label="Metrics Today"
+            value={
+              metrics.length
+            }
+          />
+        </div>
+      </section>
+
+      {/* MODULE HEALTH */}
 
       <section
         style={{
@@ -761,8 +1456,13 @@ export default function SystemMonitorPage({
           Module Health
         </h3>
 
-        {loading ? (
-          <p>
+        {loadingMetrics ? (
+          <p
+            style={{
+              color:
+                "#64748b",
+            }}
+          >
             Loading system metrics...
           </p>
         ) : (
@@ -775,17 +1475,15 @@ export default function SystemMonitorPage({
                 "grid",
 
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(190px, 1fr))",
+                "repeat(auto-fit, minmax(200px, 1fr))",
 
               gap:
                 10,
             }}
           >
             {MODULES.map(
-              (
-                module
-              ) => (
-                <SystemHealthCard
+              (module) => (
+                <ModuleHealthCard
                   key={
                     module
                   }
@@ -794,11 +1492,11 @@ export default function SystemMonitorPage({
                     module
                   }
 
-                  metrics={
+                  metric={
                     metricsByModule.get(
                       module
                     ) ||
-                    {}
+                    null
                   }
                 />
               )
@@ -806,6 +1504,8 @@ export default function SystemMonitorPage({
           </div>
         )}
       </section>
+
+      {/* USERS */}
 
       <section
         style={{
@@ -840,7 +1540,7 @@ export default function SystemMonitorPage({
               "grid",
 
             gridTemplateColumns:
-              "repeat(auto-fit, minmax(150px,1fr))",
+              "repeat(auto-fit, minmax(150px, 1fr))",
 
             gap:
               8,
@@ -849,14 +1549,18 @@ export default function SystemMonitorPage({
           <InfoBox
             label="Active Now"
             value={
-              activeUsers.length
+              loadingPresence
+                ? "..."
+                : activeUsers.length
             }
           />
 
           <InfoBox
             label="Registered Presence"
             value={
-              presence.length
+              loadingPresence
+                ? "..."
+                : presence.length
             }
           />
 
@@ -870,13 +1574,52 @@ export default function SystemMonitorPage({
           <InfoBox
             label="Outdated Active"
             value={
-              outdatedUsers.length
+              loadingPresence
+                ? "..."
+                : outdatedUsers.length
             }
           />
         </div>
 
-        {activeUsers.length >
-          0 && (
+        {loadingPresence ? (
+          <p
+            style={{
+              color:
+                "#64748b",
+
+              marginTop:
+                12,
+            }}
+          >
+            Loading active users...
+          </p>
+        ) : activeUsers.length ===
+          0 ? (
+          <div
+            style={{
+              marginTop:
+                12,
+
+              padding:
+                12,
+
+              borderRadius:
+                10,
+
+              background:
+                "#f8fafc",
+
+              border:
+                "1px solid #e2e8f0",
+
+              color:
+                "#64748b",
+            }}
+          >
+            No active users detected during the current
+            online window.
+          </div>
+        ) : (
           <div
             style={{
               marginTop:
@@ -910,6 +1653,10 @@ export default function SystemMonitorPage({
                   </th>
 
                   <th style={th}>
+                    Role
+                  </th>
+
+                  <th style={th}>
                     Version
                   </th>
 
@@ -921,9 +1668,7 @@ export default function SystemMonitorPage({
 
               <tbody>
                 {activeUsers.map(
-                  (
-                    item
-                  ) => (
+                  (item) => (
                     <tr
                       key={
                         item.id
@@ -932,8 +1677,26 @@ export default function SystemMonitorPage({
                       <td style={td}>
                         <strong>
                           {item.fullName ||
-                            item.username}
+                            item.username ||
+                            "-"}
                         </strong>
+
+                        {item.username && (
+                          <div
+                            style={{
+                              marginTop:
+                                2,
+
+                              color:
+                                "#94a3b8",
+
+                              fontSize:
+                                "0.7rem",
+                            }}
+                          >
+                            @{item.username}
+                          </div>
+                        )}
                       </td>
 
                       <td style={td}>
@@ -943,6 +1706,12 @@ export default function SystemMonitorPage({
 
                       <td style={td}>
                         {item.operationalPositionLabel ||
+                          item.operationalPosition ||
+                          "-"}
+                      </td>
+
+                      <td style={td}>
+                        {item.role ||
                           "-"}
                       </td>
 
@@ -950,8 +1719,13 @@ export default function SystemMonitorPage({
                         <span
                           style={{
                             color:
-                              item.appVersion ===
-                              BLCS_VERSION
+                              String(
+                                item.appVersion ||
+                                  ""
+                              ) ===
+                              String(
+                                BLCS_VERSION
+                              )
                                 ? "#166534"
                                 : "#991b1b",
 
@@ -978,6 +1752,8 @@ export default function SystemMonitorPage({
         )}
       </section>
 
+      {/* INCIDENT SUMMARY */}
+
       <section
         style={{
           background:
@@ -999,8 +1775,121 @@ export default function SystemMonitorPage({
               0,
           }}
         >
-          Recent Incidents
+          Incident Summary
         </h3>
+
+        <div
+          style={{
+            marginTop:
+              12,
+
+            display:
+              "grid",
+
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(150px, 1fr))",
+
+            gap:
+              8,
+          }}
+        >
+          <InfoBox
+            label="Today"
+            value={
+              loadingIncidents
+                ? "..."
+                : todayIncidents.length
+            }
+          />
+
+          <InfoBox
+            label="Unresolved Today"
+            value={
+              loadingIncidents
+                ? "..."
+                : unresolvedToday.length
+            }
+          />
+
+          <InfoBox
+            label="High / Critical"
+            value={
+              loadingIncidents
+                ? "..."
+                : criticalToday.length
+            }
+          />
+
+          <InfoBox
+            label="All Unresolved"
+            value={
+              loadingIncidents
+                ? "..."
+                : unresolvedIncidents.length
+            }
+          />
+        </div>
+      </section>
+
+      {/* RECENT INCIDENTS */}
+
+      <section
+        style={{
+          background:
+            "white",
+
+          border:
+            "1px solid #e5e7eb",
+
+          borderRadius:
+            14,
+
+          padding:
+            14,
+        }}
+      >
+        <div
+          style={{
+            display:
+              "flex",
+
+            justifyContent:
+              "space-between",
+
+            gap:
+              10,
+
+            alignItems:
+              "center",
+
+            flexWrap:
+              "wrap",
+          }}
+        >
+          <h3
+            style={{
+              margin:
+                0,
+            }}
+          >
+            Recent Incidents
+          </h3>
+
+          <span
+            style={{
+              color:
+                "#64748b",
+
+              fontSize:
+                "0.75rem",
+
+              fontWeight:
+                800,
+            }}
+          >
+            Last {incidents.length} records
+          </span>
+        </div>
 
         <div
           style={{
@@ -1014,8 +1903,20 @@ export default function SystemMonitorPage({
               7,
           }}
         >
-          {incidents.length ===
-          0 ? (
+          {loadingIncidents ? (
+            <div
+              style={{
+                color:
+                  "#64748b",
+
+                padding:
+                  10,
+              }}
+            >
+              Loading incidents...
+            </div>
+          ) : incidents.length ===
+            0 ? (
             <div
               style={{
                 color:
@@ -1029,108 +1930,190 @@ export default function SystemMonitorPage({
             </div>
           ) : (
             incidents.map(
-              (
-                incident
-              ) => (
-                <button
-                  key={
-                    incident.id
-                  }
+              (incident) => {
+                const severity =
+                  String(
+                    incident.severity ||
+                      "LOW"
+                  ).toUpperCase();
 
-                  type="button"
+                const status =
+                  String(
+                    incident.status ||
+                      "INFO"
+                  ).toUpperCase();
 
-                  onClick={() =>
-                    setSelectedIncident(
-                      incident
-                    )
-                  }
+                return (
+                  <button
+                    key={
+                      incident.id
+                    }
 
-                  style={{
-                    textAlign:
-                      "left",
+                    type="button"
 
-                    padding:
-                      10,
+                    onClick={() =>
+                      setSelectedIncident(
+                        incident
+                      )
+                    }
 
-                    borderRadius:
-                      10,
-
-                    border:
-                      "1px solid #e5e7eb",
-
-                    background:
-                      incident.resolved
-                        ? "#f8fafc"
-                        : "white",
-
-                    cursor:
-                      "pointer",
-                  }}
-                >
-                  <div
                     style={{
-                      display:
-                        "flex",
+                      textAlign:
+                        "left",
 
-                      justifyContent:
-                        "space-between",
-
-                      gap:
+                      padding:
                         10,
+
+                      borderRadius:
+                        10,
+
+                      border:
+                        incident.resolved
+                          ? "1px solid #e5e7eb"
+                          : status ===
+                              "ERROR"
+                            ? "1px solid #fca5a5"
+                            : "1px solid #fde68a",
+
+                      background:
+                        incident.resolved
+                          ? "#f8fafc"
+                          : status ===
+                              "ERROR"
+                            ? "#fff7f7"
+                            : "white",
+
+                      cursor:
+                        "pointer",
+
+                      opacity:
+                        incident.resolved
+                          ? 0.75
+                          : 1,
                     }}
                   >
-                    <strong>
-                      {incident.module ||
-                        "SYSTEM"}{" "}
-                      ·{" "}
-                      {incident.action ||
-                        "EVENT"}
-                    </strong>
-
-                    <span
+                    <div
                       style={{
-                        color:
-                          incident.status ===
-                          "ERROR"
-                            ? "#b91c1c"
-                            : "#92400e",
+                        display:
+                          "flex",
 
-                        fontWeight:
-                          900,
+                        justifyContent:
+                          "space-between",
+
+                        gap:
+                          10,
+
+                        flexWrap:
+                          "wrap",
                       }}
                     >
-                      {incident.status}
-                    </span>
-                  </div>
+                      <strong>
+                        {incident.module ||
+                          "SYSTEM"}{" "}
+                        ·{" "}
+                        {incident.action ||
+                          "EVENT"}
+                      </strong>
 
-                  <div
-                    style={{
-                      marginTop:
-                        4,
+                      <div
+                        style={{
+                          display:
+                            "flex",
 
-                      color:
-                        "#64748b",
+                          gap:
+                            6,
 
-                      fontSize:
-                        "0.78rem",
-                    }}
-                  >
-                    {incident.message ||
-                      "-"}{" "}
-                    ·{" "}
-                    {formatTimestamp(
-                      incident.createdAt
-                    )}
-                  </div>
-                </button>
-              )
+                          alignItems:
+                            "center",
+                        }}
+                      >
+                        <IncidentBadge
+                          value={
+                            severity
+                          }
+                          type="severity"
+                        />
+
+                        <IncidentBadge
+                          value={
+                            status
+                          }
+                          type="status"
+                        />
+
+                        {incident.resolved && (
+                          <span
+                            style={{
+                              color:
+                                "#166534",
+
+                              fontSize:
+                                "0.7rem",
+
+                              fontWeight:
+                                900,
+                            }}
+                          >
+                            RESOLVED
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop:
+                          4,
+
+                        color:
+                          "#64748b",
+
+                        fontSize:
+                          "0.78rem",
+                      }}
+                    >
+                      {incident.message ||
+                        "-"}
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop:
+                          4,
+
+                        color:
+                          "#94a3b8",
+
+                        fontSize:
+                          "0.7rem",
+                      }}
+                    >
+                      {formatTimestamp(
+                        incident.createdAt
+                      )}
+                    </div>
+                  </button>
+                );
+              }
             )
           )}
         </div>
       </section>
 
+      {/* INCIDENT MODAL */}
+
       {selectedIncident && (
         <div
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              setSelectedIncident(
+                null
+              );
+            }
+          }}
           style={{
             position:
               "fixed",
@@ -1139,7 +2122,7 @@ export default function SystemMonitorPage({
               0,
 
             background:
-              "rgba(15,23,42,0.6)",
+              "rgba(15,23,42,0.65)",
 
             display:
               "flex",
@@ -1163,7 +2146,7 @@ export default function SystemMonitorPage({
                 "100%",
 
               maxWidth:
-                520,
+                560,
 
               background:
                 "white",
@@ -1175,20 +2158,47 @@ export default function SystemMonitorPage({
                 18,
 
               maxHeight:
-                "85vh",
+                "88vh",
 
               overflow:
                 "auto",
+
+              boxShadow:
+                "0 25px 50px rgba(0,0,0,0.3)",
             }}
           >
-            <h3
+            <div
               style={{
-                margin:
-                  0,
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                gap:
+                  10,
+
+                alignItems:
+                  "center",
               }}
             >
-              Incident Details
-            </h3>
+              <h3
+                style={{
+                  margin:
+                    0,
+                }}
+              >
+                Incident Details
+              </h3>
+
+              <IncidentBadge
+                value={
+                  selectedIncident.status ||
+                  "INFO"
+                }
+                type="status"
+              />
+            </div>
 
             <IncidentLine
               label="Module"
@@ -1205,12 +2215,57 @@ export default function SystemMonitorPage({
             />
 
             <IncidentLine
+              label="Status"
+              value={
+                selectedIncident.status
+              }
+            />
+
+            <IncidentLine
+              label="Severity"
+              value={
+                selectedIncident.severity
+              }
+            />
+
+            <IncidentLine
+              label="Error Type"
+              value={
+                selectedIncident.errorType
+              }
+            />
+
+            <IncidentLine
+              label="Error Code"
+              value={
+                selectedIncident.errorCode
+              }
+            />
+
+            <IncidentLine
               label="User"
               value={
                 selectedIncident.user
                   ?.fullName ||
                 selectedIncident.user
                   ?.username
+              }
+            />
+
+            <IncidentLine
+              label="Position"
+              value={
+                selectedIncident.user
+                  ?.operationalPositionLabel ||
+                selectedIncident.user
+                  ?.operationalPosition
+              }
+            />
+
+            <IncidentLine
+              label="Page"
+              value={
+                selectedIncident.currentView
               }
             />
 
@@ -1230,56 +2285,177 @@ export default function SystemMonitorPage({
             />
 
             <IncidentLine
-              label="Error"
+              label="Duration"
+              value={
+                selectedIncident.durationMs
+                  ? `${selectedIncident.durationMs} ms`
+                  : null
+              }
+            />
+
+            <IncidentLine
+              label="Created"
+              value={
+                formatTimestamp(
+                  selectedIncident.createdAt
+                )
+              }
+            />
+
+            <IncidentLine
+              label="Error / Message"
               value={
                 selectedIncident.message
               }
             />
 
-            <div
-              style={{
-                marginTop:
-                  14,
-
-                padding:
-                  12,
-
-                borderRadius:
-                  12,
-
-                background:
-                  "#eff6ff",
-
-                color:
-                  "#1e40af",
-              }}
-            >
-              <strong>
-                {
-                  selectedIncident
-                    .suggestedAction
-                    ?.title
-                }
-              </strong>
-
+            {selectedIncident
+              .suggestedAction && (
               <div
                 style={{
                   marginTop:
-                    5,
+                    14,
+
+                  padding:
+                    12,
+
+                  borderRadius:
+                    12,
+
+                  background:
+                    "#eff6ff",
+
+                  border:
+                    "1px solid #bfdbfe",
+
+                  color:
+                    "#1e40af",
                 }}
               >
-                {
-                  selectedIncident
-                    .suggestedAction
-                    ?.recommendation
-                }
+                <div
+                  style={{
+                    color:
+                      "#1d4ed8",
+
+                    fontSize:
+                      "0.7rem",
+
+                    fontWeight:
+                      900,
+
+                    letterSpacing:
+                      "0.05em",
+                  }}
+                >
+                  SUGGESTED ACTION
+                </div>
+
+                <strong
+                  style={{
+                    display:
+                      "block",
+
+                    marginTop:
+                      4,
+                  }}
+                >
+                  {
+                    selectedIncident
+                      .suggestedAction
+                      ?.title
+                  }
+                </strong>
+
+                <div
+                  style={{
+                    marginTop:
+                      5,
+
+                    lineHeight:
+                      1.5,
+                  }}
+                >
+                  {
+                    selectedIncident
+                      .suggestedAction
+                      ?.recommendation
+                  }
+                </div>
               </div>
-            </div>
+            )}
+
+            {selectedIncident.resolved && (
+              <div
+                style={{
+                  marginTop:
+                    14,
+
+                  padding:
+                    10,
+
+                  borderRadius:
+                    10,
+
+                  background:
+                    "#f0fdf4",
+
+                  border:
+                    "1px solid #bbf7d0",
+
+                  color:
+                    "#166534",
+                }}
+              >
+                <strong>
+                  Resolved
+                </strong>
+
+                {selectedIncident
+                  .resolvedAt && (
+                  <div
+                    style={{
+                      marginTop:
+                        3,
+
+                      fontSize:
+                        "0.78rem",
+                    }}
+                  >
+                    {formatTimestamp(
+                      selectedIncident
+                        .resolvedAt
+                    )}
+                  </div>
+                )}
+
+                {selectedIncident
+                  .resolvedBy && (
+                  <div
+                    style={{
+                      marginTop:
+                        3,
+
+                      fontSize:
+                        "0.78rem",
+                    }}
+                  >
+                    By:{" "}
+                    {selectedIncident
+                      .resolvedBy
+                      ?.fullName ||
+                      selectedIncident
+                        .resolvedBy
+                        ?.username ||
+                      "-"}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div
               style={{
                 marginTop:
-                  15,
+                  16,
 
                 display:
                   "flex",
@@ -1289,26 +2465,89 @@ export default function SystemMonitorPage({
 
                 justifyContent:
                   "flex-end",
+
+                flexWrap:
+                  "wrap",
               }}
             >
               {!selectedIncident.resolved && (
                 <button
+                  type="button"
+
                   onClick={() =>
                     markResolved(
                       selectedIncident
                     )
                   }
+
+                  disabled={
+                    resolvingIncident
+                  }
+
+                  style={{
+                    padding:
+                      "9px 12px",
+
+                    borderRadius:
+                      10,
+
+                    border:
+                      "1px solid #16a34a",
+
+                    background:
+                      resolvingIncident
+                        ? "#86efac"
+                        : "#16a34a",
+
+                    color:
+                      "white",
+
+                    fontWeight:
+                      900,
+
+                    cursor:
+                      resolvingIncident
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
                 >
-                  Mark Resolved
+                  {resolvingIncident
+                    ? "Saving..."
+                    : "Mark Resolved"}
                 </button>
               )}
 
               <button
+                type="button"
+
                 onClick={() =>
                   setSelectedIncident(
                     null
                   )
                 }
+
+                style={{
+                  padding:
+                    "9px 12px",
+
+                  borderRadius:
+                    10,
+
+                  border:
+                    "1px solid #d1d5db",
+
+                  background:
+                    "white",
+
+                  color:
+                    "#334155",
+
+                  fontWeight:
+                    800,
+
+                  cursor:
+                    "pointer",
+                }}
               >
                 Close
               </button>
@@ -1316,6 +2555,347 @@ export default function SystemMonitorPage({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* =========================
+   MODULE HEALTH CARD
+========================= */
+
+function ModuleHealthCard({
+  title,
+  metric,
+}) {
+  const health =
+    getModuleHealth(
+      metric
+    );
+
+  const performance =
+    getPerformanceLabel(
+      health.averageMs
+    );
+
+  const tones = {
+    neutral: {
+      background:
+        "#f8fafc",
+
+      border:
+        "#cbd5e1",
+
+      color:
+        "#475569",
+    },
+
+    good: {
+      background:
+        "#f0fdf4",
+
+      border:
+        "#86efac",
+
+      color:
+        "#166534",
+    },
+
+    warning: {
+      background:
+        "#fffbeb",
+
+      border:
+        "#fde68a",
+
+      color:
+        "#92400e",
+    },
+
+    danger: {
+      background:
+        "#fef2f2",
+
+      border:
+        "#fca5a5",
+
+      color:
+        "#991b1b",
+    },
+  };
+
+  const tone =
+    tones[
+      health.tone
+    ] ||
+    tones.neutral;
+
+  return (
+    <div
+      style={{
+        border:
+          `1px solid ${tone.border}`,
+
+        background:
+          tone.background,
+
+        borderRadius:
+          12,
+
+        padding:
+          12,
+      }}
+    >
+      <div
+        style={{
+          display:
+            "flex",
+
+          justifyContent:
+            "space-between",
+
+          gap:
+            8,
+
+          alignItems:
+            "center",
+        }}
+      >
+        <strong
+          style={{
+            color:
+              "#0f172a",
+
+            fontSize:
+              "0.9rem",
+          }}
+        >
+          {title}
+        </strong>
+
+        <span
+          style={{
+            padding:
+              "4px 7px",
+
+            borderRadius:
+              999,
+
+            background:
+              "white",
+
+            border:
+              `1px solid ${tone.border}`,
+
+            color:
+              tone.color,
+
+            fontSize:
+              "0.65rem",
+
+            fontWeight:
+              900,
+          }}
+        >
+          {health.status}
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            10,
+
+          fontSize:
+            "1.45rem",
+
+          fontWeight:
+            900,
+
+          color:
+            tone.color,
+        }}
+      >
+        {health.successRate ===
+        null
+          ? "—"
+          : `${health.successRate.toFixed(
+              1
+            )}%`}
+      </div>
+
+      <div
+        style={{
+          color:
+            "#64748b",
+
+          fontSize:
+            "0.7rem",
+
+          fontWeight:
+            800,
+        }}
+      >
+        SUCCESS RATE
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            10,
+
+          display:
+            "grid",
+
+          gridTemplateColumns:
+            "repeat(3, minmax(0,1fr))",
+
+          gap:
+            5,
+        }}
+      >
+        <MiniMetric
+          label="OK"
+          value={
+            health.success
+          }
+        />
+
+        <MiniMetric
+          label="Warn"
+          value={
+            health.warning
+          }
+        />
+
+        <MiniMetric
+          label="Error"
+          value={
+            health.error
+          }
+        />
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            9,
+
+          paddingTop:
+            8,
+
+          borderTop:
+            "1px solid rgba(100,116,139,0.18)",
+
+          display:
+            "flex",
+
+          justifyContent:
+            "space-between",
+
+          gap:
+            8,
+
+          color:
+            "#64748b",
+
+          fontSize:
+            "0.7rem",
+        }}
+      >
+        <span>
+          Actions:{" "}
+          <strong>
+            {health.total}
+          </strong>
+        </span>
+
+        <span>
+          {health.averageMs >
+          0
+            ? `${(
+                health.averageMs /
+                1000
+              ).toFixed(
+                2
+              )}s`
+            : performance.label}
+        </span>
+      </div>
+
+      {metric
+        ?.lastActivityAt && (
+        <div
+          style={{
+            marginTop:
+              6,
+
+            color:
+              "#94a3b8",
+
+            fontSize:
+              "0.65rem",
+          }}
+        >
+          Last activity:{" "}
+          {formatTimestamp(
+            metric.lastActivityAt
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================
+   UI HELPERS
+========================= */
+
+function MiniMetric({
+  label,
+  value,
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          6,
+
+        borderRadius:
+          8,
+
+        background:
+          "rgba(255,255,255,0.75)",
+
+        textAlign:
+          "center",
+      }}
+    >
+      <div
+        style={{
+          fontWeight:
+            900,
+
+          fontSize:
+            "0.9rem",
+        }}
+      >
+        {value}
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            1,
+
+          color:
+            "#64748b",
+
+          fontSize:
+            "0.6rem",
+        }}
+      >
+        {label}
+      </div>
     </div>
   );
 }
@@ -1338,6 +2918,9 @@ function TopStat({
 
         textAlign:
           "center",
+
+        minWidth:
+          90,
       }}
     >
       <div
@@ -1365,6 +2948,59 @@ function TopStat({
         }}
       >
         {label}
+      </div>
+    </div>
+  );
+}
+
+function DarkInfoBox({
+  label,
+  value,
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          9,
+
+        borderRadius:
+          10,
+
+        background:
+          "#1e293b",
+
+        border:
+          "1px solid #334155",
+      }}
+    >
+      <div
+        style={{
+          color:
+            "#94a3b8",
+
+          fontSize:
+            "0.65rem",
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            2,
+
+          color:
+            "white",
+
+          fontSize:
+            "1.1rem",
+
+          fontWeight:
+            900,
+        }}
+      >
+        {value}
       </div>
     </div>
   );
@@ -1420,11 +3056,115 @@ function InfoBox({
   );
 }
 
+function IncidentBadge({
+  value,
+  type,
+}) {
+  const normalized =
+    String(
+      value ||
+        "INFO"
+    ).toUpperCase();
+
+  let background =
+    "#f1f5f9";
+
+  let color =
+    "#475569";
+
+  let border =
+    "#cbd5e1";
+
+  if (
+    normalized ===
+      "ERROR" ||
+    normalized ===
+      "HIGH" ||
+    normalized ===
+      "CRITICAL"
+  ) {
+    background =
+      "#fee2e2";
+
+    color =
+      "#991b1b";
+
+    border =
+      "#fca5a5";
+  } else if (
+    normalized ===
+      "WARNING" ||
+    normalized ===
+      "MEDIUM"
+  ) {
+    background =
+      "#fef3c7";
+
+    color =
+      "#92400e";
+
+    border =
+      "#fde68a";
+  } else if (
+    normalized ===
+      "SUCCESS"
+  ) {
+    background =
+      "#dcfce7";
+
+    color =
+      "#166534";
+
+    border =
+      "#86efac";
+  }
+
+  return (
+    <span
+      title={
+        type ===
+        "severity"
+          ? "Severity"
+          : "Status"
+      }
+      style={{
+        padding:
+          "3px 7px",
+
+        borderRadius:
+          999,
+
+        background,
+
+        border:
+          `1px solid ${border}`,
+
+        color,
+
+        fontSize:
+          "0.63rem",
+
+        fontWeight:
+          900,
+      }}
+    >
+      {normalized}
+    </span>
+  );
+}
+
 function IncidentLine({
   label,
   value,
 }) {
-  if (!value) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined ||
+    value ===
+      ""
+  ) {
     return null;
   }
 
@@ -1454,13 +3194,22 @@ function IncidentLine({
 
           overflowWrap:
             "anywhere",
+
+          whiteSpace:
+            "pre-wrap",
         }}
       >
-        {value}
+        {String(
+          value
+        )}
       </div>
     </div>
   );
 }
+
+/* =========================
+   TABLE
+========================= */
 
 const th = {
   textAlign:
@@ -1477,6 +3226,9 @@ const th = {
 
   borderBottom:
     "1px solid #e5e7eb",
+
+  whiteSpace:
+    "nowrap",
 };
 
 const td = {
@@ -1488,4 +3240,7 @@ const td = {
 
   fontSize:
     "0.8rem",
+
+  verticalAlign:
+    "middle",
 };
