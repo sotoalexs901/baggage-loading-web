@@ -19,6 +19,8 @@ import PrivacyNoticePage, {
 import PrivacyAcknowledgementsPage from "./pages/PrivacyAcknowledgementsPage.jsx";
 import MonthlyCleanupPage from "./pages/MonthlyCleanupPage.jsx";
 
+import VersionUpdateNotice from "./components/VersionUpdateNotice.jsx";
+
 import DashboardPage from "./pages/DashboardPage.jsx";
 import FlightsPage from "./pages/FlightsPage.jsx";
 import GateControllerPage from "./pages/GateControllerPage.jsx";
@@ -866,6 +868,8 @@ export default function App() {
         padding: 16,
       }}
     >
+      <VersionUpdateNotice />
+
       <header
         className="app-header"
         style={{
