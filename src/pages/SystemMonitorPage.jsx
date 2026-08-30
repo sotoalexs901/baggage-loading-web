@@ -1161,6 +1161,58 @@ export default function SystemMonitorPage({
       }
     };
 
+  const deleteIncident =
+    async (incident) => {
+      if (
+        !incident?.id ||
+        resolvingIncident
+      ) {
+        return;
+      }
+
+      const confirmed =
+        window.confirm(
+          "Delete this incident permanently?"
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      try {
+        setResolvingIncident(
+          true
+        );
+
+        await deleteDoc(
+          doc(
+            db,
+            "systemIncidents",
+            incident.id
+          )
+        );
+
+        setSelectedIncident(
+          null
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Delete incident error:",
+          error
+        );
+
+        window.alert(
+          "Unable to delete incident."
+        );
+      } finally {
+        setResolvingIncident(
+          false
+        );
+      }
+    };
+
   /* =========================
      SECURITY
   ========================= */
@@ -2674,7 +2726,7 @@ export default function SystemMonitorPage({
                   "wrap",
               }}
             >
-              {!selectedIncident.resolved && (
+              {!selectedIncident.resolved ? (
                 <button
                   type="button"
 
@@ -2718,6 +2770,51 @@ export default function SystemMonitorPage({
                   {resolvingIncident
                     ? "Deleting..."
                     : "Resolve & Delete"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+
+                  onClick={() =>
+                    deleteIncident(
+                      selectedIncident
+                    )
+                  }
+
+                  disabled={
+                    resolvingIncident
+                  }
+
+                  style={{
+                    padding:
+                      "9px 12px",
+
+                    borderRadius:
+                      10,
+
+                    border:
+                      "1px solid #dc2626",
+
+                    background:
+                      resolvingIncident
+                        ? "#fca5a5"
+                        : "#dc2626",
+
+                    color:
+                      "white",
+
+                    fontWeight:
+                      900,
+
+                    cursor:
+                      resolvingIncident
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                >
+                  {resolvingIncident
+                    ? "Deleting..."
+                    : "Delete Incident"}
                 </button>
               )}
 
