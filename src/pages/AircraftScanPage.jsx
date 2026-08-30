@@ -205,30 +205,30 @@ function getLocationIcon(value) {
     normalizeReceivingLocation(value);
 
   if (location === "BAGROOM") {
-    return "🛄";
+    return "\uD83D\uDEC4";
   }
 
   if (location === "OVERSIZE") {
-    return "📦";
+    return "\uD83D\uDCE6";
   }
 
   if (location === "GATE") {
-    return "🚪";
+    return "\uD83D\uDEAA";
   }
 
   if (location === "COUNTER") {
-    return "🎫";
+    return "\uD83C\uDFAB";
   }
 
   if (location === "AIRCRAFT") {
-    return "✈️";
+    return "\u2708\uFE0F";
   }
 
   if (location === "OFFLOADED") {
-    return "⬇️";
+    return "\u2B07\uFE0F";
   }
 
-  return "⚠️";
+  return "\u26A0\uFE0F";
 }
 
 function isValidReceivingLocation(
@@ -417,8 +417,8 @@ function getPreviousLocationDetails(
     ) === "BAGROOM"
   ) {
     return previousLocation.cartNumber
-      ? `${label} · Cart ${previousLocation.cartNumber}`
-      : `${label} · No Cart`;
+      ? `${label} \u00B7 Cart ${previousLocation.cartNumber}`
+      : `${label} \u00B7 No Cart`;
   }
 
   return label;
@@ -1164,7 +1164,7 @@ export default function AircraftScanPage({
           ok: false,
 
           message:
-            `❌ Bag tag belongs to a different flight/date.\n\n` +
+            `\u274C Bag tag belongs to a different flight/date.\n\n` +
             `Current: ${
               flight?.flightNumber ||
               flightId
@@ -1214,7 +1214,7 @@ export default function AircraftScanPage({
           ok: false,
 
           message:
-            `❌ Bag tag NOT found in this flight manifest.\n\n` +
+            `\u274C Bag tag NOT found in this flight manifest.\n\n` +
             `Flight: ${
               flight?.flightNumber ||
               flightId
@@ -1560,8 +1560,8 @@ export default function AircraftScanPage({
 
           message:
             type === "AIRCRAFT_LOAD"
-              ? `Bag loaded on aircraft · ${bagTypeLabel}`
-              : `Bag offloaded from aircraft · ${bagTypeLabel}`,
+              ? `Bag loaded on aircraft \u00B7 ${bagTypeLabel}`
+              : `Bag offloaded from aircraft \u00B7 ${bagTypeLabel}`,
 
           tag,
 
@@ -1669,7 +1669,7 @@ export default function AircraftScanPage({
 
         popup(
           "Duplicate scan",
-          `⚠️ Already scanned in Aircraft.\n\n` +
+          `\u26A0\uFE0F Already scanned in Aircraft.\n\n` +
             `Bag Tag: ${tag}\n` +
             `Zone: ${
               previousScan.zone ??
@@ -1960,7 +1960,7 @@ export default function AircraftScanPage({
               );
 
               setMsg(
-                "✅ Flight reopened. Reason saved in reports."
+                "\u2705 Flight reopened. Reason saved in reports."
               );
 
               focusScanner();
@@ -2233,7 +2233,7 @@ export default function AircraftScanPage({
               }
 
               setMsg(
-                `✅ Bag offloaded: ${tag} · ${bagTypeLabel}. Reason saved in reports/tracking.`
+                `\u2705 Bag offloaded: ${tag} \u00B7 ${bagTypeLabel}. Reason saved in reports/tracking.`
               );
 
               focusScanner();
@@ -2267,7 +2267,7 @@ export default function AircraftScanPage({
       if (isLoadingCompleted) {
         popup(
           "Locked",
-          "⚠️ Loading is already completed for this flight. Reopen flight first.",
+          "\u26A0\uFE0F Loading is already completed for this flight. Reopen flight first.",
           "warning"
         );
 
@@ -2471,11 +2471,11 @@ export default function AircraftScanPage({
           previousLocation.validReceivingLocation
         ) {
           setMsg(
-            `✅ ${tag} loaded · ${typeInfo.bagTypeLabel} · Zone ${zoneNum} · From ${previousDetails}`
+            `\u2705 ${tag} loaded \u00B7 ${typeInfo.bagTypeLabel} \u00B7 Zone ${zoneNum} \u00B7 From ${previousDetails}`
           );
         } else {
           setErr(
-            `⚠️ ${tag} loaded in Zone ${zoneNum}, but its last recorded location was ${previousDetails}. Please verify.`
+            `\u26A0\uFE0F ${tag} loaded in Zone ${zoneNum}, but its last recorded location was ${previousDetails}. Please verify.`
           );
         }
 
@@ -2722,7 +2722,7 @@ export default function AircraftScanPage({
 
     const missing =
       gateTotal === null
-        ? "—"
+        ? "\u2014"
         : String(
             Math.max(
               0,
@@ -2803,7 +2803,7 @@ export default function AircraftScanPage({
         [
           "Gate checked total",
           gateTotal === null
-            ? "—"
+            ? "\u2014"
             : String(
                 gateTotal
               ),
@@ -3224,7 +3224,7 @@ export default function AircraftScanPage({
         );
 
         setMsg(
-          "✅ PDF exported and saved to flight reports."
+          "\u2705 PDF exported and saved to flight reports."
         );
 
         focusScanner();
@@ -3262,7 +3262,7 @@ export default function AircraftScanPage({
       ) {
         popup(
           "Gate total missing",
-          "⚠️ Gate checked bags total not entered.\n\nGate Controller must enter total checked bags before completing loading.",
+          "\u26A0\uFE0F Gate checked bags total not entered.\n\nGate Controller must enter total checked bags before completing loading.",
           "warning"
         );
 
@@ -3279,7 +3279,7 @@ export default function AircraftScanPage({
       if (missing > 0) {
         popup(
           "Missing bags",
-          `❌ LOADING NOT COMPLETED\n\n` +
+          `\u274C LOADING NOT COMPLETED\n\n` +
             `Checked bags: ${checkedTotal}\n` +
             `Loaded: ${aircraftTotal}\n` +
             `Missing: ${missing}\n\n` +
@@ -3296,7 +3296,7 @@ export default function AircraftScanPage({
       ) {
         popup(
           "Bags still pending",
-          `⚠️ There are ${pendingReceivingScans.length} bags received but not scanned on the aircraft.\n\n` +
+          `\u26A0\uFE0F There are ${pendingReceivingScans.length} bags received but not scanned on the aircraft.\n\n` +
             `Review the pending bag locations before completing loading.`,
           "warning"
         );
@@ -3327,7 +3327,7 @@ export default function AircraftScanPage({
                 "pre-wrap",
             }}
           >
-            {`✅ ALL BAGS LOADED\n\n` +
+            {`\u2705 ALL BAGS LOADED\n\n` +
               `Checked bags: ${checkedTotal}\n` +
               `Loaded on aircraft: ${aircraftTotal}\n\n` +
               `Checked Bags: ${bagTypeCounts.CHECKED_BAG}\n` +
@@ -3441,7 +3441,7 @@ export default function AircraftScanPage({
               await exportReportPdf();
 
               setCompleteMsg(
-                "✅ Aircraft loading completed successfully. Report saved."
+                "\u2705 Aircraft loading completed successfully. Report saved."
               );
             } catch (error) {
               console.error(error);
@@ -3530,7 +3530,7 @@ export default function AircraftScanPage({
       const locationDetails =
         location === "BAGROOM" &&
         scan.previousCartNumber
-          ? `${locationLabel} · Cart ${scan.previousCartNumber}`
+          ? `${locationLabel} \u00B7 Cart ${scan.previousCartNumber}`
           : locationLabel;
 
       const previousUser =
@@ -3644,9 +3644,7 @@ export default function AircraftScanPage({
                   900,
               }}
             >
-              ⚠️ Bag did not have a valid
-              Bagroom, Oversize, or Gate/Ramp
-              location before loading.
+              {"\u26A0\uFE0F Bag did not have a valid Bagroom, Oversize, or Gate/Ramp location before loading."}
             </div>
           )}
         </div>
@@ -3661,8 +3659,17 @@ export default function AircraftScanPage({
         padding: compactScreen ? 10 : 16,
         minHeight: "100%",
       }}
-      onClick={() => {
-        if (scannerMode && !modal.open) {
+      onClick={(event) => {
+        const clickedInteractiveElement =
+          event.target.closest?.(
+            "button,input,select,textarea,a"
+          );
+
+        if (
+          scannerMode &&
+          !modal.open &&
+          !clickedInteractiveElement
+        ) {
           focusScanner();
         }
       }}
@@ -3700,7 +3707,7 @@ export default function AircraftScanPage({
               fontSize: "0.9rem",
             }}
           >
-            Scan bags while loading by zone 1–4.
+            Scan bags while loading by zone 1-4.
           </p>
 
           {isLoadingCompleted && (
@@ -3711,7 +3718,7 @@ export default function AircraftScanPage({
                 fontWeight: 900,
               }}
             >
-              ✅ Loading Completed
+              {"\u2705 Loading Completed"}
             </p>
           )}
         </div>
@@ -3735,7 +3742,7 @@ export default function AircraftScanPage({
             Flight:{" "}
             <strong>
               {flightLoading
-                ? "…"
+                ? "\u2026"
                 : flight?.flightNumber ||
                   flightId}
             </strong>
@@ -3750,7 +3757,7 @@ export default function AircraftScanPage({
             Date:{" "}
             <strong>
               {flightLoading
-                ? "…"
+                ? "\u2026"
                 : flight?.flightDate ||
                   "-"}
             </strong>
@@ -3765,7 +3772,7 @@ export default function AircraftScanPage({
             Gate:{" "}
             <strong>
               {flightLoading
-                ? "…"
+                ? "\u2026"
                 : flight?.gate || "-"}
             </strong>
           </div>
@@ -3851,7 +3858,7 @@ export default function AircraftScanPage({
                 }}
               >
                 {reopening
-                  ? "Reopening…"
+                  ? "Reopening\u2026"
                   : "Reopen Flight"}
               </button>
             </div>
@@ -3878,8 +3885,20 @@ export default function AircraftScanPage({
               border:
                 "1px solid #e5e7eb",
               borderRadius: 12,
-              padding: 12,
+              padding: compactScreen ? 10 : 12,
               background: "#f9fafb",
+              position: compactScreen
+                ? "sticky"
+                : "static",
+              top: compactScreen
+                ? 6
+                : "auto",
+              zIndex: compactScreen
+                ? 4
+                : "auto",
+              boxShadow: compactScreen
+                ? "0 10px 22px rgba(15,23,42,0.08)"
+                : "none",
             }}
           >
             <div
@@ -3995,6 +4014,57 @@ export default function AircraftScanPage({
               </div>
             </div>
 
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(3, minmax(0, 1fr))",
+                gap: 6,
+                marginTop: 10,
+              }}
+            >
+              <AircraftQuickStat
+                label="Loaded"
+                value={
+                  loadingScans
+                    ? "\u2026"
+                    : scans.length
+                }
+                tone="blue"
+              />
+
+              <AircraftQuickStat
+                label="Waiting"
+                value={
+                  loadingReceivingScans ||
+                  loadingScans
+                    ? "\u2026"
+                    : pendingReceivingScans.length
+                }
+                tone={
+                  pendingReceivingScans.length > 0
+                    ? "warn"
+                    : "good"
+                }
+              />
+
+              <AircraftQuickStat
+                label="Missing"
+                value={
+                  missingNow === null
+                    ? "\u2014"
+                    : missingNow
+                }
+                tone={
+                  missingNow === 0
+                    ? "good"
+                    : missingNow === null
+                      ? "default"
+                      : "bad"
+                }
+              />
+            </div>
+
             <label
               style={{
                 display: "block",
@@ -4047,6 +4117,9 @@ export default function AircraftScanPage({
                 width: "100%",
                 boxSizing:
                   "border-box",
+                minHeight: compactScreen
+                  ? 64
+                  : 52,
                 padding: compactScreen
                   ? "15px 12px"
                   : "13px 12px",
@@ -4145,7 +4218,7 @@ export default function AircraftScanPage({
               }}
             >
               {submittingTag
-                ? `Loading ${submittingTag}…`
+                ? `Loading ${submittingTag}\u2026`
                 : "Add Aircraft Scan"}
             </button>
 
@@ -4187,7 +4260,7 @@ export default function AircraftScanPage({
               }}
             >
               {exporting
-                ? "Exporting…"
+                ? "Exporting\u2026"
                 : "Export PDF Report"}
             </button>
 
@@ -4201,7 +4274,7 @@ export default function AircraftScanPage({
                   fontWeight: 900,
                 }}
               >
-                ⚠️ Strict Manifest ON
+                {"\u26A0\uFE0F Strict Manifest ON"}
               </p>
             )}
 
@@ -4389,7 +4462,7 @@ export default function AircraftScanPage({
               >
                 {loadingReceivingScans ||
                 loadingScans
-                  ? "…"
+                  ? "\u2026"
                   : `${pendingReceivingScans.length} Pending`}
               </span>
             </div>
@@ -4410,7 +4483,7 @@ export default function AircraftScanPage({
                     color: "#6b7280",
                   }}
                 >
-                  Loading bag locations…
+                  {"Loading bag locations\u2026"}
                 </div>
               ) : lastFivePendingBags.length ===
                 0 ? (
@@ -4424,8 +4497,7 @@ export default function AircraftScanPage({
                     fontWeight: 900,
                   }}
                 >
-                  ✅ No received bags
-                  pending to load
+                  {"\u2705 No received bags pending to load"}
                 </div>
               ) : (
                 lastFivePendingBags.map(
@@ -4541,7 +4613,7 @@ export default function AircraftScanPage({
                             )}{" "}
                             {locationLabel}
                             {cartNumber
-                              ? ` · Cart ${cartNumber}`
+                              ? ` \u00B7 Cart ${cartNumber}`
                               : ""}
                           </div>
 
@@ -4553,7 +4625,7 @@ export default function AircraftScanPage({
                               fontSize: "0.7rem",
                             }}
                           >
-                            {receivedBy} ·{" "}
+                            {receivedBy} \u00B7{" "}
                             {formatTime(
                               receivedAt
                             )}
@@ -4622,7 +4694,7 @@ export default function AircraftScanPage({
                   Total loaded:{" "}
                   <strong>
                     {loadingScans
-                      ? "…"
+                      ? "\u2026"
                       : scans.length}
                   </strong>
                 </p>
@@ -4637,7 +4709,7 @@ export default function AircraftScanPage({
                   Receiving scanned:{" "}
                   <strong>
                     {loadingReceivingScans
-                      ? "…"
+                      ? "\u2026"
                       : bagroomTotal}
                   </strong>
                 </p>
@@ -4660,7 +4732,7 @@ export default function AircraftScanPage({
                           flight.checkedBagsTotal
                         }
                       </strong>
-                      {" · "}
+                      {" \u00B7 "}
                       Missing:{" "}
                       <strong
                         style={{
@@ -4743,7 +4815,7 @@ export default function AircraftScanPage({
                   {isLoadingCompleted
                     ? "Completed"
                     : completing
-                      ? "Checking…"
+                      ? "Checking\u2026"
                       : "Loading Completed"}
                 </button>
               )}
@@ -4767,7 +4839,7 @@ export default function AircraftScanPage({
                     paddingTop: 10,
                   }}
                 >
-                  Loading…
+                  {"Loading\u2026"}
                 </p>
               ) : scans.length === 0 ? (
                 <p
@@ -4843,10 +4915,10 @@ export default function AircraftScanPage({
                                 getBagTypeLabel(
                                   scan.bagType
                                 )}
-                              {" · Zone "}
+                              {" \u00B7 Zone "}
                               {scan.zone ??
                                 "-"}
-                              {" · "}
+                              {" \u00B7 "}
                               {scan.scannedBy
                                 ?.username ||
                                 "-"}
@@ -4885,7 +4957,7 @@ export default function AircraftScanPage({
                               }}
                             >
                               {busy
-                                ? "…"
+                                ? "\u2026"
                                 : "Offload"}
                             </button>
                           )}
@@ -4974,7 +5046,7 @@ export default function AircraftScanPage({
                           location ===
                             "BAGROOM" &&
                           scan.previousCartNumber
-                            ? `${locationLabel} · Cart ${scan.previousCartNumber}`
+                            ? `${locationLabel} \u00B7 Cart ${scan.previousCartNumber}`
                             : locationLabel;
 
                         return (
@@ -5046,7 +5118,7 @@ export default function AircraftScanPage({
                                 {formatTime(
                                   scan.previousLocationAt
                                 )}
-                                {" · "}
+                                {" \u00B7 "}
                                 {scan.previousLocationBy
                                   ?.username ||
                                   "-"}
@@ -5116,7 +5188,7 @@ export default function AircraftScanPage({
                                   }}
                                 >
                                   {busy
-                                    ? "Offloading…"
+                                    ? "Offloading\u2026"
                                     : "Offload"}
                                 </button>
                               )}
@@ -5528,6 +5600,82 @@ function Notice({
       }}
     >
       {text}
+    </div>
+  );
+}
+
+
+function AircraftQuickStat({
+  label,
+  value,
+  tone = "default",
+}) {
+  const tones = {
+    default: {
+      background: "#f3f4f6",
+      border: "#e5e7eb",
+      color: "#374151",
+    },
+    blue: {
+      background: "#eff6ff",
+      border: "#bfdbfe",
+      color: "#1d4ed8",
+    },
+    good: {
+      background: "#dcfce7",
+      border: "#86efac",
+      color: "#166534",
+    },
+    warn: {
+      background: "#ffedd5",
+      border: "#fdba74",
+      color: "#9a3412",
+    },
+    bad: {
+      background: "#fee2e2",
+      border: "#fca5a5",
+      color: "#991b1b",
+    },
+  };
+
+  const selected =
+    tones[tone] ||
+    tones.default;
+
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        padding: "8px 5px",
+        borderRadius: 10,
+        background:
+          selected.background,
+        border:
+          `1px solid ${selected.border}`,
+        color: selected.color,
+        textAlign: "center",
+      }}
+    >
+      <div
+        style={{
+          fontSize: "0.67rem",
+          fontWeight: 900,
+          textTransform: "uppercase",
+          letterSpacing: "0.03em",
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          marginTop: 2,
+          fontSize: "1.2rem",
+          fontWeight: 900,
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
