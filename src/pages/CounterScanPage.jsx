@@ -52,6 +52,7 @@ function getBagTypeLabel(value) {
 
 const MIN_TAG = 10;
 const AUTO_SUBMIT_MS = 90;
+const MOBILE_BREAKPOINT = 760;
 
 export default function CounterScanPage({ flightId, user }) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
@@ -66,6 +67,10 @@ export default function CounterScanPage({ flightId, user }) {
   const inputRef = useRef(null);
   const timerRef = useRef(null);
   const savingRef = useRef(false);
+
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" ? window.innerWidth < MOBILE_BREAKPOINT : false
+  );
 
   const [flight, setFlight] = useState(null);
   const [loadingFlight, setLoadingFlight] = useState(true);
@@ -89,6 +94,18 @@ export default function CounterScanPage({ flightId, user }) {
 
   const [deletingCounterTag, setDeletingCounterTag] = useState("");
   const [deletingBagroomTag, setDeletingBagroomTag] = useState("");
+
+  useEffect(() => {
+    const onResize = () => {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    };
+
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   useEffect(() => {
     if (!flightId) {
@@ -268,7 +285,7 @@ export default function CounterScanPage({ flightId, user }) {
       return {
         ok: false,
         message:
-          `❌ This bag tag belongs to another flight/date.\n\n` +
+          `â This bag tag belongs to another flight/date.\n\n` +
           `Current flight: ${flight?.flightNumber || flightId} ` +
           `(${flight?.flightDate || "-"})\n` +
           `Registered flight: ${existing.flightNumber || existing.flightId} ` +
@@ -293,7 +310,7 @@ export default function CounterScanPage({ flightId, user }) {
       type: "COUNTER_SCAN",
       location: "counter",
       message:
-        `Bag tag created / scanned at counter · ` +
+        `Bag tag created / scanned at counter Â· ` +
         getBagTypeLabel(selectedBagType),
       tag,
       bagType: selectedBagType,
@@ -362,7 +379,8 @@ export default function CounterScanPage({ flightId, user }) {
 
     return true;
   };
-    const deleteCounterScan = async (row) => {
+
+  const deleteCounterScan = async (row) => {
     const tag = cleanTag(row?.tag || row?.id);
 
     if (!tag) return;
@@ -400,13 +418,11 @@ export default function CounterScanPage({ flightId, user }) {
         doc(db, "flights", flightId, "aircraftScans", tag)
       );
 
-      // Only delete the global tag index if the bag did not
-      // advance to Bagroom or Aircraft.
       if (!bagroomSnap.exists() && !aircraftSnap.exists()) {
         await deleteDoc(doc(db, "bagTags", tag));
       }
 
-      setMsg(`Counter scan deleted ✅ ${tag}`);
+      setMsg(`Counter scan deleted â ${tag}`);
     } catch (e) {
       console.error("Delete Counter scan error:", e);
       setErr("Could not delete Counter scan. Check Firestore rules/connection.");
@@ -455,8 +471,6 @@ export default function CounterScanPage({ flightId, user }) {
         doc(db, "flights", flightId, "aircraftScans", tag)
       );
 
-      // If the bag is already on Aircraft, do not overwrite
-      // the current tracking location.
       if (!aircraftSnap.exists() && counterSnap.exists()) {
         const counterData = counterSnap.data();
 
@@ -485,7 +499,7 @@ export default function CounterScanPage({ flightId, user }) {
         await deleteDoc(doc(db, "bagTags", tag));
       }
 
-      setMsg(`Bagroom scan deleted ✅ ${tag}`);
+      setMsg(`Bagroom scan deleted â ${tag}`);
     } catch (e) {
       console.error("Delete Bagroom scan error:", e);
       setErr("Could not delete Bagroom scan. Check Firestore rules/connection.");
@@ -536,7 +550,7 @@ export default function CounterScanPage({ flightId, user }) {
       if (!saved) return;
 
       setMsg(
-        `Counter scan saved ✅ ${tag} · ${getBagTypeLabel(selectedBagType)}`
+        `Counter scan saved â ${tag} Â· ${getBagTypeLabel(selectedBagType)}`
       );
 
       setTagInput("");
@@ -590,71 +604,90 @@ export default function CounterScanPage({ flightId, user }) {
       style={{
         background: "white",
         border: "1px solid #e5e7eb",
-        borderRadius: 12,
-        padding: 16,
+        borderRadius: isMobile ? 14 : 12,
+        padding: isMobile ? 10 : 16,
       }}
     >
       <div
         style={{
           display: "flex",
+          flexDirection: isMobile ? "column" : "row",
           justifyContent: "space-between",
-          gap: 12,
+          gap: isMobile ? 8 : 12,
           flexWrap: "wrap",
         }}
       >
         <div>
-          <h2 style={{ margin: 0 }}>Counter Scan</h2>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: isMobile ? "1.3rem" : "1.5rem",
+            }}
+          >
+            Counter Scan
+          </h2>
 
           <p
             style={{
-              marginTop: 6,
+              marginTop: 5,
+              marginBottom: 0,
               color: "#6b7280",
-              fontSize: "0.9rem",
+              fontSize: isMobile ? "0.82rem" : "0.9rem",
             }}
           >
             Scan or enter bag tags created at the ticket counter.
           </p>
 
           {isFlightLoaded && (
-            <p
+            <div
               style={{
-                margin: "8px 0 0",
-                color: "#16a34a",
+                marginTop: 8,
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "6px 9px",
+                borderRadius: 999,
+                background: "#dcfce7",
+                border: "1px solid #86efac",
+                color: "#166534",
                 fontWeight: 900,
+                fontSize: "0.78rem",
               }}
             >
-              ✅ Flight Loaded / Counter scan locked
-            </p>
+              â Flight Loaded Â· Counter locked
+            </div>
           )}
         </div>
 
-        <div style={{ textAlign: "right", fontSize: "0.9rem" }}>
-          <div>
+        <div
+          style={{
+            textAlign: isMobile ? "left" : "right",
+            fontSize: "0.82rem",
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            color: "#475569",
+          }}
+        >
+          <span>
             Flight:{" "}
-            <strong>
-              {loadingFlight
-                ? "…"
-                : flight?.flightNumber || flightId}
+            <strong style={{ color: "#0f172a" }}>
+              {loadingFlight ? "â¦" : flight?.flightNumber || flightId}
             </strong>
-          </div>
+          </span>
 
-          <div style={{ color: "#6b7280" }}>
+          <span>
             Date:{" "}
-            <strong>
-              {loadingFlight
-                ? "…"
-                : flight?.flightDate || "-"}
+            <strong style={{ color: "#0f172a" }}>
+              {loadingFlight ? "â¦" : flight?.flightDate || "-"}
             </strong>
-          </div>
+          </span>
 
-          <div style={{ color: "#6b7280" }}>
+          <span>
             Gate:{" "}
-            <strong>
-              {loadingFlight
-                ? "…"
-                : flight?.gate || "-"}
+            <strong style={{ color: "#0f172a" }}>
+              {loadingFlight ? "â¦" : flight?.gate || "-"}
             </strong>
-          </div>
+          </span>
         </div>
       </div>
 
@@ -662,34 +695,72 @@ export default function CounterScanPage({ flightId, user }) {
         style={{
           border: "none",
           borderTop: "1px solid #e5e7eb",
-          margin: "14px 0",
+          margin: isMobile ? "10px 0" : "14px 0",
         }}
       />
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns:
-            "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 12,
+          gridTemplateColumns: isMobile
+            ? "1fr"
+            : "minmax(320px, 0.9fr) minmax(0, 1.4fr)",
+          gap: isMobile ? 10 : 12,
+          alignItems: "start",
         }}
       >
         <section
           style={{
             border: "1px solid #e5e7eb",
             borderRadius: 12,
-            padding: 12,
+            padding: isMobile ? 10 : 12,
             background: "#f9fafb",
+            position: isMobile ? "sticky" : "static",
+            top: isMobile ? 0 : "auto",
+            zIndex: isMobile ? 3 : "auto",
+            boxShadow: isMobile ? "0 8px 18px rgba(15,23,42,0.06)" : "none",
           }}
         >
-          <h3 style={{ marginTop: 0 }}>Scan Bag Tag</h3>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            <h3
+              style={{
+                margin: 0,
+                fontSize: isMobile ? "1rem" : "1.08rem",
+              }}
+            >
+              Scan Bag Tag
+            </h3>
+
+            <span
+              style={{
+                padding: "4px 8px",
+                borderRadius: 999,
+                background: "#eff6ff",
+                color: "#1d4ed8",
+                border: "1px solid #bfdbfe",
+                fontWeight: 900,
+                fontSize: "0.72rem",
+              }}
+            >
+              {getBagTypeLabel(selectedBagType)}
+            </span>
+          </div>
 
           <label
             style={{
               display: "block",
-              fontSize: "0.85rem",
+              fontSize: "0.78rem",
               color: "#374151",
-              marginBottom: 6,
+              marginBottom: 5,
+              fontWeight: 800,
             }}
           >
             Bag Type
@@ -714,14 +785,14 @@ export default function CounterScanPage({ flightId, user }) {
             disabled={isFlightLoaded}
             style={{
               width: "100%",
-              padding: "12px",
+              minHeight: isMobile ? 52 : 46,
+              padding: "10px 12px",
               borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: isFlightLoaded
-                ? "#f3f4f6"
-                : "white",
-              fontWeight: 800,
-              marginBottom: 12,
+              border: "1px solid #cbd5e1",
+              background: isFlightLoaded ? "#f3f4f6" : "white",
+              fontWeight: 900,
+              fontSize: isMobile ? "1rem" : "0.9rem",
+              marginBottom: 10,
             }}
           >
             <option value="CHECKED_BAG">Checked Bag</option>
@@ -729,25 +800,13 @@ export default function CounterScanPage({ flightId, user }) {
             <option value="OVERSIZE">Oversize</option>
           </select>
 
-          <div
-            style={{
-              marginBottom: 12,
-              padding: 10,
-              borderRadius: 12,
-              border: "1px solid #dbeafe",
-              background: "#eff6ff",
-              color: "#1d4ed8",
-              fontWeight: 900,
-            }}
-          >
-            Selected: {getBagTypeLabel(selectedBagType)}
-          </div>
-                    <label
+          <label
             style={{
               display: "block",
-              fontSize: "0.85rem",
+              fontSize: "0.78rem",
               color: "#374151",
-              marginBottom: 6,
+              marginBottom: 5,
+              fontWeight: 800,
             }}
           >
             Bag Tag Number
@@ -758,23 +817,26 @@ export default function CounterScanPage({ flightId, user }) {
             value={tagInput}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            inputMode="numeric"
+            autoComplete="off"
             disabled={isFlightLoaded}
             placeholder={
               isFlightLoaded
                 ? "Flight loaded / locked"
-                : "Scan bag tag…"
+                : "Scan bag tagâ¦"
             }
             style={{
               width: "100%",
-              padding: "12px",
+              minHeight: isMobile ? 58 : 48,
+              padding: "10px 12px",
               borderRadius: 12,
-              border: "1px solid #d1d5db",
-              background: isFlightLoaded
-                ? "#f3f4f6"
-                : "white",
+              border: "2px solid #60a5fa",
+              background: isFlightLoaded ? "#f3f4f6" : "white",
               fontFamily:
                 "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-              fontSize: "0.95rem",
+              fontSize: isMobile ? "1.08rem" : "0.95rem",
+              boxSizing: "border-box",
+              outline: "none",
             }}
           />
 
@@ -783,18 +845,16 @@ export default function CounterScanPage({ flightId, user }) {
             disabled={isFlightLoaded}
             style={{
               width: "100%",
-              marginTop: 10,
+              minHeight: isMobile ? 54 : 46,
+              marginTop: 9,
               padding: "10px 12px",
               borderRadius: 12,
               border: "1px solid #2563eb",
-              background: isFlightLoaded
-                ? "#93c5fd"
-                : "#2563eb",
+              background: isFlightLoaded ? "#93c5fd" : "#2563eb",
               color: "white",
               fontWeight: 900,
-              cursor: isFlightLoaded
-                ? "not-allowed"
-                : "pointer",
+              fontSize: isMobile ? "0.98rem" : "0.9rem",
+              cursor: isFlightLoaded ? "not-allowed" : "pointer",
             }}
           >
             Add Counter Scan
@@ -802,37 +862,49 @@ export default function CounterScanPage({ flightId, user }) {
 
           <p
             style={{
-              marginTop: 10,
+              marginTop: 8,
+              marginBottom: 0,
               color: "#6b7280",
-              fontSize: "0.8rem",
+              fontSize: "0.74rem",
+              lineHeight: 1.4,
             }}
           >
-            Tip: scanner saves automatically after reading the bag tag.
+            Scanner saves automatically after reading the 10-digit bag tag.
           </p>
 
           {msg && (
-            <p
+            <div
               style={{
                 marginTop: 8,
-                color: "#16a34a",
-                fontWeight: 800,
+                padding: "8px 10px",
+                borderRadius: 10,
+                background: "#f0fdf4",
+                border: "1px solid #bbf7d0",
+                color: "#166534",
+                fontWeight: 900,
+                fontSize: "0.8rem",
               }}
             >
               {msg}
-            </p>
+            </div>
           )}
 
           {err && (
-            <p
+            <div
               style={{
                 marginTop: 8,
+                padding: "8px 10px",
+                borderRadius: 10,
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
                 color: "#b91c1c",
-                fontWeight: 800,
+                fontWeight: 900,
+                fontSize: "0.8rem",
                 whiteSpace: "pre-wrap",
               }}
             >
               {err}
-            </p>
+            </div>
           )}
         </section>
 
@@ -840,45 +912,46 @@ export default function CounterScanPage({ flightId, user }) {
           style={{
             border: "1px solid #e5e7eb",
             borderRadius: 12,
-            padding: 12,
+            padding: isMobile ? 10 : 12,
           }}
         >
-          <h3 style={{ marginTop: 0 }}>
-            Counter → Bagroom Match
+          <h3 style={{ marginTop: 0, marginBottom: 8 }}>
+            Counter â Bagroom Match
           </h3>
 
           <div
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "repeat(3, minmax(0, 1fr))",
-              gap: 8,
-              marginTop: 10,
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 7,
+              marginTop: 8,
             }}
           >
             <SummaryBox
               label="Counter"
-              value={loadingRows ? "…" : rows.length}
+              value={loadingRows ? "â¦" : rows.length}
               background="#eff6ff"
               color="#1d4ed8"
+              compact={isMobile}
             />
 
             <SummaryBox
               label="Received"
               value={
                 loadingRows || loadingBagroomRows
-                  ? "…"
+                  ? "â¦"
                   : counterReceivedCount
               }
               background="#dcfce7"
               color="#166534"
+              compact={isMobile}
             />
 
             <SummaryBox
               label="Pending"
               value={
                 loadingRows || loadingBagroomRows
-                  ? "…"
+                  ? "â¦"
                   : counterPendingCount
               }
               background={
@@ -891,35 +964,146 @@ export default function CounterScanPage({ flightId, user }) {
                   ? "#166534"
                   : "#991b1b"
               }
+              compact={isMobile}
             />
           </div>
 
           <p
             style={{
               color: "#6b7280",
-              fontSize: "0.82rem",
-              marginTop: 10,
+              fontSize: "0.75rem",
+              marginTop: 8,
+              marginBottom: 8,
             }}
           >
-            Green = received in Bagroom · Red = still pending
+            Green = received in Bagroom Â· Red = still pending
           </p>
 
-          <div
-            style={{
-              maxHeight: 360,
-              overflow: "auto",
-              marginTop: 8,
-            }}
-          >
-            {loadingRows || loadingBagroomRows ? (
-              <p style={{ color: "#6b7280" }}>
-                Loading Counter and Bagroom scans…
-              </p>
-            ) : rows.length === 0 ? (
-              <p style={{ color: "#6b7280" }}>
-                No Counter scans yet.
-              </p>
-            ) : (
+          {loadingRows || loadingBagroomRows ? (
+            <p style={{ color: "#6b7280" }}>
+              Loading Counter and Bagroom scansâ¦
+            </p>
+          ) : rows.length === 0 ? (
+            <p style={{ color: "#6b7280" }}>
+              No Counter scans yet.
+            </p>
+          ) : isMobile ? (
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                maxHeight: 440,
+                overflow: "auto",
+              }}
+            >
+              {rows.map((row) => {
+                const tag = cleanTag(row.tag || row.id);
+                const received = bagroomTagSet.has(tag);
+                const busy = deletingCounterTag === tag;
+
+                return (
+                  <div
+                    key={row.id}
+                    style={{
+                      border: `1px solid ${
+                        received ? "#86efac" : "#fca5a5"
+                      }`,
+                      borderLeft: `6px solid ${
+                        received ? "#22c55e" : "#ef4444"
+                      }`,
+                      borderRadius: 12,
+                      padding: 10,
+                      background: received ? "#f0fdf4" : "#fef2f2",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "start",
+                        gap: 8,
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                            fontSize: "0.98rem",
+                            fontWeight: 900,
+                            color: received ? "#166534" : "#991b1b",
+                          }}
+                        >
+                          {tag}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 4,
+                            color: "#475569",
+                            fontSize: "0.76rem",
+                          }}
+                        >
+                          {row.bagTypeLabel ||
+                            getBagTypeLabel(row.bagType)}
+                          {" Â· "}
+                          {row.scannedBy?.username || "-"}
+                        </div>
+                      </div>
+
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          background: received ? "#dcfce7" : "#fee2e2",
+                          color: received ? "#166534" : "#991b1b",
+                          border: `1px solid ${
+                            received ? "#86efac" : "#fca5a5"
+                          }`,
+                          fontSize: "0.7rem",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {received ? "RECEIVED" : "PENDING"}
+                      </span>
+                    </div>
+
+                    {canDeleteScans && (
+                      <button
+                        onClick={() => deleteCounterScan(row)}
+                        disabled={busy || isFlightLoaded}
+                        style={{
+                          width: "100%",
+                          minHeight: 40,
+                          marginTop: 9,
+                          borderRadius: 10,
+                          border: "1px solid #ef4444",
+                          background:
+                            busy || isFlightLoaded ? "#fca5a5" : "#ef4444",
+                          color: "white",
+                          fontWeight: 900,
+                          cursor:
+                            busy || isFlightLoaded
+                              ? "not-allowed"
+                              : "pointer",
+                        }}
+                      >
+                        {busy ? "Deletingâ¦" : "Delete Counter Scan"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div
+              style={{
+                maxHeight: 360,
+                overflow: "auto",
+                marginTop: 8,
+              }}
+            >
               <table
                 style={{
                   width: "100%",
@@ -932,12 +1116,7 @@ export default function CounterScanPage({ flightId, user }) {
                     <th style={th}>Type</th>
                     <th style={th}>Status</th>
                     <th style={th}>User</th>
-                    <th
-                      style={{
-                        ...th,
-                        textAlign: "right",
-                      }}
-                    >
+                    <th style={{ ...th, textAlign: "right" }}>
                       Action
                     </th>
                   </tr>
@@ -945,31 +1124,21 @@ export default function CounterScanPage({ flightId, user }) {
 
                 <tbody>
                   {rows.map((row) => {
-                    const tag = cleanTag(
-                      row.tag || row.id
-                    );
-
-                    const received =
-                      bagroomTagSet.has(tag);
-
-                    const busy =
-                      deletingCounterTag === tag;
+                    const tag = cleanTag(row.tag || row.id);
+                    const received = bagroomTagSet.has(tag);
+                    const busy = deletingCounterTag === tag;
 
                     return (
                       <tr
                         key={row.id}
                         style={{
-                          background: received
-                            ? "#f0fdf4"
-                            : "#fef2f2",
+                          background: received ? "#f0fdf4" : "#fef2f2",
                         }}
                       >
                         <td style={td}>
                           <strong
                             style={{
-                              color: received
-                                ? "#166534"
-                                : "#991b1b",
+                              color: received ? "#166534" : "#991b1b",
                             }}
                           >
                             {tag}
@@ -978,9 +1147,7 @@ export default function CounterScanPage({ flightId, user }) {
 
                         <td style={td}>
                           {row.bagTypeLabel ||
-                            getBagTypeLabel(
-                              row.bagType
-                            )}
+                            getBagTypeLabel(row.bagType)}
                         </td>
 
                         <td style={td}>
@@ -989,74 +1156,31 @@ export default function CounterScanPage({ flightId, user }) {
                               display: "inline-flex",
                               padding: "4px 8px",
                               borderRadius: 999,
-                              background: received
-                                ? "#dcfce7"
-                                : "#fee2e2",
-                              color: received
-                                ? "#166534"
-                                : "#991b1b",
+                              background: received ? "#dcfce7" : "#fee2e2",
+                              color: received ? "#166534" : "#991b1b",
                               border: `1px solid ${
-                                received
-                                  ? "#86efac"
-                                  : "#fca5a5"
+                                received ? "#86efac" : "#fca5a5"
                               }`,
                               fontSize: "0.75rem",
                               fontWeight: 900,
                             }}
                           >
-                            {received
-                              ? "RECEIVED"
-                              : "PENDING"}
+                            {received ? "RECEIVED" : "PENDING"}
                           </span>
                         </td>
 
-                        <td
-                          style={{
-                            ...td,
-                            color: "#6b7280",
-                          }}
-                        >
-                          {row.scannedBy?.username ||
-                            "-"}
+                        <td style={{ ...td, color: "#6b7280" }}>
+                          {row.scannedBy?.username || "-"}
                         </td>
 
-                        <td
-                          style={{
-                            ...td,
-                            textAlign: "right",
-                          }}
-                        >
+                        <td style={{ ...td, textAlign: "right" }}>
                           {canDeleteScans && (
                             <button
-                              onClick={() =>
-                                deleteCounterScan(row)
-                              }
-                              disabled={
-                                busy || isFlightLoaded
-                              }
-                              style={{
-                                padding: "5px 9px",
-                                borderRadius: 999,
-                                border:
-                                  "1px solid #ef4444",
-                                background:
-                                  busy ||
-                                  isFlightLoaded
-                                    ? "#fca5a5"
-                                    : "#ef4444",
-                                color: "white",
-                                fontWeight: 800,
-                                cursor:
-                                  busy ||
-                                  isFlightLoaded
-                                    ? "not-allowed"
-                                    : "pointer",
-                                opacity: busy ? 0.7 : 1,
-                              }}
+                              onClick={() => deleteCounterScan(row)}
+                              disabled={busy || isFlightLoaded}
+                              style={deleteButtonStyle(busy || isFlightLoaded)}
                             >
-                              {busy
-                                ? "Deleting…"
-                                : "Delete"}
+                              {busy ? "Deletingâ¦" : "Delete"}
                             </button>
                           )}
                         </td>
@@ -1065,14 +1189,14 @@ export default function CounterScanPage({ flightId, user }) {
                   })}
                 </tbody>
               </table>
-            )}
-          </div>
+            </div>
+          )}
 
           <hr
             style={{
               border: "none",
               borderTop: "1px solid #e5e7eb",
-              margin: "16px 0",
+              margin: "14px 0",
             }}
           />
 
@@ -1083,28 +1207,28 @@ export default function CounterScanPage({ flightId, user }) {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "repeat(2, minmax(0, 1fr))",
-              gap: 8,
-              marginTop: 10,
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: 7,
+              marginTop: 9,
             }}
           >
             <SummaryBox
               label="Bagroom Total"
               value={
                 loadingBagroomRows
-                  ? "…"
+                  ? "â¦"
                   : bagroomRows.length
               }
               background="#dcfce7"
               color="#166534"
+              compact={isMobile}
             />
 
             <SummaryBox
               label="Without Counter"
               value={
                 loadingRows || loadingBagroomRows
-                  ? "…"
+                  ? "â¦"
                   : bagroomWithoutCounterCount
               }
               background={
@@ -1117,35 +1241,147 @@ export default function CounterScanPage({ flightId, user }) {
                   ? "#374151"
                   : "#9a3412"
               }
+              compact={isMobile}
             />
           </div>
 
           <p
             style={{
               color: "#6b7280",
-              fontSize: "0.82rem",
-              marginTop: 10,
+              fontSize: "0.75rem",
+              marginTop: 8,
+              marginBottom: 8,
             }}
           >
-            Orange rows were received in Bagroom without a matching Counter scan.
+            Orange = received in Bagroom without a matching Counter scan.
           </p>
 
-          <div
-            style={{
-              maxHeight: 280,
-              overflow: "auto",
-              marginTop: 8,
-            }}
-          >
-            {loadingBagroomRows ? (
-              <p style={{ color: "#6b7280" }}>
-                Loading Bagroom scans…
-              </p>
-            ) : bagroomRows.length === 0 ? (
-              <p style={{ color: "#6b7280" }}>
-                No bags received yet.
-              </p>
-            ) : (
+          {loadingBagroomRows ? (
+            <p style={{ color: "#6b7280" }}>
+              Loading Bagroom scansâ¦
+            </p>
+          ) : bagroomRows.length === 0 ? (
+            <p style={{ color: "#6b7280" }}>
+              No bags received yet.
+            </p>
+          ) : isMobile ? (
+            <div
+              style={{
+                display: "grid",
+                gap: 8,
+                maxHeight: 340,
+                overflow: "auto",
+              }}
+            >
+              {bagroomRows.map((row) => {
+                const tag = cleanTag(row.tag || row.id);
+                const existsAtCounter = counterTagSet.has(tag);
+                const busy = deletingBagroomTag === tag;
+
+                return (
+                  <div
+                    key={row.id}
+                    style={{
+                      border: `1px solid ${
+                        existsAtCounter ? "#86efac" : "#fdba74"
+                      }`,
+                      borderLeft: `6px solid ${
+                        existsAtCounter ? "#22c55e" : "#f97316"
+                      }`,
+                      borderRadius: 12,
+                      padding: 10,
+                      background: existsAtCounter ? "#f0fdf4" : "#fff7ed",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "start",
+                        gap: 8,
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontFamily:
+                              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                            fontSize: "0.96rem",
+                            fontWeight: 900,
+                            color: "#0f172a",
+                          }}
+                        >
+                          {tag}
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 4,
+                            color: "#475569",
+                            fontSize: "0.75rem",
+                          }}
+                        >
+                          Cart {row.cartNumber || "-"}
+                          {" Â· "}
+                          {row.scannedBy?.username || "-"}
+                        </div>
+                      </div>
+
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          padding: "4px 8px",
+                          borderRadius: 999,
+                          background:
+                            existsAtCounter ? "#dcfce7" : "#ffedd5",
+                          color:
+                            existsAtCounter ? "#166534" : "#9a3412",
+                          border: `1px solid ${
+                            existsAtCounter ? "#86efac" : "#fdba74"
+                          }`,
+                          fontSize: "0.68rem",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {existsAtCounter ? "MATCHED" : "NO COUNTER"}
+                      </span>
+                    </div>
+
+                    {canDeleteScans && (
+                      <button
+                        onClick={() => deleteBagroomScan(row)}
+                        disabled={busy || isFlightLoaded}
+                        style={{
+                          width: "100%",
+                          minHeight: 40,
+                          marginTop: 9,
+                          borderRadius: 10,
+                          border: "1px solid #ef4444",
+                          background:
+                            busy || isFlightLoaded ? "#fca5a5" : "#ef4444",
+                          color: "white",
+                          fontWeight: 900,
+                          cursor:
+                            busy || isFlightLoaded
+                              ? "not-allowed"
+                              : "pointer",
+                        }}
+                      >
+                        {busy ? "Deletingâ¦" : "Delete Bagroom Scan"}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div
+              style={{
+                maxHeight: 280,
+                overflow: "auto",
+                marginTop: 8,
+              }}
+            >
               <table
                 style={{
                   width: "100%",
@@ -1158,12 +1394,7 @@ export default function CounterScanPage({ flightId, user }) {
                     <th style={th}>Cart</th>
                     <th style={th}>Match</th>
                     <th style={th}>User</th>
-                    <th
-                      style={{
-                        ...th,
-                        textAlign: "right",
-                      }}
-                    >
+                    <th style={{ ...th, textAlign: "right" }}>
                       Action
                     </th>
                   </tr>
@@ -1171,24 +1402,15 @@ export default function CounterScanPage({ flightId, user }) {
 
                 <tbody>
                   {bagroomRows.map((row) => {
-                    const tag = cleanTag(
-                      row.tag || row.id
-                    );
-
-                    const existsAtCounter =
-                      counterTagSet.has(tag);
-
-                    const busy =
-                      deletingBagroomTag === tag;
+                    const tag = cleanTag(row.tag || row.id);
+                    const existsAtCounter = counterTagSet.has(tag);
+                    const busy = deletingBagroomTag === tag;
 
                     return (
                       <tr
                         key={row.id}
                         style={{
-                          background:
-                            existsAtCounter
-                              ? "#f0fdf4"
-                              : "#fff7ed",
+                          background: existsAtCounter ? "#f0fdf4" : "#fff7ed",
                         }}
                       >
                         <td style={td}>
@@ -1206,75 +1428,32 @@ export default function CounterScanPage({ flightId, user }) {
                               padding: "4px 8px",
                               borderRadius: 999,
                               background:
-                                existsAtCounter
-                                  ? "#dcfce7"
-                                  : "#ffedd5",
+                                existsAtCounter ? "#dcfce7" : "#ffedd5",
                               color:
-                                existsAtCounter
-                                  ? "#166534"
-                                  : "#9a3412",
+                                existsAtCounter ? "#166534" : "#9a3412",
                               border: `1px solid ${
-                                existsAtCounter
-                                  ? "#86efac"
-                                  : "#fdba74"
+                                existsAtCounter ? "#86efac" : "#fdba74"
                               }`,
                               fontSize: "0.75rem",
                               fontWeight: 900,
                             }}
                           >
-                            {existsAtCounter
-                              ? "MATCHED"
-                              : "NO COUNTER"}
+                            {existsAtCounter ? "MATCHED" : "NO COUNTER"}
                           </span>
                         </td>
 
-                        <td
-                          style={{
-                            ...td,
-                            color: "#6b7280",
-                          }}
-                        >
-                          {row.scannedBy?.username ||
-                            "-"}
+                        <td style={{ ...td, color: "#6b7280" }}>
+                          {row.scannedBy?.username || "-"}
                         </td>
 
-                        <td
-                          style={{
-                            ...td,
-                            textAlign: "right",
-                          }}
-                        >
+                        <td style={{ ...td, textAlign: "right" }}>
                           {canDeleteScans && (
                             <button
-                              onClick={() =>
-                                deleteBagroomScan(row)
-                              }
-                              disabled={
-                                busy || isFlightLoaded
-                              }
-                              style={{
-                                padding: "5px 9px",
-                                borderRadius: 999,
-                                border:
-                                  "1px solid #ef4444",
-                                background:
-                                  busy ||
-                                  isFlightLoaded
-                                    ? "#fca5a5"
-                                    : "#ef4444",
-                                color: "white",
-                                fontWeight: 800,
-                                cursor:
-                                  busy ||
-                                  isFlightLoaded
-                                    ? "not-allowed"
-                                    : "pointer",
-                                opacity: busy ? 0.7 : 1,
-                              }}
+                              onClick={() => deleteBagroomScan(row)}
+                              disabled={busy || isFlightLoaded}
+                              style={deleteButtonStyle(busy || isFlightLoaded)}
                             >
-                              {busy
-                                ? "Deleting…"
-                                : "Delete"}
+                              {busy ? "Deletingâ¦" : "Delete"}
                             </button>
                           )}
                         </td>
@@ -1283,19 +1462,25 @@ export default function CounterScanPage({ flightId, user }) {
                   })}
                 </tbody>
               </table>
-            )}
-          </div>
-                  </section>
+            </div>
+          )}
+        </section>
       </div>
     </div>
   );
 }
 
-function SummaryBox({ label, value, background, color }) {
+function SummaryBox({
+  label,
+  value,
+  background,
+  color,
+  compact = false,
+}) {
   return (
     <div
       style={{
-        padding: 9,
+        padding: compact ? 7 : 9,
         borderRadius: 12,
         border: "1px solid #e5e7eb",
         background,
@@ -1305,7 +1490,7 @@ function SummaryBox({ label, value, background, color }) {
     >
       <div
         style={{
-          fontSize: "0.72rem",
+          fontSize: compact ? "0.66rem" : "0.72rem",
           fontWeight: 800,
         }}
       >
@@ -1314,7 +1499,7 @@ function SummaryBox({ label, value, background, color }) {
 
       <div
         style={{
-          fontSize: "1.2rem",
+          fontSize: compact ? "1.05rem" : "1.2rem",
           fontWeight: 900,
         }}
       >
@@ -1322,6 +1507,19 @@ function SummaryBox({ label, value, background, color }) {
       </div>
     </div>
   );
+}
+
+function deleteButtonStyle(disabled) {
+  return {
+    padding: "5px 9px",
+    borderRadius: 999,
+    border: "1px solid #ef4444",
+    background: disabled ? "#fca5a5" : "#ef4444",
+    color: "white",
+    fontWeight: 800,
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.75 : 1,
+  };
 }
 
 const th = {
