@@ -614,7 +614,7 @@ export default function GateControllerPage({
 
   /*
    * Gate-tagged bags:
-   * direct Gate â Aircraft.
+   * direct Gate \u2192 Aircraft.
    */
   const [
     gateBagInput,
@@ -1446,7 +1446,7 @@ export default function GateControllerPage({
             bagroomRecord.message ||
             `Bag scanned in Bagroom${
               bagroomRecord.cartNumber
-                ? ` Â· Cart ${bagroomRecord.cartNumber}`
+                ? ` \u00B7 Cart ${bagroomRecord.cartNumber}`
                 : ""
             }`,
           trackerSource:
@@ -1471,7 +1471,7 @@ export default function GateControllerPage({
           location: "gate",
           message:
             gateRecord.message ||
-            "Bag tagged at Gate Â· Direct to Aircraft",
+            "Bag tagged at Gate \u00B7 Direct to Aircraft",
           trackerSource:
             "Current Flight Gate",
           trackerTime:
@@ -1502,7 +1502,7 @@ export default function GateControllerPage({
             aircraftRecord.message ||
             `Bag loaded on Aircraft${
               aircraftRecord.zone
-                ? ` Â· Zone ${aircraftRecord.zone}`
+                ? ` \u00B7 Zone ${aircraftRecord.zone}`
                 : ""
             }`,
           trackerSource:
@@ -1784,7 +1784,7 @@ export default function GateControllerPage({
         );
 
         setGcMsg(
-          `Gate Controller saved: ${picked} â`
+          `Gate Controller saved: ${picked} \u2705`
         );
 
         setTimeout(
@@ -1831,7 +1831,7 @@ export default function GateControllerPage({
         );
 
         setManifestMsg(
-          `Status updated to ${nextStatus} â`
+          `Status updated to ${nextStatus} \u2705`
         );
 
         setTimeout(
@@ -1891,7 +1891,7 @@ export default function GateControllerPage({
         }
       );
 
-      setSaveMsg("Saved â");
+      setSaveMsg("Saved \u2705");
 
       setTimeout(
         () => setSaveMsg(""),
@@ -1950,7 +1950,7 @@ export default function GateControllerPage({
             nextValue
               ? "ON"
               : "OFF"
-          } â`
+          } \u2705`
         );
 
         setTimeout(
@@ -2064,7 +2064,7 @@ export default function GateControllerPage({
             });
 
           setManifestMsg(
-            `PDF uploaded for OCR â\n\nPath: ${uploaded.path}\n\nCloud OCR will import tags automatically.`
+            `PDF uploaded for OCR \u2705\n\nPath: ${uploaded.path}\n\nCloud OCR will import tags automatically.`
           );
         }
       } catch (error) {
@@ -2170,7 +2170,7 @@ export default function GateControllerPage({
       setStrictManifest(true);
 
       setManifestMsg(
-        `Imported ${imported} bag tags â Strict Manifest ON`
+        `Imported ${imported} bag tags \u2705 Strict Manifest ON`
       );
 
       setTimeout(
@@ -2262,7 +2262,7 @@ export default function GateControllerPage({
         setStrictManifest(true);
 
         setScanMsg(
-          `Saved â ${cleaned}`
+          `Saved \u2705 ${cleaned}`
         );
 
         setScanInput("");
@@ -2349,7 +2349,7 @@ export default function GateControllerPage({
         return {
           ok: false,
           message:
-            `â This bag tag belongs to another flight/date.\n\n` +
+            `\u274C This bag tag belongs to another flight/date.\n\n` +
             `Current flight: ${
               flight?.flightNumber ||
               flightId
@@ -2387,7 +2387,7 @@ export default function GateControllerPage({
         type: "GATE_BAG_SCAN",
         location: "gate",
         message:
-          "Bag tag created / scanned at gate Â· Direct to Aircraft",
+          "Bag tag created / scanned at gate \u00B7 Direct to Aircraft",
         tag,
         bagType: "GATE_BAG",
         bagTypeLabel:
@@ -2585,7 +2585,7 @@ export default function GateControllerPage({
         if (!saved) return;
 
         setGateBagMsg(
-          `Gate bag saved â ${tag} Â· Direct to Aircraft`
+          `Gate bag saved \u2705 ${tag} \u00B7 Direct to Aircraft`
         );
 
         setGateBagInput("");
@@ -2699,7 +2699,7 @@ export default function GateControllerPage({
         window.confirm(
           `Delete Gate bag tag?\n\n` +
             `Bag Tag: ${tag}\n` +
-            "Flow: Gate â Aircraft\n\n" +
+            "Flow: Gate \u2192 Aircraft\n\n" +
             "This action cannot be undone."
         );
 
@@ -2771,7 +2771,7 @@ export default function GateControllerPage({
         }
 
         setGateBagMsg(
-          `Gate bag deleted â ${tag}`
+          `Gate bag deleted \u2705 ${tag}`
         );
       } catch (error) {
         console.error(
@@ -2960,7 +2960,7 @@ export default function GateControllerPage({
                 }}
               >
                 <option value="">
-                  Select GCâ¦
+                  Select GC\u2026
                 </option>
 
                 {gateControllers.map(
@@ -3016,7 +3016,7 @@ export default function GateControllerPage({
                     "0.78rem",
                   color:
                     gcMsg.includes(
-                      "â"
+                      "\u2705"
                     )
                       ? "#16a34a"
                       : "#b91c1c",
@@ -3115,8 +3115,8 @@ export default function GateControllerPage({
                   fontSize: "0.9rem",
                 }}
               >
-                Open â Receiving â
-                Loading â Loaded
+                Open \u2192 Receiving \u2192
+                Loading \u2192 Loaded
               </p>
             </div>
 
@@ -3258,7 +3258,7 @@ export default function GateControllerPage({
                 fontWeight: 900,
               }}
             >
-              GATE â AIRCRAFT
+              GATE \u2192 AIRCRAFT
             </span>
           </div>
 
@@ -3275,7 +3275,7 @@ export default function GateControllerPage({
               label="Gate Tagged"
               value={
                 loadingGateBagScans
-                  ? "â¦"
+                  ? "\u2026"
                   : gateBagScans.length
               }
             />
@@ -3285,7 +3285,7 @@ export default function GateControllerPage({
               value={
                 loadingGateBagScans ||
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : gateBagLoadedCount
               }
             />
@@ -3295,7 +3295,7 @@ export default function GateControllerPage({
               value={
                 loadingGateBagScans ||
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : gateBagPendingCount
               }
             />
@@ -3304,7 +3304,7 @@ export default function GateControllerPage({
               label="Aircraft Gate Bags"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : aircraftBagTypeCounts.GATE_BAG
               }
             />
@@ -3337,7 +3337,7 @@ export default function GateControllerPage({
               placeholder={
                 isFlightLoaded
                   ? "Flight loaded / locked"
-                  : "Scan 10-digit Gate bag tagâ¦"
+                  : "Scan 10-digit Gate bag tag\u2026"
               }
               inputMode="numeric"
               style={{
@@ -3428,7 +3428,7 @@ export default function GateControllerPage({
                   color: "#6b7280",
                 }}
               >
-                Loading Gate bagsâ¦
+                Loading Gate bags\u2026
               </p>
             ) : gateBagScans.length ===
               0 ? (
@@ -3641,7 +3641,7 @@ export default function GateControllerPage({
                                 }}
                               >
                                 {busy
-                                  ? "Deletingâ¦"
+                                  ? "Deleting\u2026"
                                   : loaded
                                     ? "Loaded"
                                     : "Delete"}
@@ -3691,12 +3691,12 @@ export default function GateControllerPage({
               >
                 {checkedBagsTotal ===
                 null
-                  ? "â¹ï¸"
+                  ? "\u2139\uFE0F"
                   : missing === 0
-                    ? "â"
+                    ? "\u2705"
                     : missing <= 3
-                      ? "â ï¸"
-                      : "â"}
+                      ? "\u26A0\uFE0F"
+                      : "\u274C"}
               </div>
 
               <div>
@@ -3759,7 +3759,7 @@ export default function GateControllerPage({
                 }}
               >
                 {aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : aircraftTotal}
               </div>
 
@@ -3790,7 +3790,7 @@ export default function GateControllerPage({
               label="Zone 1"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : zones[1]
               }
             />
@@ -3799,7 +3799,7 @@ export default function GateControllerPage({
               label="Zone 2"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : zones[2]
               }
             />
@@ -3808,7 +3808,7 @@ export default function GateControllerPage({
               label="Zone 3"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : zones[3]
               }
             />
@@ -3817,7 +3817,7 @@ export default function GateControllerPage({
               label="Zone 4"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : zones[4]
               }
             />
@@ -3836,7 +3836,7 @@ export default function GateControllerPage({
               label="Checked Bags Loaded"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : aircraftBagTypeCounts.CHECKED_BAG
               }
             />
@@ -3845,7 +3845,7 @@ export default function GateControllerPage({
               label="Gate Checks Loaded"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : aircraftBagTypeCounts.GATE_CHECK
               }
             />
@@ -3854,7 +3854,7 @@ export default function GateControllerPage({
               label="Oversize Loaded"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : aircraftBagTypeCounts.OVERSIZE
               }
             />
@@ -3863,7 +3863,7 @@ export default function GateControllerPage({
               label="Gate Tagged Loaded"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : aircraftBagTypeCounts.GATE_BAG
               }
             />
@@ -3897,7 +3897,7 @@ export default function GateControllerPage({
               label="Manifest Tags"
               value={
                 loadingAllowed
-                  ? "â¦"
+                  ? "\u2026"
                   : allManifestTags.length
               }
             />
@@ -3906,7 +3906,7 @@ export default function GateControllerPage({
               label="Bagroom Scanned"
               value={
                 loadingBagroomScans
-                  ? "â¦"
+                  ? "\u2026"
                   : bagroomScans.length
               }
             />
@@ -3916,7 +3916,7 @@ export default function GateControllerPage({
               value={
                 loadingAllowed ||
                 loadingBagroomScans
-                  ? "â¦"
+                  ? "\u2026"
                   : bagroomMatchedTags.length
               }
             />
@@ -3926,7 +3926,7 @@ export default function GateControllerPage({
               value={
                 loadingAllowed ||
                 loadingBagroomScans
-                  ? "â¦"
+                  ? "\u2026"
                   : bagroomNotInManifest.length
               }
             />
@@ -3995,7 +3995,7 @@ export default function GateControllerPage({
                   color: "#6b7280",
                 }}
               >
-                Loading Bagroom scansâ¦
+                Loading Bagroom scans\u2026
               </p>
             ) : bagroomScans.length ===
               0 ? (
@@ -4180,7 +4180,7 @@ export default function GateControllerPage({
                 }}
               >
                 All Bagroom scans are
-                in the manifest â
+                in the manifest \u2705
               </p>
             ) : (
               <div
@@ -4202,7 +4202,7 @@ export default function GateControllerPage({
                           "#991B1B",
                       }}
                     >
-                      {scan.cleanTag} Â·
+                      {scan.cleanTag} \u00B7
                       Cart{" "}
                       {scan.cartNumber ||
                         "-"}
@@ -4254,7 +4254,7 @@ export default function GateControllerPage({
                     fontWeight: 800,
                   }}
                 >
-                  â ï¸ Final bag search
+                  \u26A0\uFE0F Final bag search
                   activated. Click a
                   missing bag tag to
                   view its last scanned
@@ -4299,7 +4299,7 @@ export default function GateControllerPage({
               label="Manifest Tags"
               value={
                 loadingAllowed
-                  ? "â¦"
+                  ? "\u2026"
                   : allManifestTags.length
               }
             />
@@ -4308,7 +4308,7 @@ export default function GateControllerPage({
               label="Aircraft Loaded"
               value={
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : loadedAircraftTags.length
               }
             />
@@ -4318,7 +4318,7 @@ export default function GateControllerPage({
               value={
                 loadingAllowed ||
                 aircraftLoading
-                  ? "â¦"
+                  ? "\u2026"
                   : missingManifestTags.length
               }
             />
@@ -4380,7 +4380,7 @@ export default function GateControllerPage({
                     color: "#6b7280",
                   }}
                 >
-                  Loading manifestâ¦
+                  Loading manifest\u2026
                 </p>
               ) : recentAllowed.length ===
                 0 ? (
@@ -4448,7 +4448,7 @@ export default function GateControllerPage({
                               }}
                             >
                               {busy
-                                ? "â¦"
+                                ? "\u2026"
                                 : "â"}
                             </button>
                           )}
@@ -4465,7 +4465,7 @@ export default function GateControllerPage({
                   color: "#6b7280",
                 }}
               >
-                Loading missing tagsâ¦
+                Loading missing tags\u2026
               </p>
             ) : missingManifestTags.length ===
               0 ? (
@@ -4476,7 +4476,7 @@ export default function GateControllerPage({
                 }}
               >
                 All manifest tags are
-                loaded â
+                loaded \u2705
               </p>
             ) : (
               <div
@@ -4629,7 +4629,7 @@ export default function GateControllerPage({
                 margin: "8px 0 0",
                 fontSize: "0.85rem",
                 color: saveMsg.includes(
-                  "â"
+                  "\u2705"
                 )
                   ? "#16a34a"
                   : "#b91c1c",
@@ -5416,7 +5416,7 @@ function getTrackerLocationStyle(
       border: "#22c55e",
       background: "#dcfce7",
       color: "#166534",
-      icon: "âï¸",
+      icon: "\u2708ï¸",
     };
   }
 
@@ -5429,7 +5429,7 @@ function getTrackerLocationStyle(
       border: "#eab308",
       background: "#fef9c3",
       color: "#854d0e",
-      icon: "ðª",
+      icon: "\uD83D\uDEAA",
     };
   }
 
@@ -5444,7 +5444,7 @@ function getTrackerLocationStyle(
       border: "#3b82f6",
       background: "#dbeafe",
       color: "#1e3a8a",
-      icon: "ð",
+      icon: "\uD83D\uDEC4",
     };
   }
 
@@ -5482,7 +5482,7 @@ function getTrackerLocationStyle(
       border: "#ec4899",
       background: "#fce7f3",
       color: "#9d174d",
-      icon: "ð¦",
+      icon: "\uD83D\uDCE6",
     };
   }
 
