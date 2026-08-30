@@ -1,4 +1,4 @@
-// src/pages/GateControllerPage.jsx
+/ src/pages/GateControllerPage.jsx
 import React, {
   useEffect,
   useMemo,
@@ -4449,7 +4449,7 @@ export default function GateControllerPage({
                             >
                               {busy
                                 ? "\u2026"
-                                : "{"\u2715"}"}
+                                : "\u2715"}
                             </button>
                           )}
                         </span>
