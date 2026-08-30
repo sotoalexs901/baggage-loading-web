@@ -32,6 +32,27 @@ function normalizeRole(role) {
     .toLowerCase();
 }
 
+function normalizeOperationalPosition(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase();
+}
+
+function getOperationalPositionLabel(value) {
+  const normalized =
+    normalizeOperationalPosition(value);
+
+  const labels = {
+    COUNTER_SCAN: "Counter Scan",
+    GATE_CONTROLLER: "Gate Controller",
+    BAGROOM_SCAN: "Bagroom Scan",
+    AIRCRAFT_RAMP: "Aircraft / Ramp",
+    SUPERVISOR: "Supervisor",
+  };
+
+  return labels[normalized] || normalized || "-";
+}
+
 function getSessionJson(key, fallback = null) {
   try {
     const saved = sessionStorage.getItem(key);
@@ -47,6 +68,21 @@ function getSessionJson(key, fallback = null) {
 export default function App() {
   const [user, setUser] = useState(() =>
     getSessionJson("blcsUser", null)
+  );
+
+  /*
+   * Operational session data.
+   * This is the position selected at login
+   * for the current shift/session.
+   */
+  const [
+    operationalSession,
+    setOperationalSession,
+  ] = useState(() =>
+    getSessionJson(
+      "blcsOperationalSession",
+      null
+    )
   );
 
   const [
@@ -187,12 +223,65 @@ export default function App() {
     userData,
     sessionMeta
   ) => {
-    const gc =
+    const operationalPosition =
+      normalizeOperationalPosition(
+        sessionMeta
+          ?.operationalPosition
+      );
+
+    const operationalPositionLabel =
       sessionMeta
-        ?.gateControllerUsername ||
-      null;
+        ?.operationalPositionLabel ||
+      getOperationalPositionLabel(
+        operationalPosition
+      );
+
+    const nextOperationalSession = {
+      operationalPosition:
+        operationalPosition || null,
+
+      operationalPositionLabel:
+        operationalPositionLabel || null,
+
+      employeeFullName:
+        sessionMeta
+          ?.employeeFullName ||
+        userData?.fullName ||
+        userData?.username ||
+        null,
+
+      basePosition:
+        sessionMeta
+          ?.basePosition ||
+        userData?.position ||
+        null,
+
+      systemRole:
+        sessionMeta
+          ?.systemRole ||
+        userData?.role ||
+        null,
+
+      loginAt:
+        sessionMeta
+          ?.loginAt ||
+        new Date().toISOString(),
+    };
+
+    const gc =
+      operationalPosition ===
+      "GATE_CONTROLLER"
+        ? userData?.username || null
+        : sessionMeta
+            ?.gateControllerUsername ||
+          null;
 
     setUser(userData);
+
+    setOperationalSession(
+      nextOperationalSession
+    );
+
     setGateControllerOnDuty(gc);
 
     setCurrentView("dashboard");
@@ -205,6 +294,13 @@ export default function App() {
     sessionStorage.setItem(
       "blcsUser",
       JSON.stringify(userData)
+    );
+
+    sessionStorage.setItem(
+      "blcsOperationalSession",
+      JSON.stringify(
+        nextOperationalSession
+      )
     );
 
     if (gc) {
@@ -264,6 +360,16 @@ export default function App() {
                   user.username || null,
                 role:
                   user.role || null,
+
+                operationalPosition:
+                  operationalSession
+                    ?.operationalPosition ||
+                  null,
+
+                operationalPositionLabel:
+                  operationalSession
+                    ?.operationalPositionLabel ||
+                  null,
               },
             },
           },
@@ -295,6 +401,8 @@ export default function App() {
     sessionStorage.clear();
 
     setUser(null);
+
+    setOperationalSession(null);
 
     setGateControllerOnDuty(null);
 
@@ -403,9 +511,29 @@ export default function App() {
       letter.toUpperCase()
     );
 
+  const activeOperationalPosition =
+    normalizeOperationalPosition(
+      operationalSession
+        ?.operationalPosition
+    );
+
+  const activeOperationalPositionLabel =
+    operationalSession
+      ?.operationalPositionLabel ||
+    getOperationalPositionLabel(
+      activeOperationalPosition
+    );
+
   const isStationManager =
     role === "station_manager";
 
+  /*
+   * System Role still controls permanent
+   * administrative permissions.
+   *
+   * Operational Position records what the
+   * employee is actually doing for this shift.
+   */
   const canCreateFlights =
     role === "station_manager" ||
     role === "duty_manager" ||
@@ -416,7 +544,45 @@ export default function App() {
     role === "station_manager" ||
     role === "duty_manager" ||
     role === "supervisor" ||
-    role === "gate_controller";
+    role === "gate_controller" ||
+    activeOperationalPosition ===
+      "GATE_CONTROLLER";
+
+  /*
+   * This object is passed to all operational
+   * pages so scans/reports can record both:
+   *
+   * - permanent system role
+   * - selected shift position
+   */
+  const operationalContext = {
+    operationalPosition:
+      activeOperationalPosition ||
+      null,
+
+    operationalPositionLabel:
+      activeOperationalPositionLabel ||
+      null,
+
+    employeeFullName:
+      operationalSession
+        ?.employeeFullName ||
+      displayName,
+
+    basePosition:
+      operationalSession
+        ?.basePosition ||
+      user?.position ||
+      null,
+
+    systemRole:
+      role || null,
+
+    loginAt:
+      operationalSession
+        ?.loginAt ||
+      null,
+  };
 
   /* =========================
      NAVIGATION
@@ -497,6 +663,9 @@ export default function App() {
       return (
         <DashboardPage
           user={user}
+          operationalContext={
+            operationalContext
+          }
           onOpenFlight={
             handleOpenFlightFromDashboard
           }
@@ -513,6 +682,9 @@ export default function App() {
       return (
         <FlightsPage
           user={user}
+          operationalContext={
+            operationalContext
+          }
           canCreateFlights={
             canCreateFlights
           }
@@ -533,6 +705,9 @@ export default function App() {
       return (
         <BaggageTrackingPage
           user={user}
+          operationalContext={
+            operationalContext
+          }
         />
       );
     }
@@ -573,6 +748,9 @@ export default function App() {
             selectedFlightId
           }
           user={user}
+          operationalContext={
+            operationalContext
+          }
         />
       );
     }
@@ -586,6 +764,9 @@ export default function App() {
             selectedFlightId
           }
           user={user}
+          operationalContext={
+            operationalContext
+          }
           gateControllerOnDuty={
             gateControllerOnDuty
           }
@@ -605,6 +786,9 @@ export default function App() {
             selectedFlightId
           }
           user={user}
+          operationalContext={
+            operationalContext
+          }
         />
       );
     }
@@ -618,6 +802,9 @@ export default function App() {
             selectedFlightId
           }
           user={user}
+          operationalContext={
+            operationalContext
+          }
         />
       );
     }
@@ -631,6 +818,9 @@ export default function App() {
             selectedFlightId
           }
           user={user}
+          operationalContext={
+            operationalContext
+          }
         />
       );
     }
@@ -786,7 +976,7 @@ export default function App() {
               flexDirection: "column",
               alignItems: "flex-end",
               gap: 8,
-              minWidth: 205,
+              minWidth: 225,
             }}
           >
             <div
@@ -812,16 +1002,54 @@ export default function App() {
                   color: "#64748b",
                 }}
               >
-                @{user?.username} ·{" "}
+                @{user?.username} -{" "}
                 {roleLabel}
               </div>
 
+              {activeOperationalPosition && (
+                <div
+                  style={{
+                    display:
+                      "inline-flex",
+
+                    marginTop:
+                      6,
+
+                    padding:
+                      "5px 9px",
+
+                    borderRadius:
+                      999,
+
+                    background:
+                      "#eff6ff",
+
+                    border:
+                      "1px solid #bfdbfe",
+
+                    color:
+                      "#1d4ed8",
+
+                    fontSize:
+                      "0.72rem",
+
+                    fontWeight:
+                      900,
+                  }}
+                >
+                  Working as:{" "}
+                  {
+                    activeOperationalPositionLabel
+                  }
+                </div>
+              )}
+
               {gateControllerOnDuty &&
-                role !==
-                  "gate_controller" && (
+                activeOperationalPosition !==
+                  "GATE_CONTROLLER" && (
                   <div
                     style={{
-                      marginTop: 4,
+                      marginTop: 5,
                       fontSize: "0.72rem",
                       color: "#475569",
                     }}
@@ -872,14 +1100,6 @@ export default function App() {
                     "0 1px 3px rgba(15,23,42,0.06)",
                 }}
               >
-                <span
-                  style={{
-                    fontSize: "1rem",
-                  }}
-                >
-                  ↻
-                </span>
-
                 Refresh
               </button>
 
@@ -908,14 +1128,6 @@ export default function App() {
                   cursor: "pointer",
                 }}
               >
-                <span
-                  style={{
-                    fontSize: "0.95rem",
-                  }}
-                >
-                  ↪
-                </span>
-
                 Logout
               </button>
             </div>
@@ -938,10 +1150,6 @@ export default function App() {
               fontSize: "0.82rem",
             }}
           >
-            <span>
-              ✈
-            </span>
-
             <strong>
               Flight selected:
             </strong>
