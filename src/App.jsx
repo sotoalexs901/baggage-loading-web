@@ -1,5 +1,10 @@
 // src/App.jsx
-import { useEffect, useMemo, useState } from "react";
+
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   doc,
@@ -36,31 +41,54 @@ import {
   createPresenceHeartbeat,
 } from "./utils/systemLogger.js";
 
+/* =========================
+   HELPERS
+========================= */
+
 function normalizeRole(role) {
   return String(role || "")
     .trim()
     .toLowerCase();
 }
 
-function normalizeOperationalPosition(value) {
+function normalizeOperationalPosition(
+  value
+) {
   return String(value || "")
     .trim()
     .toUpperCase();
 }
 
-function getOperationalPositionLabel(value) {
+function getOperationalPositionLabel(
+  value
+) {
   const normalized =
-    normalizeOperationalPosition(value);
+    normalizeOperationalPosition(
+      value
+    );
 
   const labels = {
-    COUNTER_SCAN: "Counter Scan",
-    GATE_CONTROLLER: "Gate Controller",
-    BAGROOM_SCAN: "Bagroom Scan",
-    AIRCRAFT_RAMP: "Aircraft / Ramp",
-    SUPERVISOR: "Supervisor",
+    COUNTER_SCAN:
+      "Counter Scan",
+
+    GATE_CONTROLLER:
+      "Gate Controller",
+
+    BAGROOM_SCAN:
+      "Bagroom Scan",
+
+    AIRCRAFT_RAMP:
+      "Aircraft / Ramp",
+
+    SUPERVISOR:
+      "Supervisor",
   };
 
-  return labels[normalized] || normalized || "-";
+  return (
+    labels[normalized] ||
+    normalized ||
+    "-"
+  );
 }
 
 function getSessionJson(
@@ -69,17 +97,29 @@ function getSessionJson(
 ) {
   try {
     const saved =
-      sessionStorage.getItem(key);
+      sessionStorage.getItem(
+        key
+      );
 
     return saved
-      ? JSON.parse(saved)
+      ? JSON.parse(
+          saved
+        )
       : fallback;
   } catch {
     return fallback;
   }
 }
 
+/* =========================
+   APP
+========================= */
+
 export default function App() {
+  /* =========================
+     STATE
+  ========================= */
+
   const [
     user,
     setUser,
@@ -164,6 +204,132 @@ export default function App() {
   ] = useState(false);
 
   /* =========================
+     USER / ROLE VALUES
+     SAFE EVEN IF USER IS NULL
+  ========================= */
+
+  const role =
+    normalizeRole(
+      user?.role
+    );
+
+  const displayName =
+    user?.fullName ||
+    user?.name ||
+    user?.displayName ||
+    user?.username ||
+    "User";
+
+  const roleLabel =
+    String(
+      user?.role ||
+        "user"
+    )
+      .replaceAll(
+        "_",
+        " "
+      )
+      .replace(
+        /\b\w/g,
+        (letter) =>
+          letter.toUpperCase()
+      );
+
+  const activeOperationalPosition =
+    normalizeOperationalPosition(
+      operationalSession
+        ?.operationalPosition
+    );
+
+  const activeOperationalPositionLabel =
+    operationalSession
+      ?.operationalPositionLabel ||
+    getOperationalPositionLabel(
+      activeOperationalPosition
+    );
+
+  const isStationManager =
+    role ===
+    "station_manager";
+
+  const canCreateFlights =
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller";
+
+  const canEditGateTotals =
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller" ||
+    activeOperationalPosition ===
+      "GATE_CONTROLLER";
+
+  /*
+   * IMPORTANT:
+   * This hook now executes on EVERY render,
+   * including Login and Privacy screens.
+   */
+  const operationalContext =
+    useMemo(
+      () => ({
+        operationalPosition:
+          activeOperationalPosition ||
+          null,
+
+        operationalPositionLabel:
+          activeOperationalPositionLabel ||
+          null,
+
+        employeeFullName:
+          operationalSession
+            ?.employeeFullName ||
+          displayName,
+
+        basePosition:
+          operationalSession
+            ?.basePosition ||
+          user?.position ||
+          null,
+
+        systemRole:
+          role ||
+          null,
+
+        loginAt:
+          operationalSession
+            ?.loginAt ||
+          null,
+      }),
+      [
+        activeOperationalPosition,
+        activeOperationalPositionLabel,
+        operationalSession
+          ?.employeeFullName,
+        operationalSession
+          ?.basePosition,
+        operationalSession
+          ?.loginAt,
+        displayName,
+        user?.position,
+        role,
+      ]
+    );
+
+  /* =========================
      CHECK PRIVACY CONSENT
   ========================= */
 
@@ -173,10 +339,11 @@ export default function App() {
         "accepted"
       );
 
-      return;
+      return undefined;
     }
 
-    let active = true;
+    let active =
+      true;
 
     const checkPrivacy =
       async () => {
@@ -201,7 +368,9 @@ export default function App() {
             return;
           }
 
-          if (!snap.exists()) {
+          if (
+            !snap.exists()
+          ) {
             setPrivacyStatus(
               "required"
             );
@@ -260,7 +429,82 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [user?.id]);
+  }, [
+    user?.id,
+  ]);
+
+  /* =========================
+     SYSTEM PRESENCE
+  ========================= */
+
+  useEffect(() => {
+    if (
+      !user?.id ||
+      privacyStatus !==
+        "accepted"
+    ) {
+      return undefined;
+    }
+
+    let stopHeartbeat =
+      null;
+
+    try {
+      stopHeartbeat =
+        createPresenceHeartbeat({
+          user,
+
+          operationalContext,
+
+          getCurrentView:
+            () => {
+              return (
+                sessionStorage.getItem(
+                  "currentView"
+                ) ||
+                currentView ||
+                "dashboard"
+              );
+            },
+        });
+    } catch (
+      error
+    ) {
+      /*
+       * Monitoring should NEVER
+       * crash BLCS.
+       */
+      console.warn(
+        "BLCS presence heartbeat could not start:",
+        error
+      );
+    }
+
+    return () => {
+      try {
+        if (
+          typeof stopHeartbeat ===
+          "function"
+        ) {
+          stopHeartbeat();
+        }
+      } catch (
+        error
+      ) {
+        console.warn(
+          "BLCS presence heartbeat cleanup error:",
+          error
+        );
+      }
+    };
+  }, [
+    user?.id,
+    user?.username,
+    user?.role,
+    currentView,
+    privacyStatus,
+    operationalContext,
+  ]);
 
   /* =========================
      LOGIN
@@ -436,12 +680,12 @@ export default function App() {
 
                 username:
                   user
-                    .username ||
+                    ?.username ||
                   null,
 
                 role:
                   user
-                    .role ||
+                    ?.role ||
                   null,
 
                 operationalPosition:
@@ -487,317 +731,42 @@ export default function App() {
      LOGOUT
   ========================= */
 
-  const handleLogout = () => {
-    sessionStorage.clear();
+  const handleLogout =
+    () => {
+      sessionStorage.clear();
 
-    setUser(
-      null
-    );
-
-    setOperationalSession(
-      null
-    );
-
-    setGateControllerOnDuty(
-      null
-    );
-
-    setSelectedFlightId(
-      null
-    );
-
-    setSelectedFlightNumber(
-      null
-    );
-
-    setCurrentView(
-      "dashboard"
-    );
-
-    setRefreshKey(
-      0
-    );
-
-    setPrivacyStatus(
-      "accepted"
-    );
-  };
-
-  /* =========================
-     LOGIN SCREEN
-  ========================= */
-
-  if (!user) {
-    return (
-      <LoginPage
-        onLogin={
-          handleLogin
-        }
-      />
-    );
-  }
-
-  /* =========================
-     PRIVACY CHECK
-  ========================= */
-
-  if (
-    privacyStatus ===
-    "checking"
-  ) {
-    return (
-      <div
-        style={{
-          minHeight:
-            "100dvh",
-
-          display:
-            "flex",
-
-          alignItems:
-            "center",
-
-          justifyContent:
-            "center",
-
-          background:
-            "#0f172a",
-
-          color:
-            "white",
-
-          fontFamily:
-            "system-ui, sans-serif",
-        }}
-      >
-        <div
-          style={{
-            textAlign:
-              "center",
-          }}
-        >
-          <div
-            style={{
-              fontSize:
-                "1.2rem",
-
-              fontWeight:
-                900,
-            }}
-          >
-            BLCS
-          </div>
-
-          <div
-            style={{
-              marginTop:
-                7,
-
-              color:
-                "#cbd5e1",
-
-              fontSize:
-                "0.82rem",
-            }}
-          >
-            Verifying system access...
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (
-    privacyStatus ===
-    "required"
-  ) {
-    return (
-      <PrivacyNoticePage
-        user={
-          user
-        }
-
-        saving={
-          savingPrivacy
-        }
-
-        onAccept={
-          handleAcceptPrivacy
-        }
-
-        onLogout={
-          handleLogout
-        }
-      />
-    );
-  }
-
-  /* =========================
-     USER / PERMISSIONS
-  ========================= */
-
-  const role =
-    normalizeRole(
-      user.role
-    );
-
-  const displayName =
-    user?.fullName ||
-    user?.name ||
-    user?.displayName ||
-    user?.username ||
-    "User";
-
-  const roleLabel =
-    String(
-      user?.role ||
-        "user"
-    )
-      .replaceAll(
-        "_",
-        " "
-      )
-      .replace(
-        /\b\w/g,
-        (
-          letter
-        ) =>
-          letter.toUpperCase()
+      setUser(
+        null
       );
 
-  const activeOperationalPosition =
-    normalizeOperationalPosition(
-      operationalSession
-        ?.operationalPosition
-    );
+      setOperationalSession(
+        null
+      );
 
-  const activeOperationalPositionLabel =
-    operationalSession
-      ?.operationalPositionLabel ||
-    getOperationalPositionLabel(
-      activeOperationalPosition
-    );
+      setGateControllerOnDuty(
+        null
+      );
 
-  const isStationManager =
-    role ===
-    "station_manager";
+      setSelectedFlightId(
+        null
+      );
 
-  const canCreateFlights =
-    role ===
-      "station_manager" ||
-    role ===
-      "duty_manager" ||
-    role ===
-      "supervisor" ||
-    role ===
-      "gate_controller";
+      setSelectedFlightNumber(
+        null
+      );
 
-  const canEditGateTotals =
-    role ===
-      "station_manager" ||
-    role ===
-      "duty_manager" ||
-    role ===
-      "supervisor" ||
-    role ===
-      "gate_controller" ||
-    activeOperationalPosition ===
-      "GATE_CONTROLLER";
+      setCurrentView(
+        "dashboard"
+      );
 
-  /*
-   * useMemo prevents the presence
-   * heartbeat effect from being rebuilt
-   * unnecessarily on every render.
-   */
-  const operationalContext =
-    useMemo(
-      () => ({
-        operationalPosition:
-          activeOperationalPosition ||
-          null,
+      setRefreshKey(
+        0
+      );
 
-        operationalPositionLabel:
-          activeOperationalPositionLabel ||
-          null,
-
-        employeeFullName:
-          operationalSession
-            ?.employeeFullName ||
-          displayName,
-
-        basePosition:
-          operationalSession
-            ?.basePosition ||
-          user?.position ||
-          null,
-
-        systemRole:
-          role ||
-          null,
-
-        loginAt:
-          operationalSession
-            ?.loginAt ||
-          null,
-      }),
-      [
-        activeOperationalPosition,
-        activeOperationalPositionLabel,
-        operationalSession
-          ?.employeeFullName,
-        operationalSession
-          ?.basePosition,
-        operationalSession
-          ?.loginAt,
-        displayName,
-        user?.position,
-        role,
-      ]
-    );
-
-  /* =========================
-     SYSTEM PRESENCE
-  ========================= */
-
-  useEffect(() => {
-    if (
-      !user?.id ||
-      privacyStatus !==
+      setPrivacyStatus(
         "accepted"
-    ) {
-      return undefined;
-    }
-
-    const stopHeartbeat =
-      createPresenceHeartbeat({
-        user,
-
-        operationalContext,
-
-        getCurrentView:
-          () =>
-            sessionStorage.getItem(
-              "currentView"
-            ) ||
-            currentView,
-      });
-
-    return () => {
-      if (
-        typeof stopHeartbeat ===
-        "function"
-      ) {
-        stopHeartbeat();
-      }
+      );
     };
-  }, [
-    user?.id,
-    user?.username,
-    user?.role,
-    currentView,
-    privacyStatus,
-    operationalContext,
-  ]);
 
   /* =========================
      NAVIGATION
@@ -833,9 +802,10 @@ export default function App() {
     () => {
       setRefreshKey(
         (
-          prev
+          previous
         ) =>
-          prev + 1
+          previous +
+          1
       );
     };
 
@@ -1011,6 +981,11 @@ export default function App() {
         );
       }
 
+      /*
+       * Pages below this point
+       * require a selected flight.
+       */
+
       if (
         !selectedFlightId
       ) {
@@ -1151,11 +1126,139 @@ export default function App() {
         );
       }
 
-      return null;
+      return (
+        <div
+          style={{
+            padding:
+              20,
+
+            background:
+              "white",
+
+            border:
+              "1px solid #e5e7eb",
+
+            borderRadius:
+              14,
+
+            color:
+              "#64748b",
+          }}
+        >
+          Page not found.
+        </div>
+      );
     };
 
   /* =========================
-     APP
+     CONDITIONAL SCREENS
+     IMPORTANT:
+     ALL HOOKS ARE ABOVE THIS
+  ========================= */
+
+  if (!user) {
+    return (
+      <LoginPage
+        onLogin={
+          handleLogin
+        }
+      />
+    );
+  }
+
+  if (
+    privacyStatus ===
+    "checking"
+  ) {
+    return (
+      <div
+        style={{
+          minHeight:
+            "100dvh",
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          background:
+            "#0f172a",
+
+          color:
+            "white",
+
+          fontFamily:
+            "system-ui, sans-serif",
+        }}
+      >
+        <div
+          style={{
+            textAlign:
+              "center",
+          }}
+        >
+          <div
+            style={{
+              fontSize:
+                "1.2rem",
+
+              fontWeight:
+                900,
+            }}
+          >
+            BLCS
+          </div>
+
+          <div
+            style={{
+              marginTop:
+                7,
+
+              color:
+                "#cbd5e1",
+
+              fontSize:
+                "0.82rem",
+            }}
+          >
+            Verifying system access...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (
+    privacyStatus ===
+    "required"
+  ) {
+    return (
+      <PrivacyNoticePage
+        user={
+          user
+        }
+
+        saving={
+          savingPrivacy
+        }
+
+        onAccept={
+          handleAcceptPrivacy
+        }
+
+        onLogout={
+          handleLogout
+        }
+      />
+    );
+  }
+
+  /* =========================
+     MAIN APPLICATION
   ========================= */
 
   return (
@@ -1390,7 +1493,9 @@ export default function App() {
             )}
           </nav>
 
-          {/* USER PROFILE */}
+          {/* =========================
+              USER PROFILE
+          ========================= */}
 
           <div
             style={{
@@ -1530,10 +1635,13 @@ export default function App() {
             >
               <button
                 type="button"
+
                 onClick={
                   handleSoftRefresh
                 }
+
                 title="Refresh current page"
+
                 style={{
                   display:
                     "inline-flex",
@@ -1583,10 +1691,13 @@ export default function App() {
 
               <button
                 type="button"
+
                 onClick={
                   handleLogout
                 }
+
                 title="Sign out"
+
                 style={{
                   display:
                     "inline-flex",
