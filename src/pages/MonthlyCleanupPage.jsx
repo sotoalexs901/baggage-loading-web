@@ -1,12 +1,17 @@
 // src/pages/MonthlyCleanupPage.jsx
-import React, { useMemo, useState } from "react";
+import React, {
+  useMemo,
+  useState,
+} from "react";
 
 import {
   collection,
   getDocs,
 } from "firebase/firestore";
 
-import { httpsCallable } from "firebase/functions";
+import {
+  httpsCallable,
+} from "firebase/functions";
 
 import {
   db,
@@ -20,13 +25,20 @@ function normalizeRole(role) {
 }
 
 function getCurrentMonth() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(
-    d.getMonth() + 1
-  ).padStart(2, "0");
+  const date = new Date();
 
-  return `${y}-${m}`;
+  const year =
+    date.getFullYear();
+
+  const month =
+    String(
+      date.getMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  return `${year}-${month}`;
 }
 
 function formatMonthLabel(value) {
@@ -37,7 +49,10 @@ function formatMonthLabel(value) {
     return value || "-";
   }
 
-  const [year, month] =
+  const [
+    year,
+    month,
+  ] =
     value.split("-");
 
   const date =
@@ -56,30 +71,91 @@ function formatMonthLabel(value) {
   );
 }
 
-function formatCallableError(
+function safeJson(value) {
+  try {
+    return JSON.stringify(
+      value,
+      null,
+      2
+    );
+  } catch {
+    return String(
+      value || ""
+    );
+  }
+}
+
+function buildErrorDiagnostic(
   error,
   fallbackMessage
 ) {
-  const details =
-    error?.details
-      ? typeof error.details ===
-        "string"
-        ? error.details
-        : JSON.stringify(
-            error.details
-          )
-      : null;
+  const diagnostic = {
+    fallbackMessage,
+
+    name:
+      error?.name ||
+      null,
+
+    code:
+      error?.code ||
+      null,
+
+    message:
+      error?.message ||
+      null,
+
+    details:
+      error?.details ??
+      null,
+
+    customData:
+      error?.customData ??
+      null,
+
+    stack:
+      error?.stack ||
+      null,
+
+    timestamp:
+      new Date().toISOString(),
+  };
+
+  return diagnostic;
+}
+
+function formatDiagnosticText(
+  diagnostic
+) {
+  if (!diagnostic) {
+    return "";
+  }
 
   return [
-    fallbackMessage,
-    error?.code
-      ? `Code: ${error.code}`
+    diagnostic.fallbackMessage ||
+      null,
+
+    diagnostic.code
+      ? `Code: ${diagnostic.code}`
       : null,
-    error?.message
-      ? `Message: ${error.message}`
+
+    diagnostic.message
+      ? `Message: ${diagnostic.message}`
       : null,
-    details
-      ? `Details: ${details}`
+
+    diagnostic.details
+      ? `Details: ${safeJson(
+          diagnostic.details
+        )}`
+      : null,
+
+    diagnostic.customData
+      ? `Custom Data: ${safeJson(
+          diagnostic.customData
+        )}`
+      : null,
+
+    diagnostic.timestamp
+      ? `Time: ${diagnostic.timestamp}`
       : null,
   ]
     .filter(Boolean)
@@ -121,6 +197,11 @@ export default function MonthlyCleanupPage({
   ] = useState(false);
 
   const [
+    testingBackend,
+    setTestingBackend,
+  ] = useState(false);
+
+  const [
     message,
     setMessage,
   ] = useState("");
@@ -129,6 +210,11 @@ export default function MonthlyCleanupPage({
     error,
     setError,
   ] = useState("");
+
+  const [
+    diagnostic,
+    setDiagnostic,
+  ] = useState(null);
 
   const monthLabel =
     useMemo(
@@ -139,19 +225,21 @@ export default function MonthlyCleanupPage({
       [monthValue]
     );
 
+  const clearMessages = () => {
+    setMessage("");
+    setError("");
+  };
+
   /*
-   * Preview reads Firestore directly.
+   * DIRECT FIRESTORE PREVIEW
    *
-   * IMPORTANT:
-   * Nothing is deleted here.
-   * The Cloud Function is only used
-   * when the Station Manager confirms
-   * permanent deletion.
+   * This confirms the frontend can see
+   * the flights that should be deleted.
+   * No Cloud Function is used here.
    */
   const runPreview =
     async () => {
-      setMessage("");
-      setError("");
+      clearMessages();
       setPreview(null);
 
       const [
@@ -163,10 +251,14 @@ export default function MonthlyCleanupPage({
         ).split("-");
 
       const year =
-        Number(yearText);
+        Number(
+          yearText
+        );
 
       const month =
-        Number(monthText);
+        Number(
+          monthText
+        );
 
       if (
         !year ||
@@ -194,13 +286,6 @@ export default function MonthlyCleanupPage({
             "0"
           )}`;
 
-        /*
-         * Read all flights.
-         * Filter by flightDate YYYY-MM.
-         *
-         * This avoids depending on the
-         * preview Cloud Function.
-         */
         const flightsSnapshot =
           await getDocs(
             collection(
@@ -272,8 +357,7 @@ export default function MonthlyCleanupPage({
               ] += 1;
             } else {
               statusCounts
-                .OTHER +=
-                1;
+                .OTHER += 1;
             }
           }
         );
@@ -321,13 +405,6 @@ export default function MonthlyCleanupPage({
           }
         );
 
-        /*
-         * Try to count global bagTags
-         * connected to flights in the month.
-         *
-         * If Firestore rules block this read,
-         * preview still works and shows "â".
-         */
         let bagTagCount =
           0;
 
@@ -419,7 +496,8 @@ export default function MonthlyCleanupPage({
           );
 
         setPreview({
-          ok: true,
+          ok:
+            true,
 
           month:
             monthPrefix,
@@ -434,6 +512,28 @@ export default function MonthlyCleanupPage({
           flights:
             previewFlights,
         });
+
+        setDiagnostic({
+          type:
+            "preview",
+
+          ok:
+            true,
+
+          message:
+            "Frontend Firestore preview succeeded.",
+
+          month:
+            monthPrefix,
+
+          flightCount:
+            previewFlights.length,
+
+          bagTagCount,
+
+          timestamp:
+            new Date().toISOString(),
+        });
       } catch (
         previewError
       ) {
@@ -442,10 +542,19 @@ export default function MonthlyCleanupPage({
           previewError
         );
 
-        setError(
-          formatCallableError(
+        const diag =
+          buildErrorDiagnostic(
             previewError,
             "Unable to load monthly preview."
+          );
+
+        setDiagnostic(
+          diag
+        );
+
+        setError(
+          formatDiagnosticText(
+            diag
           )
         );
       } finally {
@@ -455,10 +564,125 @@ export default function MonthlyCleanupPage({
       }
     };
 
+  /*
+   * BACKEND HEALTH TEST
+   *
+   * This does NOT delete anything.
+   *
+   * It checks whether the diagnostic Cloud Function
+   * is actually deployed and reachable in the same
+   * Firebase Functions region configured in firebase.js.
+   */
+  const runBackendDiagnostic =
+    async () => {
+      clearMessages();
+
+      setDiagnostic(
+        null
+      );
+
+      try {
+        setTestingBackend(
+          true
+        );
+
+        const healthFn =
+          httpsCallable(
+            functions,
+            "blcsFunctionHealth"
+          );
+
+        const result =
+          await healthFn({
+            source:
+              "MonthlyCleanupPage",
+
+            username:
+              user?.username ||
+              null,
+
+            userRole:
+              user?.role ||
+              null,
+
+            month:
+              monthValue,
+
+            clientTime:
+              new Date().toISOString(),
+          });
+
+        const data =
+          result?.data ||
+          {};
+
+        setDiagnostic({
+          type:
+            "backend-health",
+
+          ok:
+            true,
+
+          function:
+            "blcsFunctionHealth",
+
+          response:
+            data,
+
+          timestamp:
+            new Date().toISOString(),
+        });
+
+        setMessage(
+          `Backend diagnostic succeeded. ${
+            data?.version
+              ? `Active version: ${data.version}.`
+              : "Cloud Functions are reachable."
+          }`
+        );
+      } catch (
+        diagnosticError
+      ) {
+        console.error(
+          "BLCS backend diagnostic error:",
+          diagnosticError
+        );
+
+        const diag =
+          buildErrorDiagnostic(
+            diagnosticError,
+            "Backend diagnostic failed."
+          );
+
+        diag.type =
+          "backend-health";
+
+        diag.function =
+          "blcsFunctionHealth";
+
+        setDiagnostic(
+          diag
+        );
+
+        setError(
+          formatDiagnosticText(
+            diag
+          )
+        );
+      } finally {
+        setTestingBackend(
+          false
+        );
+      }
+    };
+
   const runDelete =
     async () => {
-      setMessage("");
-      setError("");
+      clearMessages();
+
+      setDiagnostic(
+        null
+      );
 
       if (!preview) {
         setError(
@@ -477,10 +701,14 @@ export default function MonthlyCleanupPage({
         ).split("-");
 
       const year =
-        Number(yearText);
+        Number(
+          yearText
+        );
 
       const month =
-        Number(monthText);
+        Number(
+          monthText
+        );
 
       if (
         !year ||
@@ -503,7 +731,9 @@ export default function MonthlyCleanupPage({
           "The selected month changed. Run Preview again before deleting."
         );
 
-        setPreview(null);
+        setPreview(
+          null
+        );
 
         return;
       }
@@ -551,40 +781,103 @@ export default function MonthlyCleanupPage({
         return;
       }
 
+      const requestPayload = {
+        year,
+
+        month,
+
+        monthPrefix:
+          monthValue,
+
+        username:
+          user
+            ?.username ||
+          null,
+
+        userRole:
+          user
+            ?.role ||
+          null,
+
+        confirmation:
+          confirmationText,
+
+        requestedAt:
+          new Date().toISOString(),
+
+        source:
+          "MonthlyCleanupPage",
+      };
+
       try {
         setDeleting(
           true
         );
 
-        const fn =
+        /*
+         * IMPORTANT:
+         *
+         * This is the only destructive call.
+         * If it returns functions/internal,
+         * the diagnostic panel below will show
+         * exactly what the browser received.
+         */
+        const deleteFn =
           httpsCallable(
             functions,
             "deleteFlightsByMonth"
           );
 
         const result =
-          await fn({
-            year,
-            month,
-
-            username:
-              user
-                ?.username ||
-              null,
-
-            userRole:
-              user
-                ?.role ||
-              null,
-
-            confirmation:
-              confirmationText,
-          });
+          await deleteFn(
+            requestPayload
+          );
 
         const data =
-          result
-            ?.data ||
+          result?.data ||
           {};
+
+        setDiagnostic({
+          type:
+            "monthly-delete",
+
+          ok:
+            data?.ok !== false,
+
+          function:
+            "deleteFlightsByMonth",
+
+          request:
+            requestPayload,
+
+          response:
+            data,
+
+          timestamp:
+            new Date().toISOString(),
+        });
+
+        /*
+         * The robust backend can return partial failure
+         * instead of throwing.
+         */
+        if (
+          data?.ok === false ||
+          Number(
+            data?.failedFlights ||
+              0
+          ) > 0
+        ) {
+          setError(
+            `Monthly cleanup returned a partial/failed result.\n\n` +
+              `Deleted Flights: ${data?.deletedFlights || 0}\n` +
+              `Failed Flights: ${data?.failedFlights || 0}\n` +
+              `Deleted Bag Tags: ${data?.deletedBagTags || 0}\n\n` +
+              `See Diagnostic Details below.`
+          );
+
+          return;
+        }
 
         setMessage(
           `Cleanup completed. Deleted ${data.deletedFlights || 0} flight(s) and ` +
@@ -605,10 +898,28 @@ export default function MonthlyCleanupPage({
           deleteError
         );
 
-        setError(
-          formatCallableError(
+        const diag =
+          buildErrorDiagnostic(
             deleteError,
             "Monthly cleanup failed."
+          );
+
+        diag.type =
+          "monthly-delete";
+
+        diag.function =
+          "deleteFlightsByMonth";
+
+        diag.request =
+          requestPayload;
+
+        setDiagnostic(
+          diag
+        );
+
+        setError(
+          formatDiagnosticText(
+            diag
           )
         );
       } finally {
@@ -844,11 +1155,16 @@ export default function MonthlyCleanupPage({
               setError(
                 ""
               );
+
+              setDiagnostic(
+                null
+              );
             }}
 
             disabled={
               loadingPreview ||
-              deleting
+              deleting ||
+              testingBackend
             }
 
             style={{
@@ -882,7 +1198,8 @@ export default function MonthlyCleanupPage({
             disabled={
               !monthValue ||
               loadingPreview ||
-              deleting
+              deleting ||
+              testingBackend
             }
 
             style={{
@@ -901,7 +1218,8 @@ export default function MonthlyCleanupPage({
               background:
                 !monthValue ||
                 loadingPreview ||
-                deleting
+                deleting ||
+                testingBackend
                   ? "#93c5fd"
                   : "#2563eb",
 
@@ -914,7 +1232,8 @@ export default function MonthlyCleanupPage({
               cursor:
                 !monthValue ||
                 loadingPreview ||
-                deleting
+                deleting ||
+                testingBackend
                   ? "not-allowed"
                   : "pointer",
             }}
@@ -923,6 +1242,76 @@ export default function MonthlyCleanupPage({
               ? "Checking..."
               : "Preview Cleanup"}
           </button>
+
+          <button
+            type="button"
+
+            onClick={
+              runBackendDiagnostic
+            }
+
+            disabled={
+              deleting ||
+              loadingPreview ||
+              testingBackend
+            }
+
+            style={{
+              minHeight:
+                44,
+
+              padding:
+                "8px 13px",
+
+              borderRadius:
+                10,
+
+              border:
+                "1px solid #64748b",
+
+              background:
+                deleting ||
+                loadingPreview ||
+                testingBackend
+                  ? "#cbd5e1"
+                  : "white",
+
+              color:
+                "#334155",
+
+              fontWeight:
+                900,
+
+              cursor:
+                deleting ||
+                loadingPreview ||
+                testingBackend
+                  ? "not-allowed"
+                  : "pointer",
+            }}
+          >
+            {testingBackend
+              ? "Testing Backend..."
+              : "Test Backend"}
+          </button>
+        </div>
+
+        <div
+          style={{
+            marginTop:
+              8,
+
+            color:
+              "#64748b",
+
+            fontSize:
+              "0.74rem",
+
+            lineHeight:
+              1.45,
+          }}
+        >
+          Test Backend does not delete anything. It only verifies that the currently deployed Cloud Functions are reachable.
         </div>
       </section>
 
@@ -1088,7 +1477,7 @@ export default function MonthlyCleanupPage({
                 preview
                   .bagTagCount ===
                 null
-                  ? "â"
+                  ? "-"
                   : preview
                       .bagTagCount
               }
@@ -1144,35 +1533,19 @@ export default function MonthlyCleanupPage({
                           "#f8fafc",
                       }}
                     >
-                      <th
-                        style={
-                          th
-                        }
-                      >
+                      <th style={th}>
                         Date
                       </th>
 
-                      <th
-                        style={
-                          th
-                        }
-                      >
+                      <th style={th}>
                         Flight
                       </th>
 
-                      <th
-                        style={
-                          th
-                        }
-                      >
+                      <th style={th}>
                         Gate
                       </th>
 
-                      <th
-                        style={
-                          th
-                        }
-                      >
+                      <th style={th}>
                         Status
                       </th>
                     </tr>
@@ -1190,21 +1563,13 @@ export default function MonthlyCleanupPage({
                               flight.id
                             }
                           >
-                            <td
-                              style={
-                                td
-                              }
-                            >
+                            <td style={td}>
                               {flight
                                 .flightDate ||
                                 "-"}
                             </td>
 
-                            <td
-                              style={
-                                td
-                              }
-                            >
+                            <td style={td}>
                               <strong>
                                 {flight
                                   .flightNumber ||
@@ -1212,21 +1577,13 @@ export default function MonthlyCleanupPage({
                               </strong>
                             </td>
 
-                            <td
-                              style={
-                                td
-                              }
-                            >
+                            <td style={td}>
                               {flight
                                 .gate ||
                                 "-"}
                             </td>
 
-                            <td
-                              style={
-                                td
-                              }
-                            >
+                            <td style={td}>
                               {flight
                                 .status ||
                                 "-"}
@@ -1279,6 +1636,7 @@ export default function MonthlyCleanupPage({
 
             disabled={
               deleting ||
+              testingBackend ||
               (preview
                 .flightCount ||
                 0) ===
@@ -1303,6 +1661,7 @@ export default function MonthlyCleanupPage({
 
               background:
                 deleting ||
+                testingBackend ||
                 (preview
                   .flightCount ||
                   0) ===
@@ -1321,6 +1680,7 @@ export default function MonthlyCleanupPage({
 
               cursor:
                 deleting ||
+                testingBackend ||
                 (preview
                   .flightCount ||
                   0) ===
@@ -1391,10 +1751,184 @@ export default function MonthlyCleanupPage({
 
             whiteSpace:
               "pre-wrap",
+
+            overflowWrap:
+              "anywhere",
           }}
         >
           {error}
         </div>
+      )}
+
+      {diagnostic && (
+        <section
+          style={{
+            marginTop:
+              14,
+
+            border:
+              "1px solid #cbd5e1",
+
+            borderRadius:
+              12,
+
+            padding:
+              12,
+
+            background:
+              "#0f172a",
+
+            color:
+              "#e2e8f0",
+          }}
+        >
+          <div
+            style={{
+              display:
+                "flex",
+
+              justifyContent:
+                "space-between",
+
+              gap:
+                10,
+
+              flexWrap:
+                "wrap",
+
+              alignItems:
+                "center",
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize:
+                    "0.72rem",
+
+                  fontWeight:
+                    900,
+
+                  color:
+                    "#93c5fd",
+
+                  textTransform:
+                    "uppercase",
+
+                  letterSpacing:
+                    "0.05em",
+                }}
+              >
+                Diagnostic Details
+              </div>
+
+              <div
+                style={{
+                  marginTop:
+                    3,
+
+                  fontSize:
+                    "0.78rem",
+
+                  color:
+                    "#cbd5e1",
+                }}
+              >
+                Send this information if deletion fails.
+              </div>
+            </div>
+
+            <button
+              type="button"
+
+              onClick={() => {
+                const text =
+                  safeJson(
+                    diagnostic
+                  );
+
+                if (
+                  navigator
+                    ?.clipboard
+                    ?.writeText
+                ) {
+                  navigator.clipboard.writeText(
+                    text
+                  );
+                }
+              }}
+
+              style={{
+                minHeight:
+                  36,
+
+                padding:
+                  "6px 10px",
+
+                borderRadius:
+                  8,
+
+                border:
+                  "1px solid #475569",
+
+                background:
+                  "#1e293b",
+
+                color:
+                  "white",
+
+                fontWeight:
+                  800,
+
+                cursor:
+                  "pointer",
+              }}
+            >
+              Copy Diagnostic
+            </button>
+          </div>
+
+          <pre
+            style={{
+              margin:
+                "10px 0 0",
+
+              padding:
+                10,
+
+              borderRadius:
+                8,
+
+              background:
+                "#020617",
+
+              color:
+                "#dbeafe",
+
+              fontSize:
+                "0.72rem",
+
+              lineHeight:
+                1.5,
+
+              whiteSpace:
+                "pre-wrap",
+
+              overflowWrap:
+                "anywhere",
+
+              maxHeight:
+                360,
+
+              overflow:
+                "auto",
+            }}
+          >
+            {safeJson(
+              diagnostic
+            )}
+          </pre>
+        </section>
       )}
     </div>
   );
