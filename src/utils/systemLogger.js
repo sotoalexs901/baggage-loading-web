@@ -366,14 +366,20 @@ export async function recordSystemMetric({
     totalActions:
       increment(1),
 
-    [`actions.${normalizedAction || "GENERAL"}`]:
-      increment(1),
+    actions: {
+      [normalizedAction || "GENERAL"]:
+        increment(1),
+    },
 
-    [`statusCounts.${normalizedStatus}`]:
-      increment(1),
+    statusCounts: {
+      [normalizedStatus]:
+        increment(1),
+    },
 
-    [`hourly.${getHourKey()}`]:
-      increment(1),
+    hourly: {
+      [getHourKey()]:
+        increment(1),
+    },
   };
 
   if (duration > 0) {
@@ -383,9 +389,10 @@ export async function recordSystemMetric({
     updates.totalDurationMs =
       increment(duration);
 
-    updates[
-      `performanceBuckets.${bucket}`
-    ] = increment(1);
+    updates.performanceBuckets = {
+      [bucket]:
+        increment(1),
+    };
 
     updates.lastDurationMs =
       duration;
