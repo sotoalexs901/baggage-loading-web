@@ -54,7 +54,11 @@ const MIN_TAG = 10;
 const AUTO_SUBMIT_MS = 90;
 const MOBILE_BREAKPOINT = 760;
 
-export default function CounterScanPage({ flightId, user }) {
+export default function CounterScanPage({
+  flightId,
+  user,
+  operationalContext,
+}) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
 
   const canDeleteScans =
@@ -63,6 +67,37 @@ export default function CounterScanPage({ flightId, user }) {
     role === "supervisor" ||
     role === "gate_controller" ||
     role === "agent";
+
+  const operationalActor = useMemo(
+    () => ({
+      userId: user?.id || null,
+      username: user?.username || null,
+      fullName:
+        operationalContext?.employeeFullName ||
+        user?.fullName ||
+        user?.username ||
+        null,
+      role: user?.role || null,
+      systemRole:
+        operationalContext?.systemRole ||
+        user?.role ||
+        null,
+      basePosition:
+        operationalContext?.basePosition ||
+        user?.position ||
+        null,
+      operationalPosition:
+        operationalContext?.operationalPosition ||
+        "COUNTER_SCAN",
+      operationalPositionLabel:
+        operationalContext?.operationalPositionLabel ||
+        "Counter Scan",
+      loginAt:
+        operationalContext?.loginAt ||
+        null,
+    }),
+    [user, operationalContext]
+  );
 
   const inputRef = useRef(null);
   const timerRef = useRef(null);
@@ -319,12 +354,11 @@ export default function CounterScanPage({ flightId, user }) {
       flightNumber: flight?.flightNumber || null,
       flightDate: flight?.flightDate || null,
       gate: flight?.gate || null,
+      employeeFullName: operationalActor.fullName,
+      operationalPosition: operationalActor.operationalPosition,
+      operationalPositionLabel: operationalActor.operationalPositionLabel,
       createdAt: serverTimestamp(),
-      createdBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
+      createdBy: operationalActor,
     });
   };
 
@@ -345,12 +379,11 @@ export default function CounterScanPage({ flightId, user }) {
       location: "counter",
       bagType: selectedBagType,
       bagTypeLabel: getBagTypeLabel(selectedBagType),
+      employeeFullName: operationalActor.fullName,
+      operationalPosition: operationalActor.operationalPosition,
+      operationalPositionLabel: operationalActor.operationalPositionLabel,
       createdAt: serverTimestamp(),
-      scannedBy: {
-        userId: user?.id || null,
-        username: user?.username || null,
-        role: user?.role || null,
-      },
+      scannedBy: operationalActor,
     });
 
     await setDoc(
@@ -363,14 +396,13 @@ export default function CounterScanPage({ flightId, user }) {
         gate: flight?.gate || null,
         bagType: selectedBagType,
         bagTypeLabel: getBagTypeLabel(selectedBagType),
+        employeeFullName: operationalActor.fullName,
+        operationalPosition: operationalActor.operationalPosition,
+        operationalPositionLabel: operationalActor.operationalPositionLabel,
         firstSeenAt: serverTimestamp(),
         lastSeenAt: serverTimestamp(),
         lastSeenLocation: "counter",
-        lastSeenBy: {
-          userId: user?.id || null,
-          username: user?.username || null,
-          role: user?.role || null,
-        },
+        lastSeenBy: operationalActor,
       },
       { merge: true }
     );
@@ -637,6 +669,24 @@ export default function CounterScanPage({ flightId, user }) {
           >
             Scan or enter bag tags created at the ticket counter.
           </p>
+
+          <div
+            style={{
+              marginTop: 7,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "5px 8px",
+              borderRadius: 999,
+              background: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              color: "#1d4ed8",
+              fontWeight: 900,
+              fontSize: "0.72rem",
+            }}
+          >
+            Working as: {operationalActor.operationalPositionLabel}
+          </div>
 
           {isFlightLoaded && (
             <div
@@ -1047,7 +1097,12 @@ export default function CounterScanPage({ flightId, user }) {
                           {row.bagTypeLabel ||
                             getBagTypeLabel(row.bagType)}
                           {" \u00B7 "}
-                          {row.scannedBy?.username || "-"}
+                          {row.scannedBy?.fullName ||
+                            row.scannedBy?.username ||
+                            "-"}
+                          {row.scannedBy?.operationalPositionLabel
+                            ? ` - ${row.scannedBy.operationalPositionLabel}`
+                            : ""}
                         </div>
                       </div>
 
@@ -1170,7 +1225,12 @@ export default function CounterScanPage({ flightId, user }) {
                         </td>
 
                         <td style={{ ...td, color: "#6b7280" }}>
-                          {row.scannedBy?.username || "-"}
+                          {row.scannedBy?.fullName ||
+                            row.scannedBy?.username ||
+                            "-"}
+                          {row.scannedBy?.operationalPositionLabel
+                            ? ` - ${row.scannedBy.operationalPositionLabel}`
+                            : ""}
                         </td>
 
                         <td style={{ ...td, textAlign: "right" }}>
@@ -1323,7 +1383,12 @@ export default function CounterScanPage({ flightId, user }) {
                         >
                           Cart {row.cartNumber || "-"}
                           {" \u00B7 "}
-                          {row.scannedBy?.username || "-"}
+                          {row.scannedBy?.fullName ||
+                            row.scannedBy?.username ||
+                            "-"}
+                          {row.scannedBy?.operationalPositionLabel
+                            ? ` - ${row.scannedBy.operationalPositionLabel}`
+                            : ""}
                         </div>
                       </div>
 
@@ -1443,7 +1508,12 @@ export default function CounterScanPage({ flightId, user }) {
                         </td>
 
                         <td style={{ ...td, color: "#6b7280" }}>
-                          {row.scannedBy?.username || "-"}
+                          {row.scannedBy?.fullName ||
+                            row.scannedBy?.username ||
+                            "-"}
+                          {row.scannedBy?.operationalPositionLabel
+                            ? ` - ${row.scannedBy.operationalPositionLabel}`
+                            : ""}
                         </td>
 
                         <td style={{ ...td, textAlign: "right" }}>
