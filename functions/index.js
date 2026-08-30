@@ -378,7 +378,7 @@ exports.deleteLoadedFlightsByMonth = functions
         'internal',
         (error && error.message) ||
           'Unable to delete loaded flights for the selected month.'
-      );
-           }
+               );
+        }
       }
     );
