@@ -27,6 +27,12 @@ import {
   functions,
 } from "../firebase";
 
+import {
+  logSystemIncident,
+  logSystemSuccess,
+  startSystemTimer,
+} from "../utils/systemLogger.js";
+
 const MOBILE_BREAKPOINT = 760;
 
 /* =========================
@@ -34,27 +40,17 @@ const MOBILE_BREAKPOINT = 760;
 ========================= */
 
 function getTodayYYYYMMDD() {
-  const d =
-    new Date();
+  const d = new Date();
 
-  const y =
-    d.getFullYear();
+  const y = d.getFullYear();
 
-  const m =
-    String(
-      d.getMonth() + 1
-    ).padStart(
-      2,
-      "0"
-    );
+  const m = String(
+    d.getMonth() + 1
+  ).padStart(2, "0");
 
-  const day =
-    String(
-      d.getDate()
-    ).padStart(
-      2,
-      "0"
-    );
+  const day = String(
+    d.getDate()
+  ).padStart(2, "0");
 
   return `${y}-${m}-${day}`;
 }
@@ -138,9 +134,7 @@ function normalizeStatus(
     "RECEIVING",
     "LOADING",
     "LOADED",
-  ].includes(
-    status
-  )
+  ].includes(status)
     ? status
     : "OPEN";
 }
@@ -182,8 +176,7 @@ function getOperationalActor(
       normalizeOperationalPosition(
         operationalContext
           ?.operationalPosition
-      ) ||
-      null,
+      ) || null,
 
     operationalPositionLabel:
       operationalContext
@@ -211,6 +204,53 @@ function getOperationalActor(
   };
 }
 
+function formatCallableError(
+  error
+) {
+  const code =
+    error?.code
+      ? String(
+          error.code
+        )
+      : "";
+
+  const message =
+    error?.message
+      ? String(
+          error.message
+        )
+      : "Unknown error";
+
+  let details = "";
+
+  try {
+    details =
+      error?.details
+        ? JSON.stringify(
+            error.details
+          )
+        : "";
+  } catch {
+    details = "";
+  }
+
+  return [
+    code &&
+      `(${code})`,
+
+    message,
+
+    details &&
+      `Details: ${details}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/* =========================
+   STATUS
+========================= */
+
 const STATUS_COLORS = {
   OPEN: {
     bg:
@@ -225,13 +265,13 @@ const STATUS_COLORS = {
 
   RECEIVING: {
     bg:
-      "#fef3c7",
+      "#dbeafe",
 
     text:
-      "#92400e",
+      "#1e3a8a",
 
     border:
-      "#f59e0b",
+      "#60a5fa",
   },
 
   LOADING: {
@@ -310,55 +350,6 @@ function StatusPill({
   );
 }
 
-function formatCallableError(
-  error
-) {
-  const code =
-    error?.code
-      ? String(
-          error.code
-        )
-      : "";
-
-  const message =
-    error?.message
-      ? String(
-          error.message
-        )
-      : "Unknown error";
-
-  let details =
-    "";
-
-  try {
-    details =
-      error?.details
-        ? JSON.stringify(
-            error.details
-          )
-        : "";
-  } catch {
-    details =
-      "";
-  }
-
-  return [
-    code &&
-      `(${code})`,
-
-    message,
-
-    details &&
-      `Details: ${details}`,
-  ]
-    .filter(
-      Boolean
-    )
-    .join(
-      " "
-    );
-}
-
 /* =========================
    PAGE
 ========================= */
@@ -403,9 +394,7 @@ export default function FlightsPage({
   const [
     flights,
     setFlights,
-  ] = useState(
-    []
-  );
+  ] = useState([]);
 
   const [
     loading,
@@ -441,9 +430,7 @@ export default function FlightsPage({
   const [
     formError,
     setFormError,
-  ] = useState(
-    ""
-  );
+  ] = useState("");
 
   const [
     saving,
@@ -455,30 +442,22 @@ export default function FlightsPage({
   const [
     actionMsg,
     setActionMsg,
-  ] = useState(
-    ""
-  );
+  ] = useState("");
 
   const [
     actionErr,
     setActionErr,
-  ] = useState(
-    ""
-  );
+  ] = useState("");
 
   const [
     deletingId,
     setDeletingId,
-  ] = useState(
-    ""
-  );
+  ] = useState("");
 
   const [
     reopeningId,
     setReopeningId,
-  ] = useState(
-    ""
-  );
+  ] = useState("");
 
   const allowCreate =
     canCreateFlights(
@@ -530,7 +509,7 @@ export default function FlightsPage({
   }, []);
 
   /* =========================
-     LOAD FLIGHTS
+     FLIGHT SUBSCRIPTION
   ========================= */
 
   useEffect(() => {
@@ -618,18 +597,49 @@ export default function FlightsPage({
             error
           );
 
-          setFlights(
-            []
-          );
+          setFlights([]);
 
           setLoading(
             false
           );
 
-          setActionErr(
-            error?.message ||
-              "Could not load flights."
-          );
+          logSystemIncident({
+            module:
+              "FLIGHTS",
+
+            action:
+              "LOAD_FLIGHTS",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              error?.code ||
+              error?.name ||
+              null,
+
+            message:
+              error?.message ||
+              "Unable to load flights.",
+
+            user,
+
+            operationalContext,
+
+            currentView:
+              "flights",
+
+            metadata: {
+              selectedDate,
+              statusFilter,
+            },
+          });
         }
       );
 
@@ -639,6 +649,8 @@ export default function FlightsPage({
   }, [
     selectedDate,
     statusFilter,
+    user,
+    operationalContext,
   ]);
 
   /* =========================
@@ -672,9 +684,7 @@ export default function FlightsPage({
 
   const closeCreate =
     () => {
-      if (
-        saving
-      ) {
+      if (saving) {
         return;
       }
 
@@ -693,9 +703,7 @@ export default function FlightsPage({
 
   const handleCreate =
     async () => {
-      if (
-        saving
-      ) {
+      if (saving) {
         return;
       }
 
@@ -710,6 +718,9 @@ export default function FlightsPage({
       setActionErr(
         ""
       );
+
+      const timer =
+        startSystemTimer();
 
       const flightNumber =
         form.flightNumber
@@ -734,9 +745,41 @@ export default function FlightsPage({
         !flightNumber ||
         !flightDate
       ) {
+        const message =
+          "Flight number and date are required.";
+
         setFormError(
-          "Flight number and date are required."
+          message
         );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "CREATE_FLIGHT",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "VALIDATION",
+
+          message,
+
+          user,
+
+          operationalContext,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
 
         return;
       }
@@ -778,16 +821,52 @@ export default function FlightsPage({
         if (
           !dupSnap.empty
         ) {
+          const message =
+            "This flight already exists for that date.";
+
           setFormError(
-            "This flight already exists for that date."
+            message
           );
+
+          await logSystemIncident({
+            module:
+              "FLIGHTS",
+
+            action:
+              "CREATE_FLIGHT",
+
+            status:
+              "WARNING",
+
+            severity:
+              "LOW",
+
+            errorType:
+              "DUPLICATE_FLIGHT",
+
+            message,
+
+            user,
+
+            operationalContext,
+
+            currentView:
+              "flights",
+
+            durationMs:
+              timer.elapsed(),
+
+            metadata: {
+              flightNumber,
+              flightDate,
+            },
+          });
 
           return;
         }
 
         const payload = {
           flightNumber,
-
           flightDate,
 
           gate:
@@ -830,8 +909,20 @@ export default function FlightsPage({
               db,
               "flights"
             ),
+
             payload
           );
+
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "CREATE_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
 
         setShowCreate(
           false
@@ -850,20 +941,10 @@ export default function FlightsPage({
           2500
         );
 
-        /*
-         * IMPORTANT:
-         * Send BOTH the Firestore ID
-         * and flight number back to App.jsx.
-         */
-        if (
-          typeof onFlightSelected ===
-          "function"
-        ) {
-          onFlightSelected(
-            docRef.id,
-            flightNumber
-          );
-        }
+        onFlightSelected?.(
+          docRef.id,
+          flightNumber
+        );
       } catch (
         error
       ) {
@@ -872,10 +953,54 @@ export default function FlightsPage({
           error
         );
 
-        setFormError(
+        const message =
           error?.message ||
-            "Could not create flight. Check permissions/rules."
+          "Could not create flight. Check permissions/rules.";
+
+        setFormError(
+          message
         );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "CREATE_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "FIRESTORE_WRITE",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message,
+
+          user,
+
+          operationalContext,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            flightNumber,
+            flightDate,
+            gate,
+            aircraftType,
+          },
+        });
       } finally {
         setSaving(
           false
@@ -888,54 +1013,99 @@ export default function FlightsPage({
   ========================= */
 
   const openFlight =
-    (
+    async (
       flight
     ) => {
-      setActionMsg(
-        ""
-      );
+      const timer =
+        startSystemTimer();
 
-      setActionErr(
-        ""
-      );
+      try {
+        if (
+          typeof onFlightSelected !==
+          "function"
+        ) {
+          throw new Error(
+            "Flight selection handler is not available."
+          );
+        }
 
-      if (
-        !flight?.id
-      ) {
-        setActionErr(
-          "Unable to open flight. Flight ID is missing."
-        );
-
-        return;
-      }
-
-      /*
-       * IMPORTANT FIX:
-       *
-       * Previously only flight.id was sent.
-       * Now the flight number is also sent.
-       *
-       * App.jsx receives these values and
-       * changes currentView to "gate".
-       */
-      if (
-        typeof onFlightSelected ===
-        "function"
-      ) {
         onFlightSelected(
           flight.id,
           flight.flightNumber ||
             null
         );
-      } else {
-        setActionErr(
-          "Unable to open flight. Navigation handler is unavailable."
+
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "OPEN_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } catch (
+        error
+      ) {
+        console.error(
+          "Open flight error:",
+          error
         );
+
+        setActionErr(
+          "Could not open selected flight."
+        );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "OPEN_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "NAVIGATION",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message:
+            error?.message ||
+            "Could not open selected flight.",
+
+          user,
+
+          operationalContext,
+
+          flightId:
+            flight?.id ||
+            null,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
       }
     };
 
   /* =========================
-     REOPEN
+     REOPEN FLIGHT
   ========================= */
 
   const handleReopen =
@@ -959,22 +1129,17 @@ export default function FlightsPage({
       const ok =
         window.confirm(
           `Reopen this flight?\n\n` +
-            `${
-              flight.flightNumber ||
-              flight.id
-            } ` +
-            `(${
-              flight.flightDate ||
-              "-"
-            })\n\n` +
+            `${flight.flightNumber || flight.id} ` +
+            `(${flight.flightDate || "-"})\n\n` +
             `This will unlock scanning again.`
         );
 
-      if (
-        !ok
-      ) {
+      if (!ok) {
         return;
       }
+
+      const timer =
+        startSystemTimer();
 
       try {
         setReopeningId(
@@ -1012,6 +1177,17 @@ export default function FlightsPage({
               .operationalPositionLabel,
         });
 
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "REOPEN_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
         setActionMsg(
           `Flight reopened: ${
             flight.flightNumber ||
@@ -1035,11 +1211,56 @@ export default function FlightsPage({
           error
         );
 
-        setActionErr(
+        const message =
           formatCallableError(
             error
-          )
+          );
+
+        setActionErr(
+          message
         );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "REOPEN_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "CLOUD_FUNCTION",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message,
+
+          user,
+
+          operationalContext,
+
+          flightId:
+            flight.id,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
       } finally {
         setReopeningId(
           ""
@@ -1048,7 +1269,7 @@ export default function FlightsPage({
     };
 
   /* =========================
-     DELETE
+     DELETE FLIGHT
   ========================= */
 
   const handleDelete =
@@ -1070,14 +1291,8 @@ export default function FlightsPage({
       );
 
       const labelText =
-        `${
-          flight.flightNumber ||
-          flight.id
-        } ` +
-        `(${
-          flight.flightDate ||
-          "-"
-        })`;
+        `${flight.flightNumber || flight.id} ` +
+        `(${flight.flightDate || "-"})`;
 
       const ok =
         window.confirm(
@@ -1095,11 +1310,12 @@ export default function FlightsPage({
             `This cannot be undone.`
         );
 
-      if (
-        !ok
-      ) {
+      if (!ok) {
         return;
       }
+
+      const timer =
+        startSystemTimer();
 
       try {
         setDeletingId(
@@ -1143,6 +1359,17 @@ export default function FlightsPage({
             ?.deletedBagTags ||
           0;
 
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "DELETE_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
         setActionMsg(
           `Flight deleted: ${labelText}. ` +
             `${deletedBagTags} tracked bag tag record(s) removed.`
@@ -1164,11 +1391,56 @@ export default function FlightsPage({
           error
         );
 
-        setActionErr(
+        const message =
           formatCallableError(
             error
-          )
+          );
+
+        setActionErr(
+          message
         );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "DELETE_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "CRITICAL",
+
+          errorType:
+            "CLOUD_FUNCTION",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message,
+
+          user,
+
+          operationalContext,
+
+          flightId:
+            flight.id,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
       } finally {
         setDeletingId(
           ""
@@ -1200,8 +1472,6 @@ export default function FlightsPage({
           "1px solid #e5e7eb",
       }}
     >
-      {/* HEADER */}
-
       <div
         style={{
           display:
@@ -1326,18 +1596,20 @@ export default function FlightsPage({
 
             <input
               type="date"
+
               value={
                 selectedDate
               }
+
               onChange={(
                 event
               ) => {
                 setSelectedDate(
-                  event
-                    .target
+                  event.target
                     .value
                 );
               }}
+
               style={{
                 ...input,
 
@@ -1360,15 +1632,16 @@ export default function FlightsPage({
               value={
                 statusFilter
               }
+
               onChange={(
                 event
               ) => {
                 setStatusFilter(
-                  event
-                    .target
+                  event.target
                     .value
                 );
               }}
+
               style={{
                 ...input,
 
@@ -1393,9 +1666,11 @@ export default function FlightsPage({
           {allowCreate ? (
             <button
               type="button"
+
               onClick={
                 openCreate
               }
+
               style={{
                 minHeight:
                   42,
@@ -1449,8 +1724,6 @@ export default function FlightsPage({
           )}
         </div>
       </div>
-
-      {/* MESSAGES */}
 
       {(actionMsg ||
         actionErr) && (
@@ -1530,8 +1803,6 @@ export default function FlightsPage({
         }}
       />
 
-      {/* FLIGHTS */}
-
       {loading ? (
         <p
           style={{
@@ -1554,10 +1825,6 @@ export default function FlightsPage({
           {statusFilter}).
         </p>
       ) : isMobile ? (
-        /* =========================
-           MOBILE CARDS
-        ========================= */
-
         <div
           style={{
             display:
@@ -1593,6 +1860,7 @@ export default function FlightsPage({
                   key={
                     flight.id
                   }
+
                   style={{
                     border:
                       "1px solid #e5e7eb",
@@ -1638,10 +1906,9 @@ export default function FlightsPage({
                             "#0f172a",
                         }}
                       >
-                        {
-                          flight.flightNumber ||
-                          flight.id
-                        }
+                        {flight
+                          .flightNumber ||
+                          flight.id}
                       </div>
 
                       <div
@@ -1656,10 +1923,9 @@ export default function FlightsPage({
                             "0.78rem",
                         }}
                       >
-                        {
-                          flight.flightDate ||
-                          "-"
-                        }
+                        {flight
+                          .flightDate ||
+                          "-"}
                       </div>
                     </div>
 
@@ -1696,7 +1962,8 @@ export default function FlightsPage({
                     <MiniInfo
                       label="Aircraft"
                       value={
-                        flight.aircraftType ||
+                        flight
+                          .aircraftType ||
                         "-"
                       }
                     />
@@ -1728,6 +1995,7 @@ export default function FlightsPage({
                           ? "View"
                           : "Open"
                       }
+
                       onClick={() =>
                         openFlight(
                           flight
@@ -1743,15 +2011,18 @@ export default function FlightsPage({
                               ? "Reopening..."
                               : "Reopen"
                           }
+
                           onClick={() =>
                             handleReopen(
                               flight
                             )
                           }
+
                           disabled={
                             busyReopen ||
                             busyDelete
                           }
+
                           tone="success"
                         />
                       )}
@@ -1763,15 +2034,18 @@ export default function FlightsPage({
                             ? "Deleting..."
                             : "Delete"
                         }
+
                         onClick={() =>
                           handleDelete(
                             flight
                           )
                         }
+
                         disabled={
                           busyDelete ||
                           busyReopen
                         }
+
                         tone="danger"
                       />
                     )}
@@ -1782,10 +2056,6 @@ export default function FlightsPage({
           )}
         </div>
       ) : (
-        /* =========================
-           DESKTOP TABLE
-        ========================= */
-
         <div
           style={{
             overflowX:
@@ -1884,10 +2154,9 @@ export default function FlightsPage({
                         }
                       >
                         <strong>
-                          {
-                            flight.flightNumber ||
-                            flight.id
-                          }
+                          {flight
+                            .flightNumber ||
+                            flight.id}
                         </strong>
                       </td>
 
@@ -1896,10 +2165,9 @@ export default function FlightsPage({
                           td
                         }
                       >
-                        {
-                          flight.flightDate ||
-                          "-"
-                        }
+                        {flight
+                          .flightDate ||
+                          "-"}
                       </td>
 
                       <td
@@ -1907,10 +2175,8 @@ export default function FlightsPage({
                           td
                         }
                       >
-                        {
-                          flight.gate ||
-                          "-"
-                        }
+                        {flight.gate ||
+                          "-"}
                       </td>
 
                       <td
@@ -1918,10 +2184,9 @@ export default function FlightsPage({
                           td
                         }
                       >
-                        {
-                          flight.aircraftType ||
-                          "-"
-                        }
+                        {flight
+                          .aircraftType ||
+                          "-"}
                       </td>
 
                       <td
@@ -1949,11 +2214,13 @@ export default function FlightsPage({
                       >
                         <button
                           type="button"
+
                           onClick={() =>
                             openFlight(
                               flight
                             )
                           }
+
                           style={
                             tableOpenButton
                           }
@@ -1967,15 +2234,18 @@ export default function FlightsPage({
                           isCompleted && (
                             <button
                               type="button"
+
                               onClick={() =>
                                 handleReopen(
                                   flight
                                 )
                               }
+
                               disabled={
                                 busyReopen ||
                                 busyDelete
                               }
+
                               style={{
                                 ...tableReopenButton,
 
@@ -2001,15 +2271,18 @@ export default function FlightsPage({
                         {allowManage && (
                           <button
                             type="button"
+
                             onClick={() =>
                               handleDelete(
                                 flight
                               )
                             }
+
                             disabled={
                               busyDelete ||
                               busyReopen
                             }
+
                             style={{
                               ...tableDeleteButton,
 
@@ -2051,11 +2324,7 @@ export default function FlightsPage({
                 "0.8rem",
             }}
           >
-            Tip: Completed flights
-            (LOADED) remain accessible
-            for Gate, Aircraft, and
-            Reports. Managers can
-            Reopen if needed.
+            Tip: Completed flights (LOADED) remain accessible for Gate, Aircraft, and Reports. Managers can Reopen if needed.
           </p>
         </div>
       )}
@@ -2069,6 +2338,7 @@ export default function FlightsPage({
           style={
             overlay
           }
+
           onMouseDown={(
             event
           ) => {
@@ -2148,13 +2418,17 @@ export default function FlightsPage({
 
               <button
                 type="button"
+
                 onClick={
                   closeCreate
                 }
+
                 style={
                   xBtn
                 }
+
                 aria-label="Close"
+
                 disabled={
                   saving
                 }
@@ -2193,6 +2467,7 @@ export default function FlightsPage({
                   value={
                     form.flightNumber
                   }
+
                   onChange={(
                     event
                   ) =>
@@ -2209,8 +2484,11 @@ export default function FlightsPage({
                       })
                     )
                   }
+
                   placeholder="e.g. SY214"
+
                   autoCapitalize="characters"
+
                   style={
                     input
                   }
@@ -2228,9 +2506,11 @@ export default function FlightsPage({
 
                 <input
                   type="date"
+
                   value={
                     form.flightDate
                   }
+
                   onChange={(
                     event
                   ) =>
@@ -2247,6 +2527,7 @@ export default function FlightsPage({
                       })
                     )
                   }
+
                   style={
                     input
                   }
@@ -2266,6 +2547,7 @@ export default function FlightsPage({
                   value={
                     form.gate
                   }
+
                   onChange={(
                     event
                   ) =>
@@ -2282,8 +2564,11 @@ export default function FlightsPage({
                       })
                     )
                   }
+
                   placeholder="e.g. E68"
+
                   autoCapitalize="characters"
+
                   style={
                     input
                   }
@@ -2303,6 +2588,7 @@ export default function FlightsPage({
                   value={
                     form.aircraftType
                   }
+
                   onChange={(
                     event
                   ) =>
@@ -2319,8 +2605,11 @@ export default function FlightsPage({
                       })
                     )
                   }
+
                   placeholder="e.g. B737-800"
+
                   autoCapitalize="characters"
+
                   style={
                     input
                   }
@@ -2384,12 +2673,15 @@ export default function FlightsPage({
             >
               <button
                 type="button"
+
                 onClick={
                   closeCreate
                 }
+
                 disabled={
                   saving
                 }
+
                 style={{
                   ...btnGhost,
 
@@ -2402,12 +2694,15 @@ export default function FlightsPage({
 
               <button
                 type="button"
+
                 onClick={
                   handleCreate
                 }
+
                 disabled={
                   saving
                 }
+
                 style={{
                   ...btnPrimary,
 
@@ -2460,12 +2755,10 @@ export default function FlightsPage({
             >
               Created by:{" "}
               <strong>
-                {
-                  operationalActor
-                    .employeeFullName ||
+                {operationalActor
+                  .employeeFullName ||
                   user?.username ||
-                  "-"
-                }
+                  "-"}
               </strong>
 
               {operationalActor
@@ -2490,7 +2783,7 @@ export default function FlightsPage({
 }
 
 /* =========================
-   UI COMPONENTS
+   UI
 ========================= */
 
 function MiniInfo({
@@ -2592,12 +2885,15 @@ function ActionButton({
   return (
     <button
       type="button"
+
       onClick={
         onClick
       }
+
       disabled={
         disabled
       }
+
       style={{
         minHeight:
           42,
