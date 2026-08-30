@@ -653,7 +653,7 @@ export default function CounterScanPage({ flightId, user }) {
                 fontSize: "0.78rem",
               }}
             >
-              \u2705 Flight Loaded \u00B7 Counter locked
+              {"\u2705 Flight Loaded \u00B7 Counter locked"}
             </div>
           )}
         </div>
@@ -916,7 +916,7 @@ export default function CounterScanPage({ flightId, user }) {
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: 8 }}>
-            Counter \u2192 Bagroom Match
+            {"Counter \u2192 Bagroom Match"}
           </h3>
 
           <div
@@ -976,12 +976,12 @@ export default function CounterScanPage({ flightId, user }) {
               marginBottom: 8,
             }}
           >
-            Green = received in Bagroom \u00B7 Red = still pending
+            {"Green = received in Bagroom \u00B7 Red = still pending"}
           </p>
 
           {loadingRows || loadingBagroomRows ? (
             <p style={{ color: "#6b7280" }}>
-              Loading Counter and Bagroom scans\u2026
+              {"Loading Counter and Bagroom scans\u2026"}
             </p>
           ) : rows.length === 0 ? (
             <p style={{ color: "#6b7280" }}>
@@ -1258,7 +1258,7 @@ export default function CounterScanPage({ flightId, user }) {
 
           {loadingBagroomRows ? (
             <p style={{ color: "#6b7280" }}>
-              Loading Bagroom scans\u2026
+              {"Loading Bagroom scans\u2026"}
             </p>
           ) : bagroomRows.length === 0 ? (
             <p style={{ color: "#6b7280" }}>
