@@ -75,11 +75,31 @@ function StatusPill({ status }) {
 
 function SmallCard({ label, value, tone = "default" }) {
   const colors = {
-    default: { bg: "#f9fafb", border: "#e5e7eb", text: "#111827" },
-    good: { bg: "#dcfce7", border: "#22c55e", text: "#166534" },
-    warn: { bg: "#fef3c7", border: "#f59e0b", text: "#92400e" },
-    bad: { bg: "#fee2e2", border: "#ef4444", text: "#991b1b" },
-    blue: { bg: "#dbeafe", border: "#60a5fa", text: "#1e3a8a" },
+    default: {
+      bg: "#f9fafb",
+      border: "#e5e7eb",
+      text: "#111827",
+    },
+    good: {
+      bg: "#dcfce7",
+      border: "#22c55e",
+      text: "#166534",
+    },
+    warn: {
+      bg: "#fef3c7",
+      border: "#f59e0b",
+      text: "#92400e",
+    },
+    bad: {
+      bg: "#fee2e2",
+      border: "#ef4444",
+      text: "#991b1b",
+    },
+    blue: {
+      bg: "#dbeafe",
+      border: "#60a5fa",
+      text: "#1e3a8a",
+    },
   };
 
   const c = colors[tone] || colors.default;
@@ -94,10 +114,23 @@ function SmallCard({ label, value, tone = "default" }) {
         color: c.text,
       }}
     >
-      <div style={{ fontSize: "0.75rem", fontWeight: 800, opacity: 0.85 }}>
+      <div
+        style={{
+          fontSize: "0.75rem",
+          fontWeight: 800,
+          opacity: 0.85,
+        }}
+      >
         {label}
       </div>
-      <div style={{ fontSize: "1.25rem", fontWeight: 900, marginTop: 2 }}>
+
+      <div
+        style={{
+          fontSize: "1.25rem",
+          fontWeight: 900,
+          marginTop: 2,
+        }}
+      >
         {value}
       </div>
     </div>
@@ -119,25 +152,48 @@ function ProgressBar({ percent }) {
         style={{
           width: `${percent}%`,
           height: "100%",
-          background: percent >= 100 ? "#22c55e" : percent >= 75 ? "#f59e0b" : "#2563eb",
+          background:
+            percent >= 100
+              ? "#22c55e"
+              : percent >= 75
+                ? "#f59e0b"
+                : "#2563eb",
         }}
       />
     </div>
   );
 }
 
-export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty }) {
+export default function DashboardPage({
+  user,
+  onOpenFlight,
+  gateControllerOnDuty,
+}) {
   const role = useMemo(() => normalizeRole(user?.role), [user]);
+
   const isGateController = role === "gate_controller";
 
+  const displayName =
+    user?.fullName ||
+    user?.name ||
+    user?.displayName ||
+    user?.username ||
+    "Team Member";
+
+  const roleLabel = String(user?.role || "user")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
   const today = useMemo(() => getTodayYYYYMMDD(), []);
+
   const [selectedDate, setSelectedDate] = useState(today);
 
   const [flights, setFlights] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [flightStats, setFlightStats] = useState({});
-    useEffect(() => {
+
+  useEffect(() => {
     setLoading(true);
 
     const q = query(
@@ -149,7 +205,11 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
     const unsub = onSnapshot(
       q,
       (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const rows = snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        }));
+
         setFlights(rows);
         setLoading(false);
       },
@@ -174,9 +234,26 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
     for (const flight of flights) {
       const flightId = flight.id;
 
-      const counterRef = collection(db, "flights", flightId, "counterScans");
-      const bagroomRef = collection(db, "flights", flightId, "bagroomScans");
-      const aircraftRef = collection(db, "flights", flightId, "aircraftScans");
+      const counterRef = collection(
+        db,
+        "flights",
+        flightId,
+        "counterScans"
+      );
+
+      const bagroomRef = collection(
+        db,
+        "flights",
+        flightId,
+        "bagroomScans"
+      );
+
+      const aircraftRef = collection(
+        db,
+        "flights",
+        flightId,
+        "aircraftScans"
+      );
 
       const updateStats = (type, rows) => {
         setFlightStats((prev) => {
@@ -199,7 +276,11 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
       const unsubCounter = onSnapshot(
         counterRef,
         (snap) => {
-          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const rows = snap.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          }));
+
           updateStats("counter", rows);
         },
         (e) => {
@@ -211,7 +292,11 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
       const unsubBagroom = onSnapshot(
         bagroomRef,
         (snap) => {
-          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const rows = snap.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          }));
+
           updateStats("bagroom", rows);
         },
         (e) => {
@@ -223,7 +308,11 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
       const unsubAircraft = onSnapshot(
         aircraftRef,
         (snap) => {
-          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const rows = snap.docs.map((d) => ({
+            id: d.id,
+            ...d.data(),
+          }));
+
           updateStats("aircraft", rows);
         },
         (e) => {
@@ -232,7 +321,11 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
         }
       );
 
-      unsubList.push(unsubCounter, unsubBagroom, unsubAircraft);
+      unsubList.push(
+        unsubCounter,
+        unsubBagroom,
+        unsubAircraft
+      );
     }
 
     return () => {
@@ -248,16 +341,23 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
     };
 
     const gateTotal =
-      typeof flight.checkedBagsTotal === "number" ? flight.checkedBagsTotal : null;
+      typeof flight.checkedBagsTotal === "number"
+        ? flight.checkedBagsTotal
+        : null;
 
     const counterTotal = stats.counter.length;
     const bagroomTotal = stats.bagroom.length;
     const aircraftTotal = stats.aircraft.length;
 
     const missing =
-      gateTotal === null ? null : Math.max(0, gateTotal - aircraftTotal);
+      gateTotal === null
+        ? null
+        : Math.max(0, gateTotal - aircraftTotal);
 
-    const progress = getProgressPercent(gateTotal, aircraftTotal);
+    const progress = getProgressPercent(
+      gateTotal,
+      aircraftTotal
+    );
 
     const bagTypes = {
       CHECKED_BAG: 0,
@@ -282,8 +382,15 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
     }
 
     const missingBagTypes = {
-      GATE_CHECK: Math.max(0, counterBagTypes.GATE_CHECK - bagTypes.GATE_CHECK),
-      OVERSIZE: Math.max(0, counterBagTypes.OVERSIZE - bagTypes.OVERSIZE),
+      GATE_CHECK: Math.max(
+        0,
+        counterBagTypes.GATE_CHECK - bagTypes.GATE_CHECK
+      ),
+
+      OVERSIZE: Math.max(
+        0,
+        counterBagTypes.OVERSIZE - bagTypes.OVERSIZE
+      ),
     };
 
     return {
@@ -309,12 +416,20 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
     for (const f of flights) {
       const s = getStatsForFlight(f);
 
-      if (typeof s.gateTotal === "number") gate += s.gateTotal;
+      if (typeof s.gateTotal === "number") {
+        gate += s.gateTotal;
+      }
+
       bagroom += s.bagroomTotal;
       aircraft += s.aircraftTotal;
 
-      if (typeof s.missing === "number") missing += s.missing;
-      if (normalizeStatus(f.status) === "LOADED") loadedFlights += 1;
+      if (typeof s.missing === "number") {
+        missing += s.missing;
+      }
+
+      if (normalizeStatus(f.status) === "LOADED") {
+        loadedFlights += 1;
+      }
     }
 
     return {
@@ -324,57 +439,247 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
       missing,
       loadedFlights,
     };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flights, flightStats]);
-    return (
+
+  return (
     <div className="dash-root">
-      <section className="dash-header-card">
-        <div>
-          <p className="dash-greeting">Welcome back,</p>
-          <h2 className="dash-title">{user?.username}</h2>
+      {/* =========================
+          WELCOME
+      ========================= */}
 
-          {user?.role && (
-            <span className="dash-role-pill">
-              {String(user.role).replaceAll("_", " ")}
+      <section
+        className="dash-header-card"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 20,
+          flexWrap: "wrap",
+        }}
+      >
+        <div
+          style={{
+            flex: "1 1 320px",
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              color: "#64748b",
+              fontSize: "0.9rem",
+              fontWeight: 600,
+            }}
+          >
+            Welcome back
+          </p>
+
+          <h2
+            style={{
+              margin: "5px 0 8px",
+              fontSize: "1.9rem",
+              lineHeight: 1.1,
+              color: "#0f172a",
+              letterSpacing: "-0.035em",
+            }}
+          >
+            {displayName}
+          </h2>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "5px 10px",
+                borderRadius: 999,
+                background: "#eff6ff",
+                color: "#2563eb",
+                fontSize: "0.75rem",
+                fontWeight: 900,
+              }}
+            >
+              {roleLabel}
             </span>
-          )}
 
-          {!isGateController && gateControllerOnDuty && (
-            <p className="dash-subtitle" style={{ marginTop: 8 }}>
-              Gate Controller on duty: <strong>{gateControllerOnDuty}</strong>
-            </p>
-          )}
+            {user?.username && (
+              <span
+                style={{
+                  color: "#94a3b8",
+                  fontSize: "0.76rem",
+                  fontWeight: 600,
+                }}
+              >
+                @{user.username}
+              </span>
+            )}
+          </div>
 
-          <p className="dash-subtitle" style={{ marginTop: 8 }}>
+          {!isGateController &&
+            gateControllerOnDuty && (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 10,
+                  padding: "6px 9px",
+                  borderRadius: 9,
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  color: "#475569",
+                  fontSize: "0.78rem",
+                }}
+              >
+                <span
+                  style={{
+                    color: "#22c55e",
+                  }}
+                >
+                  ●
+                </span>
+
+                Gate Controller on duty:{" "}
+                <strong>{gateControllerOnDuty}</strong>
+              </div>
+            )}
+
+          <p
+            style={{
+              margin: "12px 0 0",
+              color: "#64748b",
+              fontSize: "0.88rem",
+            }}
+          >
             Real-time flight overview for baggage operations.
           </p>
         </div>
 
-        <div className="dash-summary-box">
-          <p className="dash-summary-label">Flights</p>
-          <p className="dash-summary-number">{loading ? "…" : flights.length}</p>
-          <p className="dash-summary-caption">for {selectedDate}</p>
+        <div
+          className="dash-summary-box"
+          style={{
+            minWidth: 180,
+            padding: "18px 22px",
+            borderRadius: 15,
+            background:
+              "linear-gradient(135deg, #1d4ed8, #3b82f6)",
+            color: "white",
+            boxShadow:
+              "0 10px 25px rgba(37,99,235,0.18)",
+          }}
+        >
+          <p
+            style={{
+              margin: 0,
+              fontSize: "0.8rem",
+              color: "#dbeafe",
+              textAlign: "right",
+            }}
+          >
+            Flights
+          </p>
+
+          <p
+            style={{
+              margin: "3px 0",
+              fontSize: "2rem",
+              fontWeight: 900,
+              textAlign: "right",
+            }}
+          >
+            {loading ? "…" : flights.length}
+          </p>
+
+          <p
+            style={{
+              margin: 0,
+              fontSize: "0.75rem",
+              color: "#dbeafe",
+              textAlign: "right",
+            }}
+          >
+            for {selectedDate}
+          </p>
         </div>
       </section>
+
+      {/* =========================
+          DAY SUMMARY
+      ========================= */}
 
       <section
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(160px, 1fr))",
           gap: 12,
           marginBottom: 16,
         }}
       >
-        <SmallCard label="Gate Total" value={loading ? "…" : summaryTotals.gate} tone="blue" />
-        <SmallCard label="Bagroom" value={loading ? "…" : summaryTotals.bagroom} />
-        <SmallCard label="Aircraft" value={loading ? "…" : summaryTotals.aircraft} />
+        <SmallCard
+          label="Gate Total"
+          value={
+            loading
+              ? "…"
+              : summaryTotals.gate
+          }
+          tone="blue"
+        />
+
+        <SmallCard
+          label="Bagroom"
+          value={
+            loading
+              ? "…"
+              : summaryTotals.bagroom
+          }
+        />
+
+        <SmallCard
+          label="Aircraft"
+          value={
+            loading
+              ? "…"
+              : summaryTotals.aircraft
+          }
+        />
+
         <SmallCard
           label="Missing"
-          value={loading ? "…" : summaryTotals.missing}
-          tone={summaryTotals.missing === 0 ? "good" : "bad"}
+          value={
+            loading
+              ? "…"
+              : summaryTotals.missing
+          }
+          tone={
+            summaryTotals.missing === 0
+              ? "good"
+              : "bad"
+          }
         />
-        <SmallCard label="Loaded Flights" value={loading ? "…" : summaryTotals.loadedFlights} tone="good" />
+
+        <SmallCard
+          label="Loaded Flights"
+          value={
+            loading
+              ? "…"
+              : summaryTotals.loadedFlights
+          }
+          tone="good"
+        />
       </section>
+
+      {/* =========================
+          REAL-TIME FLIGHTS
+      ========================= */}
 
       <section className="dash-section">
         <div
@@ -384,24 +689,53 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
             justifyContent: "space-between",
             gap: 12,
             flexWrap: "wrap",
+            alignItems: "end",
           }}
         >
           <div>
-            <h3>Real-Time Flights</h3>
-            <p>Live baggage progress by flight.</p>
+            <h3
+              style={{
+                marginBottom: 3,
+              }}
+            >
+              Real-Time Flights
+            </h3>
+
+            <p
+              style={{
+                margin: 0,
+              }}
+            >
+              Live baggage progress by flight.
+            </p>
           </div>
 
           <div>
-            <label style={{ fontSize: "0.85rem", color: "#374151" }}>Date</label>
+            <label
+              style={{
+                fontSize: "0.85rem",
+                color: "#374151",
+                fontWeight: 700,
+              }}
+            >
+              Date
+            </label>
+
             <div>
               <input
                 type="date"
                 value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
+                onChange={(e) =>
+                  setSelectedDate(
+                    e.target.value
+                  )
+                }
                 style={{
-                  padding: "6px 10px",
+                  padding: "7px 10px",
                   borderRadius: 10,
-                  border: "1px solid #d1d5db",
+                  border:
+                    "1px solid #d1d5db",
+                  background: "#f8fafc",
                 }}
               />
             </div>
@@ -409,151 +743,377 @@ export default function DashboardPage({ user, onOpenFlight, gateControllerOnDuty
         </div>
 
         {loading ? (
-          <p style={{ color: "#6b7280", padding: 14 }}>Loading flights...</p>
+          <p
+            style={{
+              color: "#6b7280",
+              padding: 14,
+            }}
+          >
+            Loading flights...
+          </p>
         ) : flights.length === 0 ? (
-          <p style={{ color: "#6b7280", padding: 14 }}>
+          <p
+            style={{
+              color: "#6b7280",
+              padding: 14,
+            }}
+          >
             No flights found for {selectedDate}.
           </p>
         ) : (
-          <div style={{ display: "grid", gap: 14 }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 14,
+            }}
+          >
             {flights.map((f) => {
-              const s = getStatsForFlight(f);
-              const status = normalizeStatus(f.status);
+              const s =
+                getStatsForFlight(f);
+
+              const status =
+                normalizeStatus(
+                  f.status
+                );
 
               return (
                 <div
                   key={f.id}
                   style={{
-                    border: "1px solid #e5e7eb",
+                    border:
+                      "1px solid #e5e7eb",
                     borderRadius: 14,
                     padding: 14,
                     background: "white",
+                    boxShadow:
+                      "0 2px 8px rgba(15,23,42,0.03)",
                   }}
                 >
+                  {/* FLIGHT HEADER */}
+
                   <div
                     style={{
                       display: "flex",
-                      justifyContent: "space-between",
+                      justifyContent:
+                        "space-between",
                       gap: 12,
                       flexWrap: "wrap",
                       alignItems: "start",
                     }}
                   >
                     <div>
-                      <h3 style={{ margin: 0 }}>
-                        {f.flightNumber || "-"}{" "}
-                        <span style={{ color: "#6b7280", fontSize: "0.9rem" }}>
-                          · {f.gate || "No Gate"}
+                      <h3
+                        style={{
+                          margin: 0,
+                        }}
+                      >
+                        {f.flightNumber ||
+                          "-"}
+
+                        <span
+                          style={{
+                            color: "#6b7280",
+                            fontSize:
+                              "0.9rem",
+                          }}
+                        >
+                          {" "}
+                          ·{" "}
+                          {f.gate ||
+                            "No Gate"}
                         </span>
                       </h3>
 
-                      <p style={{ margin: "5px 0 0", color: "#6b7280", fontSize: "0.85rem" }}>
-                        Date: <strong>{f.flightDate || "-"}</strong> · Aircraft:{" "}
-                        <strong>{f.aircraftType || "-"}</strong>
+                      <p
+                        style={{
+                          margin:
+                            "5px 0 0",
+                          color: "#6b7280",
+                          fontSize:
+                            "0.85rem",
+                        }}
+                      >
+                        Date:{" "}
+                        <strong>
+                          {f.flightDate ||
+                            "-"}
+                        </strong>
+
+                        {" · "}
+
+                        Aircraft:{" "}
+                        <strong>
+                          {f.aircraftType ||
+                            "-"}
+                        </strong>
                       </p>
 
-                      <p style={{ margin: "5px 0 0", color: "#6b7280", fontSize: "0.85rem" }}>
+                      <p
+                        style={{
+                          margin:
+                            "5px 0 0",
+                          color: "#6b7280",
+                          fontSize:
+                            "0.85rem",
+                        }}
+                      >
                         Gate Controller:{" "}
-                        <strong>{f.gateControllerOnDuty || gateControllerOnDuty || "-"}</strong>
+                        <strong>
+                          {f.gateControllerOnDuty ||
+                            gateControllerOnDuty ||
+                            "-"}
+                        </strong>
+
                         {" · "}
-                        Ramp Supervisor: <strong>{f.rampSupervisorOnDuty || "-"}</strong>
+
+                        Ramp Supervisor:{" "}
+                        <strong>
+                          {f.rampSupervisorOnDuty ||
+                            "-"}
+                        </strong>
                       </p>
                     </div>
 
-                    <StatusPill status={status} />
+                    <StatusPill
+                      status={status}
+                    />
                   </div>
 
-                  <div style={{ marginTop: 12 }}>
+                  {/* LOADING PROGRESS */}
+
+                  <div
+                    style={{
+                      marginTop: 12,
+                    }}
+                  >
                     <div
                       style={{
                         display: "flex",
-                        justifyContent: "space-between",
-                        fontSize: "0.82rem",
+                        justifyContent:
+                          "space-between",
+                        fontSize:
+                          "0.82rem",
                         color: "#6b7280",
                         marginBottom: 5,
                       }}
                     >
-                      <span>Loading Progress</span>
-                      <strong>{s.progress}%</strong>
+                      <span>
+                        Loading Progress
+                      </span>
+
+                      <strong>
+                        {s.progress}%
+                      </strong>
                     </div>
 
-                    <ProgressBar percent={s.progress} />
+                    <ProgressBar
+                      percent={s.progress}
+                    />
                   </div>
+
+                  {/* MAIN COUNTS */}
 
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(130px, 1fr))",
                       gap: 10,
                       marginTop: 12,
                     }}
                   >
                     <SmallCard
                       label="Gate Total"
-                      value={s.gateTotal === null ? "—" : s.gateTotal}
+                      value={
+                        s.gateTotal ===
+                        null
+                          ? "—"
+                          : s.gateTotal
+                      }
                       tone="blue"
                     />
-                    <SmallCard label="Counter" value={s.counterTotal} />
-                    <SmallCard label="Bagroom" value={s.bagroomTotal} />
-                    <SmallCard label="Aircraft" value={s.aircraftTotal} />
+
+                    <SmallCard
+                      label="Counter"
+                      value={
+                        s.counterTotal
+                      }
+                    />
+
+                    <SmallCard
+                      label="Bagroom"
+                      value={
+                        s.bagroomTotal
+                      }
+                    />
+
+                    <SmallCard
+                      label="Aircraft"
+                      value={
+                        s.aircraftTotal
+                      }
+                    />
+
                     <SmallCard
                       label="Missing"
-                      value={s.missing === null ? "—" : s.missing}
-                      tone={s.missing === 0 ? "good" : s.missing === null ? "default" : "bad"}
+                      value={
+                        s.missing === null
+                          ? "—"
+                          : s.missing
+                      }
+                      tone={
+                        s.missing === 0
+                          ? "good"
+                          : s.missing ===
+                              null
+                            ? "default"
+                            : "bad"
+                      }
                     />
                   </div>
+
+                  {/* BAG TYPES */}
 
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(150px, 1fr))",
                       gap: 10,
                       marginTop: 10,
                     }}
                   >
-                    <SmallCard label="Checked Loaded" value={s.bagTypes.CHECKED_BAG} />
-                    <SmallCard label="Gate Check Loaded" value={s.bagTypes.GATE_CHECK} tone="warn" />
-                    <SmallCard label="Oversize Loaded" value={s.bagTypes.OVERSIZE} tone="warn" />
+                    <SmallCard
+                      label="Checked Loaded"
+                      value={
+                        s.bagTypes
+                          .CHECKED_BAG
+                      }
+                    />
+
+                    <SmallCard
+                      label="Gate Check Loaded"
+                      value={
+                        s.bagTypes
+                          .GATE_CHECK
+                      }
+                      tone="warn"
+                    />
+
+                    <SmallCard
+                      label="Oversize Loaded"
+                      value={
+                        s.bagTypes
+                          .OVERSIZE
+                      }
+                      tone="warn"
+                    />
+
                     <SmallCard
                       label="Gate Check Missing"
-                      value={s.missingBagTypes.GATE_CHECK}
-                      tone={s.missingBagTypes.GATE_CHECK === 0 ? "good" : "bad"}
+                      value={
+                        s.missingBagTypes
+                          .GATE_CHECK
+                      }
+                      tone={
+                        s.missingBagTypes
+                          .GATE_CHECK === 0
+                          ? "good"
+                          : "bad"
+                      }
                     />
+
                     <SmallCard
                       label="Oversize Missing"
-                      value={s.missingBagTypes.OVERSIZE}
-                      tone={s.missingBagTypes.OVERSIZE === 0 ? "good" : "bad"}
+                      value={
+                        s.missingBagTypes
+                          .OVERSIZE
+                      }
+                      tone={
+                        s.missingBagTypes
+                          .OVERSIZE === 0
+                          ? "good"
+                          : "bad"
+                      }
                     />
                   </div>
+
+                  {/* ACTIONS */}
 
                   <div
                     style={{
                       display: "flex",
                       gap: 8,
                       flexWrap: "wrap",
-                      justifyContent: "flex-end",
+                      justifyContent:
+                        "flex-end",
                       marginTop: 12,
                     }}
                   >
-                    <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "gate")}>
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        onOpenFlight(
+                          f.id,
+                          "gate",
+                          f.flightNumber
+                        )
+                      }
+                    >
                       Gate
                     </button>
 
-                    <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "counter")}>
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        onOpenFlight(
+                          f.id,
+                          "counter",
+                          f.flightNumber
+                        )
+                      }
+                    >
                       Counter
                     </button>
 
                     {!isGateController && (
-                      <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "bagroom")}>
+                      <button
+                        className="btn-secondary"
+                        onClick={() =>
+                          onOpenFlight(
+                            f.id,
+                            "bagroom",
+                            f.flightNumber
+                          )
+                        }
+                      >
                         Bagroom
                       </button>
                     )}
 
-                    <button className="btn-primary" onClick={() => onOpenFlight(f.id, "aircraft")}>
+                    <button
+                      className="btn-primary"
+                      onClick={() =>
+                        onOpenFlight(
+                          f.id,
+                          "aircraft",
+                          f.flightNumber
+                        )
+                      }
+                    >
                       Aircraft
                     </button>
 
-                    <button className="btn-secondary" onClick={() => onOpenFlight(f.id, "reports")}>
+                    <button
+                      className="btn-secondary"
+                      onClick={() =>
+                        onOpenFlight(
+                          f.id,
+                          "reports",
+                          f.flightNumber
+                        )
+                      }
+                    >
                       Reports
                     </button>
                   </div>
