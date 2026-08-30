@@ -16,6 +16,8 @@ import PrivacyNoticePage, {
   PRIVACY_NOTICE_VERSION,
 } from "./pages/PrivacyNoticePage.jsx";
 
+import PrivacyAcknowledgementsPage from "./pages/PrivacyAcknowledgementsPage.jsx";
+
 import DashboardPage from "./pages/DashboardPage.jsx";
 import FlightsPage from "./pages/FlightsPage.jsx";
 import GateControllerPage from "./pages/GateControllerPage.jsx";
@@ -722,6 +724,17 @@ export default function App() {
       );
     }
 
+    if (
+      currentView ===
+      "privacyAcknowledgements"
+    ) {
+      return (
+        <PrivacyAcknowledgementsPage
+          user={user}
+        />
+      );
+    }
+
     if (!selectedFlightId) {
       return (
         <div
@@ -956,15 +969,27 @@ export default function App() {
             </button>
 
             {isStationManager && (
-              <button
-                onClick={() =>
-                  goToView(
-                    "adminUsers"
-                  )
-                }
-              >
-                Admin Users
-              </button>
+              <>
+                <button
+                  onClick={() =>
+                    goToView(
+                      "adminUsers"
+                    )
+                  }
+                >
+                  Admin Users
+                </button>
+
+                <button
+                  onClick={() =>
+                    goToView(
+                      "privacyAcknowledgements"
+                    )
+                  }
+                >
+                  Privacy Ack
+                </button>
+              </>
             )}
           </nav>
 
