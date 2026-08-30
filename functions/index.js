@@ -767,4 +767,4 @@ exports.deleteLoadedFlightsByMonth =
           );
         }
       }
-   
+    );
