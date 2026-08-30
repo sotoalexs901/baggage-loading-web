@@ -1,5 +1,12 @@
 // src/pages/DashboardPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
 import {
   collection,
   onSnapshot,
@@ -7,118 +14,335 @@ import {
   query,
   where,
 } from "firebase/firestore";
+
 import { db } from "../firebase";
 
+import {
+  logSystemIncident,
+  logSystemSuccess,
+  startSystemTimer,
+} from "../utils/systemLogger.js";
+
+/* =========================
+   HELPERS
+========================= */
+
 function normalizeRole(role) {
-  return String(role || "").trim().toLowerCase();
+  return String(role || "")
+    .trim()
+    .toLowerCase();
 }
 
 function getTodayYYYYMMDD() {
   const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+
+  const y =
+    d.getFullYear();
+
+  const m =
+    String(
+      d.getMonth() + 1
+    ).padStart(
+      2,
+      "0"
+    );
+
+  const day =
+    String(
+      d.getDate()
+    ).padStart(
+      2,
+      "0"
+    );
+
   return `${y}-${m}-${day}`;
 }
 
 function normalizeStatus(s) {
-  const v = String(s || "OPEN").trim().toUpperCase();
+  const v =
+    String(
+      s || "OPEN"
+    )
+      .trim()
+      .toUpperCase();
 
-  return v === "OPEN" || v === "RECEIVING" || v === "LOADING" || v === "LOADED"
+  return (
+    v === "OPEN" ||
+    v === "RECEIVING" ||
+    v === "LOADING" ||
+    v === "LOADED"
+  )
     ? v
     : "OPEN";
 }
 
 function normalizeBagType(value) {
-  const v = String(value || "CHECKED_BAG").trim().toUpperCase();
+  const v =
+    String(
+      value ||
+        "CHECKED_BAG"
+    )
+      .trim()
+      .toUpperCase();
 
-  return v === "CHECKED_BAG" || v === "GATE_CHECK" || v === "OVERSIZE"
+  return (
+    v === "CHECKED_BAG" ||
+    v === "GATE_CHECK" ||
+    v === "OVERSIZE" ||
+    v === "GATE_BAG"
+  )
     ? v
     : "CHECKED_BAG";
 }
 
-function getProgressPercent(gateTotal, aircraftTotal) {
-  if (typeof gateTotal !== "number" || gateTotal <= 0) return 0;
-  return Math.min(100, Math.round((aircraftTotal / gateTotal) * 100));
+function getProgressPercent(
+  gateTotal,
+  aircraftTotal
+) {
+  if (
+    typeof gateTotal !==
+      "number" ||
+    gateTotal <= 0
+  ) {
+    return 0;
+  }
+
+  return Math.min(
+    100,
+    Math.round(
+      (
+        aircraftTotal /
+        gateTotal
+      ) *
+        100
+    )
+  );
 }
 
+function getErrorCode(error) {
+  return (
+    error?.code ||
+    error?.name ||
+    null
+  );
+}
+
+function getErrorMessage(
+  error,
+  fallback
+) {
+  return (
+    error?.message ||
+    fallback ||
+    "Unknown error"
+  );
+}
+
+/* =========================
+   STATUS
+========================= */
+
 const STATUS_COLORS = {
-  OPEN: { bg: "#FEF3C7", text: "#92400E", border: "#F59E0B" },
-  RECEIVING: { bg: "#DBEAFE", text: "#1E3A8A", border: "#60A5FA" },
-  LOADING: { bg: "#FFEDD5", text: "#9A3412", border: "#FB923C" },
-  LOADED: { bg: "#DCFCE7", text: "#166534", border: "#22C55E" },
+  OPEN: {
+    bg:
+      "#FEF3C7",
+
+    text:
+      "#92400E",
+
+    border:
+      "#F59E0B",
+  },
+
+  RECEIVING: {
+    bg:
+      "#DBEAFE",
+
+    text:
+      "#1E3A8A",
+
+    border:
+      "#60A5FA",
+  },
+
+  LOADING: {
+    bg:
+      "#FFEDD5",
+
+    text:
+      "#9A3412",
+
+    border:
+      "#FB923C",
+  },
+
+  LOADED: {
+    bg:
+      "#DCFCE7",
+
+    text:
+      "#166534",
+
+    border:
+      "#22C55E",
+  },
 };
 
-function StatusPill({ status }) {
-  const st = normalizeStatus(status);
-  const c = STATUS_COLORS[st] || STATUS_COLORS.OPEN;
+function StatusPill({
+  status,
+}) {
+  const st =
+    normalizeStatus(
+      status
+    );
+
+  const c =
+    STATUS_COLORS[
+      st
+    ] ||
+    STATUS_COLORS.OPEN;
 
   return (
     <span
       style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "6px 12px",
-        borderRadius: 999,
-        border: `1px solid ${c.border}`,
-        background: c.bg,
-        color: c.text,
-        fontWeight: 900,
-        letterSpacing: "0.04em",
-        fontSize: "0.75rem",
+        display:
+          "inline-flex",
+
+        alignItems:
+          "center",
+
+        padding:
+          "6px 12px",
+
+        borderRadius:
+          999,
+
+        border:
+          `1px solid ${c.border}`,
+
+        background:
+          c.bg,
+
+        color:
+          c.text,
+
+        fontWeight:
+          900,
+
+        letterSpacing:
+          "0.04em",
+
+        fontSize:
+          "0.75rem",
       }}
     >
-      {st === "RECEIVING" ? "RECEIVING BAGS" : st}
+      {st ===
+      "RECEIVING"
+        ? "RECEIVING BAGS"
+        : st}
     </span>
   );
 }
 
-function SmallCard({ label, value, tone = "default" }) {
+/* =========================
+   UI COMPONENTS
+========================= */
+
+function SmallCard({
+  label,
+  value,
+  tone = "default",
+}) {
   const colors = {
     default: {
-      bg: "#f9fafb",
-      border: "#e5e7eb",
-      text: "#111827",
+      bg:
+        "#f9fafb",
+
+      border:
+        "#e5e7eb",
+
+      text:
+        "#111827",
     },
+
     good: {
-      bg: "#dcfce7",
-      border: "#22c55e",
-      text: "#166534",
+      bg:
+        "#dcfce7",
+
+      border:
+        "#22c55e",
+
+      text:
+        "#166534",
     },
+
     warn: {
-      bg: "#fef3c7",
-      border: "#f59e0b",
-      text: "#92400e",
+      bg:
+        "#fef3c7",
+
+      border:
+        "#f59e0b",
+
+      text:
+        "#92400e",
     },
+
     bad: {
-      bg: "#fee2e2",
-      border: "#ef4444",
-      text: "#991b1b",
+      bg:
+        "#fee2e2",
+
+      border:
+        "#ef4444",
+
+      text:
+        "#991b1b",
     },
+
     blue: {
-      bg: "#dbeafe",
-      border: "#60a5fa",
-      text: "#1e3a8a",
+      bg:
+        "#dbeafe",
+
+      border:
+        "#60a5fa",
+
+      text:
+        "#1e3a8a",
     },
   };
 
-  const c = colors[tone] || colors.default;
+  const c =
+    colors[tone] ||
+    colors.default;
 
   return (
     <div
       style={{
-        border: `1px solid ${c.border}`,
-        borderRadius: 12,
-        padding: 10,
-        background: c.bg,
-        color: c.text,
+        border:
+          `1px solid ${c.border}`,
+
+        borderRadius:
+          12,
+
+        padding:
+          10,
+
+        background:
+          c.bg,
+
+        color:
+          c.text,
       }}
     >
       <div
         style={{
-          fontSize: "0.75rem",
-          fontWeight: 800,
-          opacity: 0.85,
+          fontSize:
+            "0.75rem",
+
+          fontWeight:
+            800,
+
+          opacity:
+            0.85,
         }}
       >
         {label}
@@ -126,9 +350,14 @@ function SmallCard({ label, value, tone = "default" }) {
 
       <div
         style={{
-          fontSize: "1.25rem",
-          fontWeight: 900,
-          marginTop: 2,
+          fontSize:
+            "1.25rem",
+
+          fontWeight:
+            900,
+
+          marginTop:
+            2,
         }}
       >
         {value}
@@ -137,21 +366,36 @@ function SmallCard({ label, value, tone = "default" }) {
   );
 }
 
-function ProgressBar({ percent }) {
+function ProgressBar({
+  percent,
+}) {
   return (
     <div
       style={{
-        width: "100%",
-        height: 10,
-        background: "#e5e7eb",
-        borderRadius: 999,
-        overflow: "hidden",
+        width:
+          "100%",
+
+        height:
+          10,
+
+        background:
+          "#e5e7eb",
+
+        borderRadius:
+          999,
+
+        overflow:
+          "hidden",
       }}
     >
       <div
         style={{
-          width: `${percent}%`,
-          height: "100%",
+          width:
+            `${percent}%`,
+
+          height:
+            "100%",
+
           background:
             percent >= 100
               ? "#22c55e"
@@ -164,14 +408,30 @@ function ProgressBar({ percent }) {
   );
 }
 
+/* =========================
+   DASHBOARD
+========================= */
+
 export default function DashboardPage({
   user,
+  operationalContext,
   onOpenFlight,
   gateControllerOnDuty,
 }) {
-  const role = useMemo(() => normalizeRole(user?.role), [user]);
+  const role =
+    useMemo(
+      () =>
+        normalizeRole(
+          user?.role
+        ),
+      [
+        user?.role,
+      ]
+    );
 
-  const isGateController = role === "gate_controller";
+  const isGateController =
+    role ===
+    "gate_controller";
 
   const displayName =
     user?.fullName ||
@@ -180,146 +440,563 @@ export default function DashboardPage({
     user?.username ||
     "Team Member";
 
-  const roleLabel = String(user?.role || "user")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const roleLabel =
+    String(
+      user?.role ||
+        "user"
+    )
+      .replaceAll(
+        "_",
+        " "
+      )
+      .replace(
+        /\b\w/g,
+        (
+          letter
+        ) =>
+          letter.toUpperCase()
+      );
 
-  const today = useMemo(() => getTodayYYYYMMDD(), []);
-
-  const [selectedDate, setSelectedDate] = useState(today);
-
-  const [flights, setFlights] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const [flightStats, setFlightStats] = useState({});
-
-  useEffect(() => {
-    setLoading(true);
-
-    const q = query(
-      collection(db, "flights"),
-      where("flightDate", "==", selectedDate),
-      orderBy("createdAt", "desc")
+  const today =
+    useMemo(
+      () =>
+        getTodayYYYYMMDD(),
+      []
     );
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const rows = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        }));
+  const [
+    selectedDate,
+    setSelectedDate,
+  ] = useState(
+    today
+  );
 
-        setFlights(rows);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Dashboard flights error:", err);
-        setFlights([]);
-        setLoading(false);
-      }
-    );
+  const [
+    flights,
+    setFlights,
+  ] = useState([]);
 
-    return () => unsub();
-  }, [selectedDate]);
+  const [
+    loading,
+    setLoading,
+  ] = useState(
+    true
+  );
+
+  const [
+    flightStats,
+    setFlightStats,
+  ] = useState({});
+
+  const dashboardLoadTimerRef =
+    useRef(null);
+
+  const dashboardLoadLoggedRef =
+    useRef(false);
+
+  /* =========================
+     MONITOR HELPERS
+  ========================= */
+
+  const logDashboardIncident =
+    async ({
+      action,
+      severity = "MEDIUM",
+      errorType = null,
+      errorCode = null,
+      message = null,
+      flightId = null,
+      flightNumber = null,
+      durationMs = null,
+      metadata = {},
+    }) => {
+      await logSystemIncident({
+        module:
+          "DASHBOARD",
+
+        action,
+
+        status:
+          "ERROR",
+
+        severity,
+
+        errorType,
+
+        errorCode,
+
+        message,
+
+        user,
+
+        operationalContext,
+
+        flightId,
+
+        flightNumber,
+
+        durationMs,
+
+        currentView:
+          "dashboard",
+
+        metadata,
+      });
+    };
+
+  /* =========================
+     INITIAL TIMER
+  ========================= */
 
   useEffect(() => {
-    if (flights.length === 0) {
-      setFlightStats({});
-      return;
+    dashboardLoadTimerRef.current =
+      startSystemTimer();
+
+    dashboardLoadLoggedRef.current =
+      false;
+
+    return undefined;
+  }, [
+    selectedDate,
+  ]);
+
+  /* =========================
+     FLIGHTS SUBSCRIPTION
+  ========================= */
+
+  useEffect(() => {
+    setLoading(
+      true
+    );
+
+    const q =
+      query(
+        collection(
+          db,
+          "flights"
+        ),
+
+        where(
+          "flightDate",
+          "==",
+          selectedDate
+        ),
+
+        orderBy(
+          "createdAt",
+          "desc"
+        )
+      );
+
+    const unsub =
+      onSnapshot(
+        q,
+
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                d
+              ) => ({
+                id:
+                  d.id,
+
+                ...d.data(),
+              })
+            );
+
+          setFlights(
+            rows
+          );
+
+          setLoading(
+            false
+          );
+
+          if (
+            !dashboardLoadLoggedRef.current
+          ) {
+            dashboardLoadLoggedRef.current =
+              true;
+
+            const durationMs =
+              dashboardLoadTimerRef.current
+                ? dashboardLoadTimerRef.current.elapsed()
+                : null;
+
+            logSystemSuccess({
+              module:
+                "DASHBOARD",
+
+              action:
+                "LOAD_FLIGHTS",
+
+              durationMs,
+            }).catch(
+              (
+                error
+              ) => {
+                console.warn(
+                  "Dashboard success metric failed:",
+                  error
+                );
+              }
+            );
+          }
+        },
+
+        (
+          error
+        ) => {
+          console.error(
+            "Dashboard flights error:",
+            error
+          );
+
+          setFlights(
+            []
+          );
+
+          setLoading(
+            false
+          );
+
+          const durationMs =
+            dashboardLoadTimerRef.current
+              ? dashboardLoadTimerRef.current.elapsed()
+              : null;
+
+          logDashboardIncident({
+            action:
+              "LOAD_FLIGHTS",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load Dashboard flights."
+              ),
+
+            durationMs,
+
+            metadata: {
+              selectedDate,
+            },
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    selectedDate,
+  ]);
+
+  /* =========================
+     PER-FLIGHT STATS
+  ========================= */
+
+  useEffect(() => {
+    if (
+      flights.length ===
+      0
+    ) {
+      setFlightStats(
+        {}
+      );
+
+      return undefined;
     }
 
-    const unsubList = [];
+    const unsubList =
+      [];
 
-    for (const flight of flights) {
-      const flightId = flight.id;
+    for (
+      const flight
+      of flights
+    ) {
+      const flightId =
+        flight.id;
 
-      const counterRef = collection(
-        db,
-        "flights",
-        flightId,
-        "counterScans"
-      );
+      const counterRef =
+        collection(
+          db,
+          "flights",
+          flightId,
+          "counterScans"
+        );
 
-      const bagroomRef = collection(
-        db,
-        "flights",
-        flightId,
-        "bagroomScans"
-      );
+      const bagroomRef =
+        collection(
+          db,
+          "flights",
+          flightId,
+          "bagroomScans"
+        );
 
-      const aircraftRef = collection(
-        db,
-        "flights",
-        flightId,
-        "aircraftScans"
-      );
+      const aircraftRef =
+        collection(
+          db,
+          "flights",
+          flightId,
+          "aircraftScans"
+        );
 
-      const updateStats = (type, rows) => {
-        setFlightStats((prev) => {
-          const old = prev[flightId] || {
-            counter: [],
-            bagroom: [],
-            aircraft: [],
-          };
+      const updateStats =
+        (
+          type,
+          rows
+        ) => {
+          setFlightStats(
+            (
+              previous
+            ) => {
+              const old =
+                previous[
+                  flightId
+                ] || {
+                  counter:
+                    [],
 
-          return {
-            ...prev,
-            [flightId]: {
-              ...old,
-              [type]: rows,
-            },
-          };
-        });
-      };
+                  bagroom:
+                    [],
 
-      const unsubCounter = onSnapshot(
-        counterRef,
-        (snap) => {
-          const rows = snap.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-          }));
+                  aircraft:
+                    [],
+                };
 
-          updateStats("counter", rows);
-        },
-        (e) => {
-          console.error("Dashboard counter stats error:", e);
-          updateStats("counter", []);
-        }
-      );
+              return {
+                ...previous,
 
-      const unsubBagroom = onSnapshot(
-        bagroomRef,
-        (snap) => {
-          const rows = snap.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-          }));
+                [flightId]: {
+                  ...old,
 
-          updateStats("bagroom", rows);
-        },
-        (e) => {
-          console.error("Dashboard bagroom stats error:", e);
-          updateStats("bagroom", []);
-        }
-      );
+                  [type]:
+                    rows,
+                },
+              };
+            }
+          );
+        };
 
-      const unsubAircraft = onSnapshot(
-        aircraftRef,
-        (snap) => {
-          const rows = snap.docs.map((d) => ({
-            id: d.id,
-            ...d.data(),
-          }));
+      const unsubCounter =
+        onSnapshot(
+          counterRef,
 
-          updateStats("aircraft", rows);
-        },
-        (e) => {
-          console.error("Dashboard aircraft stats error:", e);
-          updateStats("aircraft", []);
-        }
-      );
+          (
+            snap
+          ) => {
+            const rows =
+              snap.docs.map(
+                (
+                  d
+                ) => ({
+                  id:
+                    d.id,
+
+                  ...d.data(),
+                })
+              );
+
+            updateStats(
+              "counter",
+              rows
+            );
+          },
+
+          (
+            error
+          ) => {
+            console.error(
+              "Dashboard counter stats error:",
+              error
+            );
+
+            updateStats(
+              "counter",
+              []
+            );
+
+            logDashboardIncident({
+              action:
+                "LOAD_COUNTER_STATS",
+
+              severity:
+                "MEDIUM",
+
+              errorType:
+                "FIRESTORE_SNAPSHOT",
+
+              errorCode:
+                getErrorCode(
+                  error
+                ),
+
+              message:
+                getErrorMessage(
+                  error,
+                  "Unable to load Counter statistics."
+                ),
+
+              flightId,
+
+              flightNumber:
+                flight
+                  ?.flightNumber ||
+                null,
+            });
+          }
+        );
+
+      const unsubBagroom =
+        onSnapshot(
+          bagroomRef,
+
+          (
+            snap
+          ) => {
+            const rows =
+              snap.docs.map(
+                (
+                  d
+                ) => ({
+                  id:
+                    d.id,
+
+                  ...d.data(),
+                })
+              );
+
+            updateStats(
+              "bagroom",
+              rows
+            );
+          },
+
+          (
+            error
+          ) => {
+            console.error(
+              "Dashboard bagroom stats error:",
+              error
+            );
+
+            updateStats(
+              "bagroom",
+              []
+            );
+
+            logDashboardIncident({
+              action:
+                "LOAD_BAGROOM_STATS",
+
+              severity:
+                "MEDIUM",
+
+              errorType:
+                "FIRESTORE_SNAPSHOT",
+
+              errorCode:
+                getErrorCode(
+                  error
+                ),
+
+              message:
+                getErrorMessage(
+                  error,
+                  "Unable to load Bagroom statistics."
+                ),
+
+              flightId,
+
+              flightNumber:
+                flight
+                  ?.flightNumber ||
+                null,
+            });
+          }
+        );
+
+      const unsubAircraft =
+        onSnapshot(
+          aircraftRef,
+
+          (
+            snap
+          ) => {
+            const rows =
+              snap.docs.map(
+                (
+                  d
+                ) => ({
+                  id:
+                    d.id,
+
+                  ...d.data(),
+                })
+              );
+
+            updateStats(
+              "aircraft",
+              rows
+            );
+          },
+
+          (
+            error
+          ) => {
+            console.error(
+              "Dashboard aircraft stats error:",
+              error
+            );
+
+            updateStats(
+              "aircraft",
+              []
+            );
+
+            logDashboardIncident({
+              action:
+                "LOAD_AIRCRAFT_STATS",
+
+              severity:
+                "HIGH",
+
+              errorType:
+                "FIRESTORE_SNAPSHOT",
+
+              errorCode:
+                getErrorCode(
+                  error
+                ),
+
+              message:
+                getErrorMessage(
+                  error,
+                  "Unable to load Aircraft statistics."
+                ),
+
+              flightId,
+
+              flightNumber:
+                flight
+                  ?.flightNumber ||
+                null,
+            });
+          }
+        );
 
       unsubList.push(
         unsubCounter,
@@ -329,122 +1006,380 @@ export default function DashboardPage({
     }
 
     return () => {
-      unsubList.forEach((unsub) => unsub());
+      unsubList.forEach(
+        (
+          unsub
+        ) => {
+          try {
+            unsub();
+          } catch (
+            error
+          ) {
+            console.warn(
+              "Dashboard unsubscribe error:",
+              error
+            );
+          }
+        }
+      );
     };
-  }, [flights]);
+  }, [
+    flights,
+  ]);
 
-  const getStatsForFlight = (flight) => {
-    const stats = flightStats[flight.id] || {
-      counter: [],
-      bagroom: [],
-      aircraft: [],
+  /* =========================
+     OPEN MODULE
+  ========================= */
+
+  const handleOpenModule =
+    (
+      flight,
+      targetView
+    ) => {
+      const timer =
+        startSystemTimer();
+
+      try {
+        if (
+          typeof onOpenFlight !==
+          "function"
+        ) {
+          throw new Error(
+            "Dashboard onOpenFlight callback is not available."
+          );
+        }
+
+        onOpenFlight(
+          flight.id,
+          targetView,
+          flight.flightNumber
+        );
+
+        logSystemSuccess({
+          module:
+            "DASHBOARD",
+
+          action:
+            `OPEN_${String(
+              targetView
+            ).toUpperCase()}`,
+
+          durationMs:
+            timer.elapsed(),
+        }).catch(
+          (
+            error
+          ) => {
+            console.warn(
+              "Dashboard open metric failed:",
+              error
+            );
+          }
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Dashboard module open error:",
+          error
+        );
+
+        logDashboardIncident({
+          action:
+            "OPEN_MODULE",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "NAVIGATION",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              `Unable to open ${targetView}.`
+            ),
+
+          flightId:
+            flight?.id ||
+            null,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          durationMs:
+            timer.elapsed(),
+
+          metadata: {
+            targetView,
+          },
+        });
+      }
     };
 
-    const gateTotal =
-      typeof flight.checkedBagsTotal === "number"
-        ? flight.checkedBagsTotal
-        : null;
+  /* =========================
+     FLIGHT STATS
+  ========================= */
 
-    const counterTotal = stats.counter.length;
-    const bagroomTotal = stats.bagroom.length;
-    const aircraftTotal = stats.aircraft.length;
+  const getStatsForFlight =
+    (
+      flight
+    ) => {
+      const stats =
+        flightStats[
+          flight.id
+        ] || {
+          counter:
+            [],
 
-    const missing =
-      gateTotal === null
-        ? null
-        : Math.max(0, gateTotal - aircraftTotal);
+          bagroom:
+            [],
 
-    const progress = getProgressPercent(
-      gateTotal,
-      aircraftTotal
+          aircraft:
+            [],
+        };
+
+      const gateTotal =
+        typeof flight
+          .checkedBagsTotal ===
+        "number"
+          ? flight
+              .checkedBagsTotal
+          : null;
+
+      const counterTotal =
+        stats
+          .counter
+          .length;
+
+      const bagroomTotal =
+        stats
+          .bagroom
+          .length;
+
+      const aircraftTotal =
+        stats
+          .aircraft
+          .length;
+
+      const missing =
+        gateTotal ===
+        null
+          ? null
+          : Math.max(
+              0,
+              gateTotal -
+                aircraftTotal
+            );
+
+      const progress =
+        getProgressPercent(
+          gateTotal,
+          aircraftTotal
+        );
+
+      const bagTypes = {
+        CHECKED_BAG:
+          0,
+
+        GATE_CHECK:
+          0,
+
+        OVERSIZE:
+          0,
+
+        GATE_BAG:
+          0,
+      };
+
+      for (
+        const scan
+        of stats.aircraft
+      ) {
+        const type =
+          normalizeBagType(
+            scan.bagType
+          );
+
+        bagTypes[
+          type
+        ] += 1;
+      }
+
+      const counterBagTypes = {
+        CHECKED_BAG:
+          0,
+
+        GATE_CHECK:
+          0,
+
+        OVERSIZE:
+          0,
+      };
+
+      for (
+        const scan
+        of stats.counter
+      ) {
+        const type =
+          normalizeBagType(
+            scan.bagType
+          );
+
+        if (
+          type ===
+          "GATE_BAG"
+        ) {
+          continue;
+        }
+
+        counterBagTypes[
+          type
+        ] += 1;
+      }
+
+      const missingBagTypes = {
+        GATE_CHECK:
+          Math.max(
+            0,
+
+            counterBagTypes
+              .GATE_CHECK -
+              bagTypes
+                .GATE_CHECK
+          ),
+
+        OVERSIZE:
+          Math.max(
+            0,
+
+            counterBagTypes
+              .OVERSIZE -
+              bagTypes
+                .OVERSIZE
+          ),
+      };
+
+      return {
+        gateTotal,
+
+        counterTotal,
+
+        bagroomTotal,
+
+        aircraftTotal,
+
+        missing,
+
+        progress,
+
+        bagTypes,
+
+        counterBagTypes,
+
+        missingBagTypes,
+      };
+    };
+
+  /* =========================
+     DAILY SUMMARY
+  ========================= */
+
+  const summaryTotals =
+    useMemo(
+      () => {
+        let gate =
+          0;
+
+        let bagroom =
+          0;
+
+        let aircraft =
+          0;
+
+        let missing =
+          0;
+
+        let loadedFlights =
+          0;
+
+        for (
+          const flight
+          of flights
+        ) {
+          const stats =
+            getStatsForFlight(
+              flight
+            );
+
+          if (
+            typeof stats
+              .gateTotal ===
+            "number"
+          ) {
+            gate +=
+              stats.gateTotal;
+          }
+
+          bagroom +=
+            stats.bagroomTotal;
+
+          aircraft +=
+            stats.aircraftTotal;
+
+          if (
+            typeof stats
+              .missing ===
+            "number"
+          ) {
+            missing +=
+              stats.missing;
+          }
+
+          if (
+            normalizeStatus(
+              flight.status
+            ) === "LOADED"
+          ) {
+            loadedFlights +=
+              1;
+          }
+        }
+
+        return {
+          gate,
+
+          bagroom,
+
+          aircraft,
+
+          missing,
+
+          loadedFlights,
+        };
+      },
+
+      [
+        flights,
+        flightStats,
+      ]
     );
 
-    const bagTypes = {
-      CHECKED_BAG: 0,
-      GATE_CHECK: 0,
-      OVERSIZE: 0,
-    };
-
-    for (const scan of stats.aircraft) {
-      const type = normalizeBagType(scan.bagType);
-      bagTypes[type] += 1;
-    }
-
-    const counterBagTypes = {
-      CHECKED_BAG: 0,
-      GATE_CHECK: 0,
-      OVERSIZE: 0,
-    };
-
-    for (const scan of stats.counter) {
-      const type = normalizeBagType(scan.bagType);
-      counterBagTypes[type] += 1;
-    }
-
-    const missingBagTypes = {
-      GATE_CHECK: Math.max(
-        0,
-        counterBagTypes.GATE_CHECK - bagTypes.GATE_CHECK
-      ),
-
-      OVERSIZE: Math.max(
-        0,
-        counterBagTypes.OVERSIZE - bagTypes.OVERSIZE
-      ),
-    };
-
-    return {
-      gateTotal,
-      counterTotal,
-      bagroomTotal,
-      aircraftTotal,
-      missing,
-      progress,
-      bagTypes,
-      counterBagTypes,
-      missingBagTypes,
-    };
-  };
-
-  const summaryTotals = useMemo(() => {
-    let gate = 0;
-    let bagroom = 0;
-    let aircraft = 0;
-    let missing = 0;
-    let loadedFlights = 0;
-
-    for (const f of flights) {
-      const s = getStatsForFlight(f);
-
-      if (typeof s.gateTotal === "number") {
-        gate += s.gateTotal;
-      }
-
-      bagroom += s.bagroomTotal;
-      aircraft += s.aircraftTotal;
-
-      if (typeof s.missing === "number") {
-        missing += s.missing;
-      }
-
-      if (normalizeStatus(f.status) === "LOADED") {
-        loadedFlights += 1;
-      }
-    }
-
-    return {
-      gate,
-      bagroom,
-      aircraft,
-      missing,
-      loadedFlights,
-    };
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flights, flightStats]);
+  /* =========================
+     RENDER
+  ========================= */
 
   return (
-    <div className="dash-root">
+    <div
+      className="dash-root"
+    >
       {/* =========================
           WELCOME
       ========================= */}
@@ -452,24 +1387,41 @@ export default function DashboardPage({
       <section
         className="dash-header-card"
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 20,
-          flexWrap: "wrap",
+          display:
+            "flex",
+
+          justifyContent:
+            "space-between",
+
+          alignItems:
+            "center",
+
+          gap:
+            20,
+
+          flexWrap:
+            "wrap",
         }}
       >
         <div
           style={{
-            flex: "1 1 320px",
+            flex:
+              "1 1 320px",
           }}
         >
           <p
             style={{
-              margin: 0,
-              color: "#64748b",
-              fontSize: "0.9rem",
-              fontWeight: 600,
+              margin:
+                0,
+
+              color:
+                "#64748b",
+
+              fontSize:
+                "0.9rem",
+
+              fontWeight:
+                600,
             }}
           >
             Welcome back
@@ -477,11 +1429,20 @@ export default function DashboardPage({
 
           <h2
             style={{
-              margin: "5px 0 8px",
-              fontSize: "1.9rem",
-              lineHeight: 1.1,
-              color: "#0f172a",
-              letterSpacing: "-0.035em",
+              margin:
+                "5px 0 8px",
+
+              fontSize:
+                "1.9rem",
+
+              lineHeight:
+                1.1,
+
+              color:
+                "#0f172a",
+
+              letterSpacing:
+                "-0.035em",
             }}
           >
             {displayName}
@@ -489,22 +1450,44 @@ export default function DashboardPage({
 
           <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
+              display:
+                "flex",
+
+              alignItems:
+                "center",
+
+              gap:
+                8,
+
+              flexWrap:
+                "wrap",
             }}
           >
             <span
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                padding: "5px 10px",
-                borderRadius: 999,
-                background: "#eff6ff",
-                color: "#2563eb",
-                fontSize: "0.75rem",
-                fontWeight: 900,
+                display:
+                  "inline-flex",
+
+                alignItems:
+                  "center",
+
+                padding:
+                  "5px 10px",
+
+                borderRadius:
+                  999,
+
+                background:
+                  "#eff6ff",
+
+                color:
+                  "#2563eb",
+
+                fontSize:
+                  "0.75rem",
+
+                fontWeight:
+                  900,
               }}
             >
               {roleLabel}
@@ -513,9 +1496,14 @@ export default function DashboardPage({
             {user?.username && (
               <span
                 style={{
-                  color: "#94a3b8",
-                  fontSize: "0.76rem",
-                  fontWeight: 600,
+                  color:
+                    "#94a3b8",
+
+                  fontSize:
+                    "0.76rem",
+
+                  fontWeight:
+                    600,
                 }}
               >
                 @{user.username}
@@ -527,36 +1515,63 @@ export default function DashboardPage({
             gateControllerOnDuty && (
               <div
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  marginTop: 10,
-                  padding: "6px 9px",
-                  borderRadius: 9,
-                  background: "#f8fafc",
-                  border: "1px solid #e2e8f0",
-                  color: "#475569",
-                  fontSize: "0.78rem",
+                  display:
+                    "inline-flex",
+
+                  alignItems:
+                    "center",
+
+                  gap:
+                    6,
+
+                  marginTop:
+                    10,
+
+                  padding:
+                    "6px 9px",
+
+                  borderRadius:
+                    9,
+
+                  background:
+                    "#f8fafc",
+
+                  border:
+                    "1px solid #e2e8f0",
+
+                  color:
+                    "#475569",
+
+                  fontSize:
+                    "0.78rem",
                 }}
               >
                 <span
                   style={{
-                    color: "#22c55e",
+                    color:
+                      "#22c55e",
                   }}
                 >
                   ●
                 </span>
 
                 Gate Controller on duty:{" "}
-                <strong>{gateControllerOnDuty}</strong>
+                <strong>
+                  {gateControllerOnDuty}
+                </strong>
               </div>
             )}
 
           <p
             style={{
-              margin: "12px 0 0",
-              color: "#64748b",
-              fontSize: "0.88rem",
+              margin:
+                "12px 0 0",
+
+              color:
+                "#64748b",
+
+              fontSize:
+                "0.88rem",
             }}
           >
             Real-time flight overview for baggage operations.
@@ -566,22 +1581,38 @@ export default function DashboardPage({
         <div
           className="dash-summary-box"
           style={{
-            minWidth: 180,
-            padding: "18px 22px",
-            borderRadius: 15,
+            minWidth:
+              180,
+
+            padding:
+              "18px 22px",
+
+            borderRadius:
+              15,
+
             background:
               "linear-gradient(135deg, #1d4ed8, #3b82f6)",
-            color: "white",
+
+            color:
+              "white",
+
             boxShadow:
               "0 10px 25px rgba(37,99,235,0.18)",
           }}
         >
           <p
             style={{
-              margin: 0,
-              fontSize: "0.8rem",
-              color: "#dbeafe",
-              textAlign: "right",
+              margin:
+                0,
+
+              fontSize:
+                "0.8rem",
+
+              color:
+                "#dbeafe",
+
+              textAlign:
+                "right",
             }}
           >
             Flights
@@ -589,21 +1620,37 @@ export default function DashboardPage({
 
           <p
             style={{
-              margin: "3px 0",
-              fontSize: "2rem",
-              fontWeight: 900,
-              textAlign: "right",
+              margin:
+                "3px 0",
+
+              fontSize:
+                "2rem",
+
+              fontWeight:
+                900,
+
+              textAlign:
+                "right",
             }}
           >
-            {loading ? "…" : flights.length}
+            {loading
+              ? "…"
+              : flights.length}
           </p>
 
           <p
             style={{
-              margin: 0,
-              fontSize: "0.75rem",
-              color: "#dbeafe",
-              textAlign: "right",
+              margin:
+                0,
+
+              fontSize:
+                "0.75rem",
+
+              color:
+                "#dbeafe",
+
+              textAlign:
+                "right",
             }}
           >
             for {selectedDate}
@@ -617,11 +1664,17 @@ export default function DashboardPage({
 
       <section
         style={{
-          display: "grid",
+          display:
+            "grid",
+
           gridTemplateColumns:
             "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: 12,
-          marginBottom: 16,
+
+          gap:
+            12,
+
+          marginBottom:
+            16,
         }}
       >
         <SmallCard
@@ -660,7 +1713,8 @@ export default function DashboardPage({
               : summaryTotals.missing
           }
           tone={
-            summaryTotals.missing === 0
+            summaryTotals.missing ===
+            0
               ? "good"
               : "bad"
           }
@@ -681,21 +1735,33 @@ export default function DashboardPage({
           REAL-TIME FLIGHTS
       ========================= */}
 
-      <section className="dash-section">
+      <section
+        className="dash-section"
+      >
         <div
           className="dash-section-header"
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-            alignItems: "end",
+            display:
+              "flex",
+
+            justifyContent:
+              "space-between",
+
+            gap:
+              12,
+
+            flexWrap:
+              "wrap",
+
+            alignItems:
+              "end",
           }}
         >
           <div>
             <h3
               style={{
-                marginBottom: 3,
+                marginBottom:
+                  3,
               }}
             >
               Real-Time Flights
@@ -703,7 +1769,8 @@ export default function DashboardPage({
 
             <p
               style={{
-                margin: 0,
+                margin:
+                  0,
               }}
             >
               Live baggage progress by flight.
@@ -713,9 +1780,14 @@ export default function DashboardPage({
           <div>
             <label
               style={{
-                fontSize: "0.85rem",
-                color: "#374151",
-                fontWeight: 700,
+                fontSize:
+                  "0.85rem",
+
+                color:
+                  "#374151",
+
+                fontWeight:
+                  700,
               }}
             >
               Date
@@ -724,18 +1796,32 @@ export default function DashboardPage({
             <div>
               <input
                 type="date"
-                value={selectedDate}
-                onChange={(e) =>
-                  setSelectedDate(
-                    e.target.value
-                  )
+
+                value={
+                  selectedDate
                 }
+
+                onChange={(
+                  event
+                ) => {
+                  setSelectedDate(
+                    event.target
+                      .value
+                  );
+                }}
+
                 style={{
-                  padding: "7px 10px",
-                  borderRadius: 10,
+                  padding:
+                    "7px 10px",
+
+                  borderRadius:
+                    10,
+
                   border:
                     "1px solid #d1d5db",
-                  background: "#f8fafc",
+
+                  background:
+                    "#f8fafc",
                 }}
               />
             </div>
@@ -745,381 +1831,510 @@ export default function DashboardPage({
         {loading ? (
           <p
             style={{
-              color: "#6b7280",
-              padding: 14,
+              color:
+                "#6b7280",
+
+              padding:
+                14,
             }}
           >
             Loading flights...
           </p>
-        ) : flights.length === 0 ? (
+        ) : flights.length ===
+          0 ? (
           <p
             style={{
-              color: "#6b7280",
-              padding: 14,
+              color:
+                "#6b7280",
+
+              padding:
+                14,
             }}
           >
-            No flights found for {selectedDate}.
+            No flights found for{" "}
+            {selectedDate}.
           </p>
         ) : (
           <div
             style={{
-              display: "grid",
-              gap: 14,
+              display:
+                "grid",
+
+              gap:
+                14,
             }}
           >
-            {flights.map((f) => {
-              const s =
-                getStatsForFlight(f);
+            {flights.map(
+              (
+                flight
+              ) => {
+                const stats =
+                  getStatsForFlight(
+                    flight
+                  );
 
-              const status =
-                normalizeStatus(
-                  f.status
-                );
+                const status =
+                  normalizeStatus(
+                    flight.status
+                  );
 
-              return (
-                <div
-                  key={f.id}
-                  style={{
-                    border:
-                      "1px solid #e5e7eb",
-                    borderRadius: 14,
-                    padding: 14,
-                    background: "white",
-                    boxShadow:
-                      "0 2px 8px rgba(15,23,42,0.03)",
-                  }}
-                >
-                  {/* FLIGHT HEADER */}
-
+                return (
                   <div
+                    key={
+                      flight.id
+                    }
                     style={{
-                      display: "flex",
-                      justifyContent:
-                        "space-between",
-                      gap: 12,
-                      flexWrap: "wrap",
-                      alignItems: "start",
+                      border:
+                        "1px solid #e5e7eb",
+
+                      borderRadius:
+                        14,
+
+                      padding:
+                        14,
+
+                      background:
+                        "white",
+
+                      boxShadow:
+                        "0 2px 8px rgba(15,23,42,0.03)",
                     }}
                   >
-                    <div>
-                      <h3
-                        style={{
-                          margin: 0,
-                        }}
-                      >
-                        {f.flightNumber ||
-                          "-"}
+                    {/* FLIGHT HEADER */}
 
-                        <span
-                          style={{
-                            color: "#6b7280",
-                            fontSize:
-                              "0.9rem",
-                          }}
-                        >
-                          {" "}
-                          ·{" "}
-                          {f.gate ||
-                            "No Gate"}
-                        </span>
-                      </h3>
-
-                      <p
-                        style={{
-                          margin:
-                            "5px 0 0",
-                          color: "#6b7280",
-                          fontSize:
-                            "0.85rem",
-                        }}
-                      >
-                        Date:{" "}
-                        <strong>
-                          {f.flightDate ||
-                            "-"}
-                        </strong>
-
-                        {" · "}
-
-                        Aircraft:{" "}
-                        <strong>
-                          {f.aircraftType ||
-                            "-"}
-                        </strong>
-                      </p>
-
-                      <p
-                        style={{
-                          margin:
-                            "5px 0 0",
-                          color: "#6b7280",
-                          fontSize:
-                            "0.85rem",
-                        }}
-                      >
-                        Gate Controller:{" "}
-                        <strong>
-                          {f.gateControllerOnDuty ||
-                            gateControllerOnDuty ||
-                            "-"}
-                        </strong>
-
-                        {" · "}
-
-                        Ramp Supervisor:{" "}
-                        <strong>
-                          {f.rampSupervisorOnDuty ||
-                            "-"}
-                        </strong>
-                      </p>
-                    </div>
-
-                    <StatusPill
-                      status={status}
-                    />
-                  </div>
-
-                  {/* LOADING PROGRESS */}
-
-                  <div
-                    style={{
-                      marginTop: 12,
-                    }}
-                  >
                     <div
                       style={{
-                        display: "flex",
+                        display:
+                          "flex",
+
                         justifyContent:
                           "space-between",
-                        fontSize:
-                          "0.82rem",
-                        color: "#6b7280",
-                        marginBottom: 5,
+
+                        gap:
+                          12,
+
+                        flexWrap:
+                          "wrap",
+
+                        alignItems:
+                          "start",
                       }}
                     >
-                      <span>
-                        Loading Progress
-                      </span>
+                      <div>
+                        <h3
+                          style={{
+                            margin:
+                              0,
+                          }}
+                        >
+                          {flight
+                            .flightNumber ||
+                            "-"}
 
-                      <strong>
-                        {s.progress}%
-                      </strong>
+                          <span
+                            style={{
+                              color:
+                                "#6b7280",
+
+                              fontSize:
+                                "0.9rem",
+                            }}
+                          >
+                            {" "}
+                            ·{" "}
+                            {flight.gate ||
+                              "No Gate"}
+                          </span>
+                        </h3>
+
+                        <p
+                          style={{
+                            margin:
+                              "5px 0 0",
+
+                            color:
+                              "#6b7280",
+
+                            fontSize:
+                              "0.85rem",
+                          }}
+                        >
+                          Date:{" "}
+                          <strong>
+                            {flight
+                              .flightDate ||
+                              "-"}
+                          </strong>
+
+                          {" · "}
+
+                          Aircraft:{" "}
+                          <strong>
+                            {flight
+                              .aircraftType ||
+                              "-"}
+                          </strong>
+                        </p>
+
+                        <p
+                          style={{
+                            margin:
+                              "5px 0 0",
+
+                            color:
+                              "#6b7280",
+
+                            fontSize:
+                              "0.85rem",
+                          }}
+                        >
+                          Gate Controller:{" "}
+                          <strong>
+                            {flight
+                              .gateControllerOnDuty ||
+                              gateControllerOnDuty ||
+                              "-"}
+                          </strong>
+
+                          {" · "}
+
+                          Ramp Supervisor:{" "}
+                          <strong>
+                            {flight
+                              .rampSupervisorOnDuty ||
+                              "-"}
+                          </strong>
+                        </p>
+                      </div>
+
+                      <StatusPill
+                        status={
+                          status
+                        }
+                      />
                     </div>
 
-                    <ProgressBar
-                      percent={s.progress}
-                    />
-                  </div>
+                    {/* LOADING PROGRESS */}
 
-                  {/* MAIN COUNTS */}
+                    <div
+                      style={{
+                        marginTop:
+                          12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display:
+                            "flex",
 
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "repeat(auto-fit, minmax(130px, 1fr))",
-                      gap: 10,
-                      marginTop: 12,
-                    }}
-                  >
-                    <SmallCard
-                      label="Gate Total"
-                      value={
-                        s.gateTotal ===
-                        null
-                          ? "—"
-                          : s.gateTotal
-                      }
-                      tone="blue"
-                    />
+                          justifyContent:
+                            "space-between",
 
-                    <SmallCard
-                      label="Counter"
-                      value={
-                        s.counterTotal
-                      }
-                    />
+                          fontSize:
+                            "0.82rem",
 
-                    <SmallCard
-                      label="Bagroom"
-                      value={
-                        s.bagroomTotal
-                      }
-                    />
+                          color:
+                            "#6b7280",
 
-                    <SmallCard
-                      label="Aircraft"
-                      value={
-                        s.aircraftTotal
-                      }
-                    />
+                          marginBottom:
+                            5,
+                        }}
+                      >
+                        <span>
+                          Loading Progress
+                        </span>
 
-                    <SmallCard
-                      label="Missing"
-                      value={
-                        s.missing === null
-                          ? "—"
-                          : s.missing
-                      }
-                      tone={
-                        s.missing === 0
-                          ? "good"
-                          : s.missing ===
-                              null
-                            ? "default"
+                        <strong>
+                          {stats.progress}%
+                        </strong>
+                      </div>
+
+                      <ProgressBar
+                        percent={
+                          stats.progress
+                        }
+                      />
+                    </div>
+
+                    {/* MAIN COUNTS */}
+
+                    <div
+                      style={{
+                        display:
+                          "grid",
+
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(130px, 1fr))",
+
+                        gap:
+                          10,
+
+                        marginTop:
+                          12,
+                      }}
+                    >
+                      <SmallCard
+                        label="Gate Total"
+
+                        value={
+                          stats.gateTotal ===
+                          null
+                            ? "—"
+                            : stats.gateTotal
+                        }
+
+                        tone="blue"
+                      />
+
+                      <SmallCard
+                        label="Counter"
+
+                        value={
+                          stats.counterTotal
+                        }
+                      />
+
+                      <SmallCard
+                        label="Bagroom"
+
+                        value={
+                          stats.bagroomTotal
+                        }
+                      />
+
+                      <SmallCard
+                        label="Aircraft"
+
+                        value={
+                          stats.aircraftTotal
+                        }
+                      />
+
+                      <SmallCard
+                        label="Missing"
+
+                        value={
+                          stats.missing ===
+                          null
+                            ? "—"
+                            : stats.missing
+                        }
+
+                        tone={
+                          stats.missing ===
+                          0
+                            ? "good"
+                            : stats.missing ===
+                                null
+                              ? "default"
+                              : "bad"
+                        }
+                      />
+                    </div>
+
+                    {/* BAG TYPES */}
+
+                    <div
+                      style={{
+                        display:
+                          "grid",
+
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(150px, 1fr))",
+
+                        gap:
+                          10,
+
+                        marginTop:
+                          10,
+                      }}
+                    >
+                      <SmallCard
+                        label="Checked Loaded"
+
+                        value={
+                          stats
+                            .bagTypes
+                            .CHECKED_BAG
+                        }
+                      />
+
+                      <SmallCard
+                        label="Gate Check Loaded"
+
+                        value={
+                          stats
+                            .bagTypes
+                            .GATE_CHECK
+                        }
+
+                        tone="warn"
+                      />
+
+                      <SmallCard
+                        label="Oversize Loaded"
+
+                        value={
+                          stats
+                            .bagTypes
+                            .OVERSIZE
+                        }
+
+                        tone="warn"
+                      />
+
+                      <SmallCard
+                        label="Gate Tagged Loaded"
+
+                        value={
+                          stats
+                            .bagTypes
+                            .GATE_BAG
+                        }
+
+                        tone="blue"
+                      />
+
+                      <SmallCard
+                        label="Gate Check Missing"
+
+                        value={
+                          stats
+                            .missingBagTypes
+                            .GATE_CHECK
+                        }
+
+                        tone={
+                          stats
+                            .missingBagTypes
+                            .GATE_CHECK ===
+                          0
+                            ? "good"
                             : "bad"
-                      }
-                    />
-                  </div>
+                        }
+                      />
 
-                  {/* BAG TYPES */}
+                      <SmallCard
+                        label="Oversize Missing"
 
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns:
-                        "repeat(auto-fit, minmax(150px, 1fr))",
-                      gap: 10,
-                      marginTop: 10,
-                    }}
-                  >
-                    <SmallCard
-                      label="Checked Loaded"
-                      value={
-                        s.bagTypes
-                          .CHECKED_BAG
-                      }
-                    />
+                        value={
+                          stats
+                            .missingBagTypes
+                            .OVERSIZE
+                        }
 
-                    <SmallCard
-                      label="Gate Check Loaded"
-                      value={
-                        s.bagTypes
-                          .GATE_CHECK
-                      }
-                      tone="warn"
-                    />
+                        tone={
+                          stats
+                            .missingBagTypes
+                            .OVERSIZE ===
+                          0
+                            ? "good"
+                            : "bad"
+                        }
+                      />
+                    </div>
 
-                    <SmallCard
-                      label="Oversize Loaded"
-                      value={
-                        s.bagTypes
-                          .OVERSIZE
-                      }
-                      tone="warn"
-                    />
+                    {/* ACTIONS */}
 
-                    <SmallCard
-                      label="Gate Check Missing"
-                      value={
-                        s.missingBagTypes
-                          .GATE_CHECK
-                      }
-                      tone={
-                        s.missingBagTypes
-                          .GATE_CHECK === 0
-                          ? "good"
-                          : "bad"
-                      }
-                    />
+                    <div
+                      style={{
+                        display:
+                          "flex",
 
-                    <SmallCard
-                      label="Oversize Missing"
-                      value={
-                        s.missingBagTypes
-                          .OVERSIZE
-                      }
-                      tone={
-                        s.missingBagTypes
-                          .OVERSIZE === 0
-                          ? "good"
-                          : "bad"
-                      }
-                    />
-                  </div>
+                        gap:
+                          8,
 
-                  {/* ACTIONS */}
+                        flexWrap:
+                          "wrap",
 
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      flexWrap: "wrap",
-                      justifyContent:
-                        "flex-end",
-                      marginTop: 12,
-                    }}
-                  >
-                    <button
-                      className="btn-secondary"
-                      onClick={() =>
-                        onOpenFlight(
-                          f.id,
-                          "gate",
-                          f.flightNumber
-                        )
-                      }
+                        justifyContent:
+                          "flex-end",
+
+                        marginTop:
+                          12,
+                      }}
                     >
-                      Gate
-                    </button>
-
-                    <button
-                      className="btn-secondary"
-                      onClick={() =>
-                        onOpenFlight(
-                          f.id,
-                          "counter",
-                          f.flightNumber
-                        )
-                      }
-                    >
-                      Counter
-                    </button>
-
-                    {!isGateController && (
                       <button
+                        type="button"
+
                         className="btn-secondary"
+
                         onClick={() =>
-                          onOpenFlight(
-                            f.id,
-                            "bagroom",
-                            f.flightNumber
+                          handleOpenModule(
+                            flight,
+                            "gate"
                           )
                         }
                       >
-                        Bagroom
+                        Gate
                       </button>
-                    )}
 
-                    <button
-                      className="btn-primary"
-                      onClick={() =>
-                        onOpenFlight(
-                          f.id,
-                          "aircraft",
-                          f.flightNumber
-                        )
-                      }
-                    >
-                      Aircraft
-                    </button>
+                      <button
+                        type="button"
 
-                    <button
-                      className="btn-secondary"
-                      onClick={() =>
-                        onOpenFlight(
-                          f.id,
-                          "reports",
-                          f.flightNumber
-                        )
-                      }
-                    >
-                      Reports
-                    </button>
+                        className="btn-secondary"
+
+                        onClick={() =>
+                          handleOpenModule(
+                            flight,
+                            "counter"
+                          )
+                        }
+                      >
+                        Counter
+                      </button>
+
+                      {!isGateController && (
+                        <button
+                          type="button"
+
+                          className="btn-secondary"
+
+                          onClick={() =>
+                            handleOpenModule(
+                              flight,
+                              "bagroom"
+                            )
+                          }
+                        >
+                          Bagroom
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+
+                        className="btn-primary"
+
+                        onClick={() =>
+                          handleOpenModule(
+                            flight,
+                            "aircraft"
+                          )
+                        }
+                      >
+                        Aircraft
+                      </button>
+
+                      <button
+                        type="button"
+
+                        className="btn-secondary"
+
+                        onClick={() =>
+                          handleOpenModule(
+                            flight,
+                            "reports"
+                          )
+                        }
+                      >
+                        Reports
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              }
+            )}
           </div>
         )}
       </section>
