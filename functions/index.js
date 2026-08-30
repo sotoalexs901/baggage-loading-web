@@ -8,19 +8,25 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
-const storage = admin.storage();
-
+const bucket = admin.storage().bucket();
 const REGION = "us-east4";
 
 function normalizeRole(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase();
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildActor(data) {
+  return {
+    username: data?.username || null,
+    role: data?.userRole || null,
+    fullName: data?.employeeFullName || null,
+    operationalPosition: data?.operationalPosition || null,
+    operationalPositionLabel: data?.operationalPositionLabel || null,
+  };
 }
 
 function assertManager(data) {
   const role = normalizeRole(data?.userRole);
-
   const allowed = [
     "station_manager",
     "duty_manager",
@@ -35,57 +41,28 @@ function assertManager(data) {
       "Your role is not allowed to perform this action."
     );
   }
-
-  return role;
 }
 
-function buildActor(data) {
-  return {
-    username:
-      data?.username ||
-      null,
-
-    role:
-      data?.userRole ||
-      null,
-
-    fullName:
-      data?.employeeFullName ||
-      null,
-
-    operationalPosition:
-      data?.operationalPosition ||
-      null,
-
-    operationalPositionLabel:
-      data?.operationalPositionLabel ||
-      null,
-  };
-}
-
-async function deleteCollectionDocs(collectionRef, batchSize = 400) {
+async function deleteCollection(collectionRef, batchSize = 400) {
   let deleted = 0;
 
   while (true) {
-    const snap = await collectionRef
-      .limit(batchSize)
-      .get();
+    const snapshot = await collectionRef.limit(batchSize).get();
 
-    if (snap.empty) {
+    if (snapshot.empty) {
       break;
     }
 
     const batch = db.batch();
 
-    snap.docs.forEach((documentSnapshot) => {
+    snapshot.docs.forEach((documentSnapshot) => {
       batch.delete(documentSnapshot.ref);
     });
 
     await batch.commit();
+    deleted += snapshot.size;
 
-    deleted += snap.size;
-
-    if (snap.size < batchSize) {
+    if (snapshot.size < batchSize) {
       break;
     }
   }
@@ -93,61 +70,37 @@ async function deleteCollectionDocs(collectionRef, batchSize = 400) {
   return deleted;
 }
 
-async function deleteBagTagDocumentAndEvents(tagDocRef) {
+async function deleteBagTagAndEvents(tagRef) {
   let deletedEvents = 0;
 
   try {
-    deletedEvents =
-      await deleteCollectionDocs(
-        tagDocRef.collection("events")
-      );
+    deletedEvents = await deleteCollection(tagRef.collection("events"));
   } catch (error) {
-    console.warn(
-      "Unable to delete bag tag events:",
-      tagDocRef.id,
-      error
-    );
+    console.warn("Could not delete bag tag events", tagRef.id, error);
   }
 
   try {
-    await tagDocRef.delete();
+    await tagRef.delete();
   } catch (error) {
-    console.warn(
-      "Unable to delete bag tag document:",
-      tagDocRef.id,
-      error
-    );
+    console.warn("Could not delete bag tag document", tagRef.id, error);
   }
 
   return deletedEvents;
 }
 
 async function deleteGlobalBagTagsForFlight(flightId) {
-  const bagTagsRef =
-    db.collection("bagTags");
-
-  const candidateFields = [
-    "flightId",
-    "currentFlightId",
-    "lastFlightId",
-  ];
-
+  const bagTagsRef = db.collection("bagTags");
+  const fields = ["flightId", "currentFlightId", "lastFlightId"];
   const refs = new Map();
 
-  for (const field of candidateFields) {
+  for (const field of fields) {
     try {
-      const snap = await bagTagsRef
-        .where(field, "==", flightId)
-        .get();
-
-      snap.docs.forEach((d) => {
-        refs.set(d.ref.path, d.ref);
+      const snapshot = await bagTagsRef.where(field, "==", flightId).get();
+      snapshot.docs.forEach((documentSnapshot) => {
+        refs.set(documentSnapshot.ref.path, documentSnapshot.ref);
       });
     } catch (error) {
-      console.warn(
-        `Bag tag lookup failed for ${field}:`,
-        error
-      );
+      console.warn(`Bag tag query failed for ${field}`, error);
     }
   }
 
@@ -155,11 +108,7 @@ async function deleteGlobalBagTagsForFlight(flightId) {
   let deletedBagTagEvents = 0;
 
   for (const tagRef of refs.values()) {
-    deletedBagTagEvents +=
-      await deleteBagTagDocumentAndEvents(
-        tagRef
-      );
-
+    deletedBagTagEvents += await deleteBagTagAndEvents(tagRef);
     deletedBagTags += 1;
   }
 
@@ -169,81 +118,44 @@ async function deleteGlobalBagTagsForFlight(flightId) {
   };
 }
 
-async function deleteStorageForFlight(flightId) {
-  let deletedFiles = 0;
+async function deleteStorageFilesForFlight(flightId) {
+  const prefixes = [
+    `flights/${flightId}/`,
+    `flightReports/${flightId}/`,
+    `reports/${flightId}/`,
+  ];
 
-  try {
-    const bucket = storage.bucket();
+  let deletedStorageFiles = 0;
 
-    const prefixes = [
-      `flights/${flightId}/`,
-      `flightReports/${flightId}/`,
-      `reports/${flightId}/`,
-    ];
+  for (const prefix of prefixes) {
+    try {
+      const [files] = await bucket.getFiles({ prefix });
 
-    for (const prefix of prefixes) {
-      try {
-        const [files] =
-          await bucket.getFiles({
-            prefix,
-          });
-
-        if (!files.length) {
-          continue;
+      for (const file of files) {
+        try {
+          await file.delete({ ignoreNotFound: true });
+          deletedStorageFiles += 1;
+        } catch (error) {
+          console.warn("Could not delete storage file", file.name, error);
         }
-
-        await Promise.all(
-          files.map(async (file) => {
-            try {
-              await file.delete({
-                ignoreNotFound: true,
-              });
-
-              deletedFiles += 1;
-            } catch (error) {
-              console.warn(
-                "Storage delete failed:",
-                file.name,
-                error
-              );
-            }
-          })
-        );
-      } catch (error) {
-        console.warn(
-          "Storage prefix lookup failed:",
-          prefix,
-          error
-        );
       }
+    } catch (error) {
+      console.warn("Could not list storage prefix", prefix, error);
     }
-  } catch (error) {
-    console.warn(
-      "Storage cleanup skipped:",
-      error
-    );
   }
 
-  return deletedFiles;
+  return deletedStorageFiles;
 }
 
 async function deleteFlightData(flightId) {
-  const flightRef =
-    db.collection("flights").doc(flightId);
+  const flightRef = db.collection("flights").doc(flightId);
+  const flightSnapshot = await flightRef.get();
 
-  const flightSnap =
-    await flightRef.get();
-
-  if (!flightSnap.exists) {
-    throw new functions.https.HttpsError(
-      "not-found",
-      "Flight was not found."
-    );
+  if (!flightSnapshot.exists) {
+    throw new functions.https.HttpsError("not-found", "Flight was not found.");
   }
 
-  const flightData =
-    flightSnap.data() || {};
-
+  const flightData = flightSnapshot.data() || {};
   const subcollections = [
     "counterScans",
     "bagroomScans",
@@ -257,514 +169,238 @@ async function deleteFlightData(flightId) {
   const deletedSubcollections = {};
 
   for (const name of subcollections) {
-    deletedSubcollections[name] =
-      await deleteCollectionDocs(
-        flightRef.collection(name)
-      );
+    deletedSubcollections[name] = await deleteCollection(
+      flightRef.collection(name)
+    );
   }
 
-  const bagTagCleanup =
-    await deleteGlobalBagTagsForFlight(
-      flightId
-    );
-
-  const deletedStorageFiles =
-    await deleteStorageForFlight(
-      flightId
-    );
+  const bagTagCleanup = await deleteGlobalBagTagsForFlight(flightId);
+  const deletedStorageFiles = await deleteStorageFilesForFlight(flightId);
 
   await flightRef.delete();
 
   return {
     flightId,
-    flightNumber:
-      flightData.flightNumber ||
-      null,
-
-    flightDate:
-      flightData.flightDate ||
-      null,
-
+    flightNumber: flightData.flightNumber || null,
+    flightDate: flightData.flightDate || null,
     deletedSubcollections,
-    deletedBagTags:
-      bagTagCleanup.deletedBagTags,
-
-    deletedBagTagEvents:
-      bagTagCleanup.deletedBagTagEvents,
-
+    deletedBagTags: bagTagCleanup.deletedBagTags,
+    deletedBagTagEvents: bagTagCleanup.deletedBagTagEvents,
     deletedStorageFiles,
   };
 }
 
-/* =========================================================
-   HEALTH CHECK
-========================================================= */
+exports.blcsFunctionHealth = functions
+  .region(REGION)
+  .https.onCall(async () => {
+    return {
+      ok: true,
+      version: "BLCS-BACKEND-V3",
+      region: REGION,
+      message: "Backend is working.",
+      timestamp: new Date().toISOString(),
+    };
+  });
 
-exports.blcsFunctionHealth =
-  functions
-    .region(REGION)
-    .https
-    .onCall(async () => {
-      return {
-        ok: true,
-        version:
-          "BLCS-BACKEND-V3",
+exports.reopenFlight = functions
+  .region(REGION)
+  .https.onCall(async (data) => {
+    assertManager(data);
 
-        region:
-          REGION,
+    const flightId = String(data?.flightId || "").trim();
 
-        message:
-          "Backend is working.",
+    if (!flightId) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "flightId is required."
+      );
+    }
 
-        timestamp:
-          new Date().toISOString(),
-      };
+    const flightRef = db.collection("flights").doc(flightId);
+    const flightSnapshot = await flightRef.get();
+
+    if (!flightSnapshot.exists) {
+      throw new functions.https.HttpsError("not-found", "Flight was not found.");
+    }
+
+    const flight = flightSnapshot.data() || {};
+    const currentStatus = String(flight.status || "").trim().toUpperCase();
+
+    if (currentStatus !== "LOADED") {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        `Only LOADED flights can be reopened. Current status: ${currentStatus || "UNKNOWN"}.`
+      );
+    }
+
+    const actor = buildActor(data);
+    const batch = db.batch();
+
+    batch.update(flightRef, {
+      status: "LOADING",
+      reopenedAt: admin.firestore.FieldValue.serverTimestamp(),
+      reopenedBy: actor,
+      loadingCompletedAt: admin.firestore.FieldValue.delete(),
+      loadedAt: admin.firestore.FieldValue.delete(),
     });
 
-/* =========================================================
-   REOPEN FLIGHT
-========================================================= */
+    const reportRef = flightRef.collection("reports").doc();
 
-exports.reopenFlight =
-  functions
-    .region(REGION)
-    .https
-    .onCall(
-      async (data) => {
-        assertManager(data);
+    batch.set(reportRef, {
+      type: "REOPEN_FLIGHT",
+      reason: data?.reason || "Flight reopened from Flights page.",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdBy: actor,
+      previousStatus: currentStatus,
+      newStatus: "LOADING",
+    });
 
-        const flightId =
-          String(
-            data?.flightId ||
-              ""
-          ).trim();
+    await batch.commit();
 
-        if (!flightId) {
-          throw new functions.https.HttpsError(
-            "invalid-argument",
-            "flightId is required."
-          );
-        }
+    return {
+      ok: true,
+      flightId,
+      flightNumber: flight.flightNumber || null,
+      previousStatus: currentStatus,
+      status: "LOADING",
+    };
+  });
 
-        const flightRef =
-          db.collection(
-            "flights"
-          ).doc(
-            flightId
-          );
+exports.deleteFlightCascade = functions
+  .region(REGION)
+  .runWith({
+    timeoutSeconds: 540,
+    memory: "1GB",
+  })
+  .https.onCall(async (data) => {
+    assertManager(data);
 
-        const flightSnap =
-          await flightRef.get();
+    const flightId = String(data?.flightId || "").trim();
 
-        if (!flightSnap.exists) {
-          throw new functions.https.HttpsError(
-            "not-found",
-            "Flight was not found."
-          );
-        }
+    if (!flightId) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "flightId is required."
+      );
+    }
 
-        const flight =
-          flightSnap.data() ||
-          {};
+    try {
+      const result = await deleteFlightData(flightId);
+      console.log("deleteFlightCascade success", result);
 
-        const currentStatus =
-          String(
-            flight.status ||
-              ""
-          )
-            .trim()
-            .toUpperCase();
+      return {
+        ok: true,
+        ...result,
+      };
+    } catch (error) {
+      console.error("deleteFlightCascade failed", error);
 
-        if (
-          currentStatus !==
-          "LOADED"
-        ) {
-          throw new functions.https.HttpsError(
-            "failed-precondition",
-            `Only LOADED flights can be reopened. Current status: ${
-              currentStatus ||
-              "UNKNOWN"
-            }.`
-          );
-        }
-
-        const actor =
-          buildActor(data);
-
-        const reopenedAt =
-          admin.firestore.FieldValue
-            .serverTimestamp();
-
-        const batch =
-          db.batch();
-
-        batch.update(
-          flightRef,
-          {
-            status:
-              "LOADING",
-
-            reopenedAt,
-
-            reopenedBy:
-              actor,
-
-            loadingCompletedAt:
-              admin.firestore.FieldValue
-                .delete(),
-
-            loadedAt:
-              admin.firestore.FieldValue
-                .delete(),
-          }
-        );
-
-        const reportRef =
-          flightRef
-            .collection(
-              "reports"
-            )
-            .doc();
-
-        batch.set(
-          reportRef,
-          {
-            type:
-              "REOPEN_FLIGHT",
-
-            reason:
-              data?.reason ||
-              "Flight reopened from Flights page.",
-
-            createdAt:
-              admin.firestore.FieldValue
-                .serverTimestamp(),
-
-            createdBy:
-              actor,
-
-            previousStatus:
-              currentStatus,
-
-            newStatus:
-              "LOADING",
-          }
-        );
-
-        await batch.commit();
-
-        return {
-          ok: true,
-
-          flightId,
-
-          flightNumber:
-            flight.flightNumber ||
-            null,
-
-          previousStatus:
-            currentStatus,
-
-          status:
-            "LOADING",
-        };
+      if (error instanceof functions.https.HttpsError) {
+        throw error;
       }
-    );
 
-/* =========================================================
-   DELETE ONE FLIGHT
-========================================================= */
+      throw new functions.https.HttpsError(
+        "internal",
+        error?.message || "Unable to delete flight."
+      );
+    }
+  });
 
-exports.deleteFlightCascade =
-  functions
-    .region(REGION)
-    .runWith({
-      timeoutSeconds: 540,
-      memory: "1GB",
-    })
-    .https
-    .onCall(
-      async (data) => {
-        assertManager(data);
+exports.deleteLoadedFlightsByMonth = functions
+  .region(REGION)
+  .runWith({
+    timeoutSeconds: 540,
+    memory: "1GB",
+  })
+  .https.onCall(async (data) => {
+    const role = normalizeRole(data?.userRole);
 
-        const flightId =
-          String(
-            data?.flightId ||
-              ""
-          ).trim();
+    if (role !== "station_manager") {
+      throw new functions.https.HttpsError(
+        "permission-denied",
+        "Only Station Manager can delete a full month."
+      );
+    }
 
-        if (!flightId) {
-          throw new functions.https.HttpsError(
-            "invalid-argument",
-            "flightId is required."
-          );
-        }
+    const year = Number(data?.year);
+    const month = Number(data?.month);
 
-        try {
-          const result =
-            await deleteFlightData(
-              flightId
-            );
+    if (
+      !Number.isInteger(year) ||
+      year < 2000 ||
+      year > 2200 ||
+      !Number.isInteger(month) ||
+      month < 1 ||
+      month > 12
+    ) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "A valid year and month are required."
+      );
+    }
 
-          console.log(
-            "deleteFlightCascade success:",
-            result
-          );
+    const monthText = `${year}-${String(month).padStart(2, "0")}`;
+    const startDate = `${monthText}-01`;
 
-          return {
-            ok: true,
-            ...result,
-          };
-        } catch (error) {
-          console.error(
-            "deleteFlightCascade failed:",
-            error
-          );
+    const nextMonthDate = new Date(year, month, 1);
+    const nextYear = nextMonthDate.getFullYear();
+    const nextMonth = String(nextMonthDate.getMonth() + 1).padStart(2, "0");
+    const endExclusive = `${nextYear}-${nextMonth}-01`;
 
-          if (
-            error instanceof
-            functions.https.HttpsError
-          ) {
-            throw error;
-          }
+    try {
+      const snapshot = await db
+        .collection("flights")
+        .where("flightDate", ">=", startDate)
+        .where("flightDate", "<", endExclusive)
+        .get();
 
-          throw new functions.https.HttpsError(
-            "internal",
-            error?.message ||
-              "Unable to delete flight."
-          );
-        }
+      const loadedFlights = snapshot.docs.filter((documentSnapshot) => {
+        const status = String(
+          documentSnapshot.data()?.status || ""
+        )
+          .trim()
+          .toUpperCase();
+
+        return status === "LOADED";
+      });
+
+      const deleted = [];
+      let deletedBagTags = 0;
+      let deletedBagTagEvents = 0;
+      let deletedStorageFiles = 0;
+
+      for (const flightDoc of loadedFlights) {
+        const result = await deleteFlightData(flightDoc.id);
+        deleted.push(result);
+        deletedBagTags += result.deletedBagTags || 0;
+        deletedBagTagEvents += result.deletedBagTagEvents || 0;
+        deletedStorageFiles += result.deletedStorageFiles || 0;
       }
-    );
 
-/* =========================================================
-   DELETE ALL LOADED FLIGHTS FOR A MONTH
-========================================================= */
+      return {
+        ok: true,
+        month: monthText,
+        deletedFlights: deleted.length,
+        deletedBagTags,
+        deletedBagTagEvents,
+        deletedStorageFiles,
+        flights: deleted.map((item) => ({
+          flightId: item.flightId,
+          flightNumber: item.flightNumber,
+          flightDate: item.flightDate,
+        })),
+      };
+    } catch (error) {
+      console.error("deleteLoadedFlightsByMonth failed", error);
 
-exports.deleteLoadedFlightsByMonth =
-  functions
-    .region(REGION)
-    .runWith({
-      timeoutSeconds: 540,
-      memory: "1GB",
-    })
-    .https
-    .onCall(
-      async (data) => {
-        const role =
-          normalizeRole(
-            data?.userRole
-          );
-
-        if (
-          role !==
-          "station_manager"
-        ) {
-          throw new functions.https.HttpsError(
-            "permission-denied",
-            "Only Station Manager can delete a full month."
-          );
-        }
-
-        const year =
-          Number(
-            data?.year
-          );
-
-        const month =
-          Number(
-            data?.month
-          );
-
-        if (
-          !Number.isInteger(
-            year
-          ) ||
-          year < 2000 ||
-          year > 2200 ||
-          !Number.isInteger(
-            month
-          ) ||
-          month < 1 ||
-          month > 12
-        ) {
-          throw new functions.https.HttpsError(
-            "invalid-argument",
-            "A valid year and month are required."
-          );
-        }
-
-        const monthText =
-          `${year}-${String(
-            month
-          ).padStart(
-            2,
-            "0"
-          )}`;
-
-        const startDate =
-          `${monthText}-01`;
-
-        const nextMonthDate =
-          new Date(
-            year,
-            month,
-            1
-          );
-
-        const nextYear =
-          nextMonthDate.getFullYear();
-
-        const nextMonth =
-          String(
-            nextMonthDate.getMonth() +
-              1
-          ).padStart(
-            2,
-            "0"
-          );
-
-        const endExclusive =
-          `${nextYear}-${nextMonth}-01`;
-
-        try {
-          const snap =
-            await db
-              .collection(
-                "flights"
-              )
-              .where(
-                "flightDate",
-                ">=",
-                startDate
-              )
-              .where(
-                "flightDate",
-                "<",
-                endExclusive
-              )
-              .get();
-
-          const loadedFlights =
-            snap.docs.filter(
-              (documentSnapshot) => {
-                const status =
-                  String(
-                    documentSnapshot
-                      .data()
-                      ?.status ||
-                      ""
-                  )
-                    .trim()
-                    .toUpperCase();
-
-                return (
-                  status ===
-                  "LOADED"
-                );
-              }
-            );
-
-          const deleted =
-            [];
-
-          let totalBagTags =
-            0;
-
-          let totalBagTagEvents =
-            0;
-
-          let totalStorageFiles =
-            0;
-
-          for (
-            const flightDoc
-            of loadedFlights
-          ) {
-            const result =
-              await deleteFlightData(
-                flightDoc.id
-              );
-
-            deleted.push(
-              result
-            );
-
-            totalBagTags +=
-              result.deletedBagTags ||
-              0;
-
-            totalBagTagEvents +=
-              result.deletedBagTagEvents ||
-              0;
-
-            totalStorageFiles +=
-              result.deletedStorageFiles ||
-              0;
-          }
-
-          console.log(
-            "deleteLoadedFlightsByMonth success:",
-            {
-              month:
-                monthText,
-
-              deletedFlights:
-                deleted.length,
-            }
-          );
-
-          return {
-            ok:
-              true,
-
-            month:
-              monthText,
-
-            deletedFlights:
-              deleted.length,
-
-            deletedBagTags:
-              totalBagTags,
-
-            deletedBagTagEvents:
-              totalBagTagEvents,
-
-            deletedStorageFiles:
-              totalStorageFiles,
-
-            flights:
-              deleted.map(
-                (item) => ({
-                  flightId:
-                    item.flightId,
-
-                  flightNumber:
-                    item.flightNumber,
-
-                  flightDate:
-                    item.flightDate,
-                })
-              ),
-          };
-        } catch (error) {
-          console.error(
-            "deleteLoadedFlightsByMonth failed:",
-            error
-          );
-
-          if (
-            error instanceof
-            functions.https.HttpsError
-          ) {
-            throw error;
-          }
-
-          throw new functions.https.HttpsError(
-            "internal",
-            error?.message ||
-              "Unable to delete loaded flights for the selected month."
-          );
-        }
+      if (error instanceof functions.https.HttpsError) {
+        throw error;
       }
-    );
+
+      throw new functions.https.HttpsError(
+        "internal",
+        error?.message ||
+          "Unable to delete loaded flights for the selected month."
+      );
+    }
+  });
