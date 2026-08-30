@@ -8,13 +8,12 @@ import React, {
 
 import {
   collection,
+  deleteDoc,
   doc,
   limit,
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp,
-  updateDoc,
   where,
 } from "firebase/firestore";
 
@@ -1133,38 +1132,12 @@ export default function SystemMonitorPage({
           true
         );
 
-        await updateDoc(
+        await deleteDoc(
           doc(
             db,
             "systemIncidents",
             incident.id
-          ),
-          {
-            resolved:
-              true,
-
-            resolvedAt:
-              serverTimestamp(),
-
-            resolvedBy: {
-              userId:
-                user?.id ||
-                null,
-
-              username:
-                user?.username ||
-                null,
-
-              fullName:
-                user?.fullName ||
-                user?.username ||
-                null,
-
-              role:
-                user?.role ||
-                null,
-            },
-          }
+          )
         );
 
         setSelectedIncident(
@@ -1174,12 +1147,12 @@ export default function SystemMonitorPage({
         error
       ) {
         console.error(
-          "Resolve incident error:",
+          "Resolve and delete incident error:",
           error
         );
 
         window.alert(
-          "Unable to update incident."
+          "Unable to resolve and delete incident."
         );
       } finally {
         setResolvingIncident(
@@ -2743,8 +2716,8 @@ export default function SystemMonitorPage({
                   }}
                 >
                   {resolvingIncident
-                    ? "Saving..."
-                    : "Mark Resolved"}
+                    ? "Deleting..."
+                    : "Resolve & Delete"}
                 </button>
               )}
 
