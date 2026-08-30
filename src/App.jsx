@@ -17,6 +17,7 @@ import PrivacyNoticePage, {
 } from "./pages/PrivacyNoticePage.jsx";
 
 import PrivacyAcknowledgementsPage from "./pages/PrivacyAcknowledgementsPage.jsx";
+import MonthlyCleanupPage from "./pages/MonthlyCleanupPage.jsx";
 
 import DashboardPage from "./pages/DashboardPage.jsx";
 import FlightsPage from "./pages/FlightsPage.jsx";
@@ -735,6 +736,17 @@ export default function App() {
       );
     }
 
+    if (
+      currentView ===
+      "monthlyCleanup"
+    ) {
+      return (
+        <MonthlyCleanupPage
+          user={user}
+        />
+      );
+    }
+
     if (!selectedFlightId) {
       return (
         <div
@@ -988,6 +1000,26 @@ export default function App() {
                   }
                 >
                   Privacy Ack
+                </button>
+
+                <button
+                  onClick={() =>
+                    goToView(
+                      "monthlyCleanup"
+                    )
+                  }
+                  style={{
+                    border:
+                      "1px solid #fecaca",
+                    background:
+                      "#fff7f7",
+                    color:
+                      "#b91c1c",
+                    fontWeight:
+                      800,
+                  }}
+                >
+                  Monthly Cleanup
                 </button>
               </>
             )}
