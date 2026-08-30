@@ -226,6 +226,7 @@ function useCompactScreen() {
 export default function BagroomScanPage({
   flightId,
   user,
+  operationalContext,
 }) {
   const compactScreen = useCompactScreen();
 
@@ -240,6 +241,37 @@ export default function BagroomScanPage({
     "supervisor",
     "gate_controller",
   ].includes(role);
+
+  const operationalActor = useMemo(
+    () => ({
+      userId: user?.id || null,
+      username: user?.username || null,
+      fullName:
+        operationalContext?.employeeFullName ||
+        user?.fullName ||
+        user?.username ||
+        null,
+      role: user?.role || null,
+      systemRole:
+        operationalContext?.systemRole ||
+        user?.role ||
+        null,
+      basePosition:
+        operationalContext?.basePosition ||
+        user?.position ||
+        null,
+      operationalPosition:
+        operationalContext?.operationalPosition ||
+        "BAGROOM_SCAN",
+      operationalPositionLabel:
+        operationalContext?.operationalPositionLabel ||
+        "Bagroom Scan",
+      loginAt:
+        operationalContext?.loginAt ||
+        null,
+    }),
+    [user, operationalContext]
+  );
 
   const [flight, setFlight] = useState(null);
 
@@ -895,16 +927,7 @@ export default function BagroomScanPage({
         statusUpdatedAt:
           serverTimestamp(),
 
-        statusUpdatedBy: {
-          userId:
-            user?.id || null,
-
-          username:
-            user?.username || null,
-
-          role:
-            user?.role || null,
-        },
+        statusUpdatedBy: operationalActor,
       },
       {
         merge: true,
@@ -965,16 +988,7 @@ export default function BagroomScanPage({
         cartNumbersUpdatedAt:
           serverTimestamp(),
 
-        cartNumbersUpdatedBy: {
-          userId:
-            user?.id || null,
-
-          username:
-            user?.username || null,
-
-          role:
-            user?.role || null,
-        },
+        cartNumbersUpdatedBy: operationalActor,
       },
       {
         merge: true,
@@ -1205,22 +1219,22 @@ export default function BagroomScanPage({
       gate:
         flight?.gate || null,
 
+      employeeFullName:
+        operationalActor.fullName,
+
+      operationalPosition:
+        operationalActor.operationalPosition,
+
+      operationalPositionLabel:
+        operationalActor.operationalPositionLabel,
+
       matchedCounter:
         Boolean(matchedCounter),
 
       timestamp:
         new Date().toISOString(),
 
-      createdBy: {
-        userId:
-          user?.id || null,
-
-        username:
-          user?.username || null,
-
-        role:
-          user?.role || null,
-      },
+      createdBy: operationalActor,
     };
 
     const nextEvents = [
@@ -1251,6 +1265,15 @@ export default function BagroomScanPage({
         gate:
           flight?.gate || null,
 
+        employeeFullName:
+          operationalActor.fullName,
+
+        operationalPosition:
+          operationalActor.operationalPosition,
+
+        operationalPositionLabel:
+          operationalActor.operationalPositionLabel,
+
         location:
           locationConfig.trackingLocation,
 
@@ -1258,6 +1281,12 @@ export default function BagroomScanPage({
           locationConfig.value,
 
         locationLabel:
+          locationConfig.label,
+
+        receivingArea:
+          locationConfig.value,
+
+        receivingAreaLabel:
           locationConfig.label,
 
         department:
@@ -1280,16 +1309,7 @@ export default function BagroomScanPage({
         updatedAt:
           serverTimestamp(),
 
-        updatedBy: {
-          userId:
-            user?.id || null,
-
-          username:
-            user?.username || null,
-
-          role:
-            user?.role || null,
-        },
+        updatedBy: operationalActor,
 
         events: nextEvents,
       },
@@ -1371,6 +1391,15 @@ export default function BagroomScanPage({
         gate:
           flight?.gate || null,
 
+        employeeFullName:
+          operationalActor.fullName,
+
+        operationalPosition:
+          operationalActor.operationalPosition,
+
+        operationalPositionLabel:
+          operationalActor.operationalPositionLabel,
+
         receivingLocation:
           locationConfig.value,
 
@@ -1381,6 +1410,12 @@ export default function BagroomScanPage({
           locationConfig.trackingLocation,
 
         locationLabel:
+          locationConfig.label,
+
+        receivingArea:
+          locationConfig.value,
+
+        receivingAreaLabel:
           locationConfig.label,
 
         department:
@@ -1405,27 +1440,9 @@ export default function BagroomScanPage({
         scannedAt:
           serverTimestamp(),
 
-        scannedBy: {
-          userId:
-            user?.id || null,
+        scannedBy: operationalActor,
 
-          username:
-            user?.username || null,
-
-          role:
-            user?.role || null,
-        },
-
-        createdBy: {
-          userId:
-            user?.id || null,
-
-          username:
-            user?.username || null,
-
-          role:
-            user?.role || null,
-        },
+        createdBy: operationalActor,
       }
     );
 
@@ -1599,13 +1616,13 @@ export default function BagroomScanPage({
         result.locationConfig.value ===
           "BAGROOM" &&
         result.cart
-          ? ` · Cart ${result.cart}`
+          ? `  -  Cart ${result.cart}`
           : "";
 
       const matchDescription =
         result.matchedCounter
-          ? " · Counter matched"
-          : " · No Counter match";
+          ? "  -  Counter matched"
+          : "  -  No Counter match";
 
       setMsg(
         `${bagTag} received at ${locationLabel}${cartDescription}${matchDescription}`
@@ -1942,19 +1959,7 @@ export default function BagroomScanPage({
                 timestamp:
                   new Date().toISOString(),
 
-                createdBy: {
-                  userId:
-                    user?.id ||
-                    null,
-
-                  username:
-                    user?.username ||
-                    null,
-
-                  role:
-                    user?.role ||
-                    null,
-                },
+                createdBy: operationalActor,
               };
 
               await setDoc(
@@ -1999,19 +2004,7 @@ export default function BagroomScanPage({
                   updatedAt:
                     serverTimestamp(),
 
-                  updatedBy: {
-                    userId:
-                      user?.id ||
-                      null,
-
-                    username:
-                      user?.username ||
-                      null,
-
-                    role:
-                      user?.role ||
-                      null,
-                  },
+                  updatedBy: operationalActor,
 
                   events: [
                     ...existingEvents,
@@ -2140,6 +2133,24 @@ export default function BagroomScanPage({
             Select the receiving area and scan
             a 10-digit bag tag.
           </p>
+
+          <div
+            style={{
+              marginTop: 7,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "5px 8px",
+              borderRadius: 999,
+              background: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              color: "#1d4ed8",
+              fontWeight: 900,
+              fontSize: "0.72rem",
+            }}
+          >
+            Working as: {operationalActor.operationalPositionLabel}
+          </div>
         </div>
 
         <div
@@ -2165,7 +2176,7 @@ export default function BagroomScanPage({
             Flight:{" "}
             <strong>
               {flightLoading
-                ? "…"
+                ? "..."
                 : flight?.flightNumber ||
                   flightId}
             </strong>
@@ -2175,7 +2186,7 @@ export default function BagroomScanPage({
             Date:{" "}
             <strong>
               {flightLoading
-                ? "…"
+                ? "..."
                 : flight?.flightDate ||
                   "-"}
             </strong>
@@ -2185,7 +2196,7 @@ export default function BagroomScanPage({
             Gate:{" "}
             <strong>
               {flightLoading
-                ? "…"
+                ? "..."
                 : flight?.gate ||
                   "-"}
             </strong>
@@ -2218,7 +2229,7 @@ export default function BagroomScanPage({
               "center",
           }}
         >
-          ✅ FLIGHT LOADED — SCANNING LOCKED
+          ✅ FLIGHT LOADED - SCANNING LOCKED
         </div>
       )}
 
@@ -2907,7 +2918,7 @@ export default function BagroomScanPage({
               marginTop: 0,
             }}
           >
-            Counter → Receiving
+            Counter -> Receiving
           </h3>
 
           <div
@@ -2924,7 +2935,7 @@ export default function BagroomScanPage({
               label="Counter"
               value={
                 loadingCounterScans
-                  ? "…"
+                  ? "..."
                   : counterScans.length
               }
               background="#eff6ff"
@@ -2935,7 +2946,7 @@ export default function BagroomScanPage({
               label="Received"
               value={
                 dataLoading
-                  ? "…"
+                  ? "..."
                   : receivedCounterScans.length
               }
               background="#dcfce7"
@@ -2946,7 +2957,7 @@ export default function BagroomScanPage({
               label="Pending"
               value={
                 dataLoading
-                  ? "…"
+                  ? "..."
                   : pendingCounterScans.length
               }
               background="#fee2e2"
@@ -2969,7 +2980,7 @@ export default function BagroomScanPage({
               label="Bagroom"
               value={
                 loadingScans
-                  ? "…"
+                  ? "..."
                   : bagroomScanCount
               }
               background="#eff6ff"
@@ -2980,7 +2991,7 @@ export default function BagroomScanPage({
               label="Oversize"
               value={
                 loadingScans
-                  ? "…"
+                  ? "..."
                   : oversizeScanCount
               }
               background="#ffedd5"
@@ -2991,7 +3002,7 @@ export default function BagroomScanPage({
               label="Gate / Ramp"
               value={
                 loadingScans
-                  ? "…"
+                  ? "..."
                   : gateRampScanCount
               }
               background="#ede9fe"
@@ -3013,7 +3024,7 @@ export default function BagroomScanPage({
             }}
           >
             {dataLoading ? (
-              <p>Loading scans…</p>
+              <p>Loading scans...</p>
             ) : counterScans.length ===
               0 ? (
               <p
@@ -3047,7 +3058,7 @@ export default function BagroomScanPage({
                     receivedScan
                       ? `${getBagTypeLabel(
                           scan.bagType
-                        )} · ${getScanLocationLabel(
+                        )}  -  ${getScanLocationLabel(
                           receivedScan
                         )}`
                       : getBagTypeLabel(
@@ -3066,11 +3077,21 @@ export default function BagroomScanPage({
                       }
                       success={received}
                       username={
-                        scan.scannedBy
-                          ?.username ||
-                        scan.createdBy
-                          ?.username ||
-                        "-"
+                        `${
+                          scan.scannedBy?.fullName ||
+                          scan.createdBy?.fullName ||
+                          scan.scannedBy?.username ||
+                          scan.createdBy?.username ||
+                          "-"
+                        }${
+                          scan.scannedBy?.operationalPositionLabel ||
+                          scan.createdBy?.operationalPositionLabel
+                            ? ` - ${
+                                scan.scannedBy?.operationalPositionLabel ||
+                                scan.createdBy?.operationalPositionLabel
+                              }`
+                            : ""
+                        }`
                       }
                       canDelete={
                         canDeleteScans
@@ -3188,10 +3209,10 @@ export default function BagroomScanPage({
                           </td>
 
                           <td style={td}>
-                            {scan.scannedBy
-                              ?.username ||
-                              scan.createdBy
-                                ?.username ||
+                            {scan.scannedBy?.fullName ||
+                              scan.createdBy?.fullName ||
+                              scan.scannedBy?.username ||
+                              scan.createdBy?.username ||
                               "-"}
                           </td>
 
@@ -3255,7 +3276,7 @@ export default function BagroomScanPage({
               label="Total Received"
               value={
                 loadingScans
-                  ? "…"
+                  ? "..."
                   : scans.length
               }
               background="#dcfce7"
@@ -3266,7 +3287,7 @@ export default function BagroomScanPage({
               label="No Counter"
               value={
                 dataLoading
-                  ? "…"
+                  ? "..."
                   : receivedWithoutCounter.length
               }
               background={
@@ -3296,7 +3317,7 @@ export default function BagroomScanPage({
           >
             {loadingScans ? (
               <p>
-                Loading receiving scans…
+                Loading receiving scans...
               </p>
             ) : scans.length === 0 ? (
               <p
@@ -3333,7 +3354,7 @@ export default function BagroomScanPage({
                 const subtitle =
                   scanLocation ===
                   "BAGROOM"
-                    ? `${locationLabel} · Cart ${
+                    ? `${locationLabel}  -  Cart ${
                         scan.cartNumber ||
                         "-"
                       }`
@@ -3473,10 +3494,10 @@ export default function BagroomScanPage({
                           </td>
 
                           <td style={td}>
-                            {scan.scannedBy
-                              ?.username ||
-                              scan.createdBy
-                                ?.username ||
+                            {scan.scannedBy?.fullName ||
+                              scan.createdBy?.fullName ||
+                              scan.scannedBy?.username ||
+                              scan.createdBy?.username ||
                               "-"}
                           </td>
 
@@ -3544,7 +3565,7 @@ export default function BagroomScanPage({
 
         {loadingScans ? (
           <p>
-            Loading…
+            Loading...
           </p>
         ) : scans.length === 0 ? (
           <p
@@ -4185,7 +4206,7 @@ function ScanCard({
         }}
       >
         <span>
-          {subtitle} · {username}
+          {subtitle}  -  {username}
         </span>
 
         {canDelete && (
@@ -4344,7 +4365,7 @@ function DeleteButton({
       }}
     >
       {busy
-        ? "…"
+        ? "..."
         : "Delete"}
     </button>
   );
