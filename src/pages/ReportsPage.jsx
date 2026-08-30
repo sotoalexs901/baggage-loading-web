@@ -19,6 +19,11 @@ import {
   functions,
 } from "../firebase";
 
+import {
+  logSystemIncident,
+  logSystemSuccess,
+} from "../utils/systemLogger.js";
+
 function getTodayYYYYMMDD() {
   const d = new Date();
 
@@ -530,6 +535,53 @@ export default function ReportsPage({
     setDeleteErr,
   ] = useState("");
 
+  const logReportsIncident = ({
+    action,
+    status = "ERROR",
+    severity = "MEDIUM",
+    errorType = null,
+    errorCode = null,
+    message = null,
+    durationMs = null,
+    flightNumber = null,
+    metadata = {},
+  }) => {
+    void logSystemIncident({
+      module:
+        "REPORTS",
+
+      action,
+
+      status,
+
+      severity,
+
+      errorType,
+
+      errorCode,
+
+      message,
+
+      user,
+
+      operationalContext,
+
+      flightId:
+        selectedFlightId ||
+        resolvedFlightId ||
+        null,
+
+      flightNumber,
+
+      durationMs,
+
+      currentView:
+        "reports",
+
+      metadata,
+    });
+  };
+
   useEffect(() => {
     setSelectedFlightId(
       resolvedFlightId
@@ -538,9 +590,6 @@ export default function ReportsPage({
     resolvedFlightId,
   ]);
 
-  /*
-   * Flight list.
-   */
   useEffect(() => {
     setLoadingFlights(true);
 
@@ -617,6 +666,31 @@ export default function ReportsPage({
           setLoadingFlights(
             false
           );
+
+          logReportsIncident({
+            action:
+              "LOAD_FLIGHTS",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              err?.code ||
+              err?.name ||
+              null,
+
+            message:
+              err?.message ||
+              "Unable to load report flights.",
+
+            metadata: {
+              dateFrom,
+              dateTo,
+            },
+          });
         }
       );
 
@@ -627,11 +701,6 @@ export default function ReportsPage({
     dateTo,
   ]);
 
-  /*
-   * Existing flight report documents
-   * including aircraft-generated PDFs,
-   * offloads, reopen events, etc.
-   */
   useEffect(() => {
     if (
       !selectedFlightId
@@ -689,6 +758,26 @@ export default function ReportsPage({
           setLoadingReports(
             false
           );
+
+          logReportsIncident({
+            action:
+              "LOAD_REPORT_DOCUMENTS",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              err?.code ||
+              err?.name ||
+              null,
+
+            message:
+              err?.message ||
+              "Unable to load flight report documents.",
+          });
         }
       );
 
@@ -698,9 +787,6 @@ export default function ReportsPage({
     selectedFlightId,
   ]);
 
-  /*
-   * Operational scans for the selected flight.
-   */
   useEffect(() => {
     if (
       !selectedFlightId
@@ -722,6 +808,8 @@ export default function ReportsPage({
     let counterReady = false;
     let bagroomReady = false;
     let aircraftReady = false;
+    let buildLogged = false;
+    const startedAt = Date.now();
 
     const updateLoading = () => {
       if (
@@ -732,6 +820,22 @@ export default function ReportsPage({
         setLoadingOperationalData(
           false
         );
+
+        if (!buildLogged) {
+          buildLogged = true;
+
+          void logSystemSuccess({
+            module:
+              "REPORTS",
+
+            action:
+              "BUILD_OPERATIONAL_REPORT",
+
+            durationMs:
+              Date.now() -
+              startedAt,
+          });
+        }
       }
     };
 
@@ -787,6 +891,26 @@ export default function ReportsPage({
 
           counterReady = true;
           updateLoading();
+
+          logReportsIncident({
+            action:
+              "LOAD_COUNTER_SCANS",
+
+            severity:
+              "MEDIUM",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              error?.code ||
+              error?.name ||
+              null,
+
+            message:
+              error?.message ||
+              "Unable to load Counter scans for report.",
+          });
         }
       );
 
@@ -818,6 +942,26 @@ export default function ReportsPage({
 
           bagroomReady = true;
           updateLoading();
+
+          logReportsIncident({
+            action:
+              "LOAD_BAGROOM_SCANS",
+
+            severity:
+              "MEDIUM",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              error?.code ||
+              error?.name ||
+              null,
+
+            message:
+              error?.message ||
+              "Unable to load Bagroom scans for report.",
+          });
         }
       );
 
@@ -849,6 +993,26 @@ export default function ReportsPage({
 
           aircraftReady = true;
           updateLoading();
+
+          logReportsIncident({
+            action:
+              "LOAD_AIRCRAFT_SCANS",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              error?.code ||
+              error?.name ||
+              null,
+
+            message:
+              error?.message ||
+              "Unable to load Aircraft scans for report.",
+          });
         }
       );
 
@@ -1082,7 +1246,60 @@ export default function ReportsPage({
     ]);
 
   const handlePrint = () => {
-    window.print();
+    const startedAt =
+      Date.now();
+
+    try {
+      window.print();
+
+      void logSystemSuccess({
+        module:
+          "REPORTS",
+
+        action:
+          "PRINT_REPORT",
+
+        durationMs:
+          Date.now() -
+          startedAt,
+      });
+    } catch (
+      error
+    ) {
+      console.error(
+        "Print report error:",
+        error
+      );
+
+      logReportsIncident({
+        action:
+          "PRINT_REPORT",
+
+        severity:
+          "MEDIUM",
+
+        errorType:
+          "PRINT_ERROR",
+
+        errorCode:
+          error?.code ||
+          error?.name ||
+          null,
+
+        message:
+          error?.message ||
+          "Unable to print flight report.",
+
+        durationMs:
+          Date.now() -
+          startedAt,
+
+        flightNumber:
+          selectedFlight
+            ?.flightNumber ||
+          null,
+      });
+    }
   };
 
   const handleDeleteMonth =
@@ -1096,6 +1313,27 @@ export default function ReportsPage({
         setDeleteErr(
           "Only Station Manager can delete a full month."
         );
+
+        logReportsIncident({
+          action:
+            "DELETE_MONTH_PERMISSION_DENIED",
+
+          status:
+            "WARNING",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "PERMISSION_DENIED",
+
+          message:
+            "A non-Station Manager attempted to delete a full month.",
+
+          metadata: {
+            deleteMonth,
+          },
+        });
 
         return;
       }
@@ -1125,6 +1363,27 @@ export default function ReportsPage({
           "Please select a valid month."
         );
 
+        logReportsIncident({
+          action:
+            "DELETE_MONTH_INVALID_INPUT",
+
+          status:
+            "WARNING",
+
+          severity:
+            "LOW",
+
+          errorType:
+            "INVALID_MONTH",
+
+          message:
+            "Invalid month selected for monthly deletion.",
+
+          metadata: {
+            deleteMonth,
+          },
+        });
+
         return;
       }
 
@@ -1136,6 +1395,9 @@ export default function ReportsPage({
         );
 
       if (!ok) return;
+
+      const startedAt =
+        Date.now();
 
       try {
         setDeletingMonth(
@@ -1185,6 +1447,18 @@ export default function ReportsPage({
             ""
           );
         }
+
+        void logSystemSuccess({
+          module:
+            "REPORTS",
+
+          action:
+            "DELETE_LOADED_FLIGHTS_BY_MONTH",
+
+          durationMs:
+            Date.now() -
+            startedAt,
+        });
       } catch (e) {
         console.error(e);
 
@@ -1192,6 +1466,36 @@ export default function ReportsPage({
           e?.message ||
             "Could not delete month."
         );
+
+        logReportsIncident({
+          action:
+            "DELETE_LOADED_FLIGHTS_BY_MONTH",
+
+          severity:
+            "CRITICAL",
+
+          errorType:
+            "CLOUD_FUNCTION",
+
+          errorCode:
+            e?.code ||
+            e?.name ||
+            null,
+
+          message:
+            e?.message ||
+            "Could not delete loaded flights by month.",
+
+          durationMs:
+            Date.now() -
+            startedAt,
+
+          metadata: {
+            year,
+            month,
+            deleteMonth,
+          },
+        });
       } finally {
         setDeletingMonth(
           false
