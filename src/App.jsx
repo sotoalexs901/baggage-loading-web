@@ -102,9 +102,7 @@ function getSessionJson(
       );
 
     return saved
-      ? JSON.parse(
-          saved
-        )
+      ? JSON.parse(saved)
       : fallback;
   } catch {
     return fallback;
@@ -205,7 +203,6 @@ export default function App() {
 
   /* =========================
      USER / ROLE VALUES
-     SAFE EVEN IF USER IS NULL
   ========================= */
 
   const role =
@@ -278,11 +275,10 @@ export default function App() {
     activeOperationalPosition ===
       "GATE_CONTROLLER";
 
-  /*
-   * IMPORTANT:
-   * This hook now executes on EVERY render,
-   * including Login and Privacy screens.
-   */
+  /* =========================
+     OPERATIONAL CONTEXT
+  ========================= */
+
   const operationalContext =
     useMemo(
       () => ({
@@ -470,10 +466,6 @@ export default function App() {
     } catch (
       error
     ) {
-      /*
-       * Monitoring should NEVER
-       * crash BLCS.
-       */
       console.warn(
         "BLCS presence heartbeat could not start:",
         error
@@ -772,31 +764,75 @@ export default function App() {
      NAVIGATION
   ========================= */
 
-  const goToView = (
-    view
-  ) => {
-    setCurrentView(
+  const goToView =
+    (
       view
-    );
+    ) => {
+      setCurrentView(
+        view
+      );
 
-    sessionStorage.setItem(
-      "currentView",
-      view
-    );
-  };
+      sessionStorage.setItem(
+        "currentView",
+        view
+      );
+    };
 
-  const selectFlight = (
-    flightId
-  ) => {
-    setSelectedFlightId(
-      flightId
-    );
+  /*
+   * IMPORTANT:
+   *
+   * This is used by FlightsPage.
+   *
+   * Selecting/Open a flight will:
+   * 1. Save flight ID
+   * 2. Save flight number
+   * 3. Open Gate Controller
+   */
+  const selectFlight =
+    (
+      flightId,
+      flightNumber = null
+    ) => {
+      if (!flightId) {
+        return;
+      }
 
-    sessionStorage.setItem(
-      "selectedFlightId",
-      flightId
-    );
-  };
+      setSelectedFlightId(
+        flightId
+      );
+
+      setSelectedFlightNumber(
+        flightNumber ||
+          null
+      );
+
+      setCurrentView(
+        "gate"
+      );
+
+      sessionStorage.setItem(
+        "selectedFlightId",
+        flightId
+      );
+
+      sessionStorage.setItem(
+        "currentView",
+        "gate"
+      );
+
+      if (
+        flightNumber
+      ) {
+        sessionStorage.setItem(
+          "selectedFlightNumber",
+          flightNumber
+        );
+      } else {
+        sessionStorage.removeItem(
+          "selectedFlightNumber"
+        );
+      }
+    };
 
   const handleSoftRefresh =
     () => {
@@ -809,23 +845,35 @@ export default function App() {
       );
     };
 
+  /*
+   * Dashboard can specify exactly which
+   * operational module to open.
+   */
   const handleOpenFlightFromDashboard =
     (
       flightId,
-      targetView,
+      targetView = "gate",
       flightNumber
     ) => {
+      if (!flightId) {
+        return;
+      }
+
+      const nextView =
+        targetView ||
+        "gate";
+
       setSelectedFlightId(
         flightId
       );
 
       setSelectedFlightNumber(
         flightNumber ||
-        null
+          null
       );
 
       setCurrentView(
-        targetView
+        nextView
       );
 
       sessionStorage.setItem(
@@ -835,7 +883,7 @@ export default function App() {
 
       sessionStorage.setItem(
         "currentView",
-        targetView
+        nextView
       );
 
       if (
@@ -867,15 +915,12 @@ export default function App() {
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
-
             onOpenFlight={
               handleOpenFlightFromDashboard
             }
-
             gateControllerOnDuty={
               gateControllerOnDuty
             }
@@ -892,20 +937,26 @@ export default function App() {
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
-
             canCreateFlights={
               canCreateFlights
             }
 
+            /*
+             * IMPORTANT FIX:
+             *
+             * FlightsPage now sends:
+             * flightId + flightNumber
+             */
             onFlightSelected={(
-              flightId
+              flightId,
+              flightNumber
             ) =>
               selectFlight(
-                flightId
+                flightId,
+                flightNumber
               )
             }
           />
@@ -921,7 +972,6 @@ export default function App() {
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
@@ -981,10 +1031,9 @@ export default function App() {
         );
       }
 
-      /*
-       * Pages below this point
-       * require a selected flight.
-       */
+      /* =========================
+         FLIGHT REQUIRED
+      ========================= */
 
       if (
         !selectedFlightId
@@ -1022,11 +1071,9 @@ export default function App() {
             flightId={
               selectedFlightId
             }
-
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
@@ -1043,19 +1090,15 @@ export default function App() {
             flightId={
               selectedFlightId
             }
-
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
-
             gateControllerOnDuty={
               gateControllerOnDuty
             }
-
             canEdit={
               canEditGateTotals
             }
@@ -1072,11 +1115,9 @@ export default function App() {
             flightId={
               selectedFlightId
             }
-
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
@@ -1093,11 +1134,9 @@ export default function App() {
             flightId={
               selectedFlightId
             }
-
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
@@ -1114,11 +1153,9 @@ export default function App() {
             flightId={
               selectedFlightId
             }
-
             user={
               user
             }
-
             operationalContext={
               operationalContext
             }
@@ -1152,8 +1189,9 @@ export default function App() {
 
   /* =========================
      CONDITIONAL SCREENS
-     IMPORTANT:
-     ALL HOOKS ARE ABOVE THIS
+
+     ALL HOOKS MUST REMAIN
+     ABOVE THIS POINT.
   ========================= */
 
   if (!user) {
@@ -1241,15 +1279,12 @@ export default function App() {
         user={
           user
         }
-
         saving={
           savingPrivacy
         }
-
         onAccept={
           handleAcceptPrivacy
         }
-
         onLogout={
           handleLogout
         }
@@ -1635,13 +1670,10 @@ export default function App() {
             >
               <button
                 type="button"
-
                 onClick={
                   handleSoftRefresh
                 }
-
                 title="Refresh current page"
-
                 style={{
                   display:
                     "inline-flex",
@@ -1691,13 +1723,10 @@ export default function App() {
 
               <button
                 type="button"
-
                 onClick={
                   handleLogout
                 }
-
                 title="Sign out"
-
                 style={{
                   display:
                     "inline-flex",
@@ -1744,6 +1773,10 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* =========================
+            SELECTED FLIGHT
+        ========================= */}
 
         {selectedFlightId && (
           <div
@@ -1795,6 +1828,10 @@ export default function App() {
           </div>
         )}
       </header>
+
+      {/* =========================
+          CURRENT PAGE
+      ========================= */}
 
       <main
         key={
