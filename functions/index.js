@@ -5,13 +5,30 @@ const admin = require("firebase-admin");
 admin.initializeApp();
 
 const db = admin.firestore();
-const bucket = admin.storage().bucket();
+
+/*
+ * IMPORTANT:
+ * Storage is resolved only when needed.
+ * A Storage failure will never make Firestore cleanup fail.
+ */
+function getDefaultBucket() {
+  try {
+    return admin.storage().bucket();
+  } catch (error) {
+    console.warn(
+      "[getDefaultBucket] Storage bucket unavailable:",
+      error?.message || error
+    );
+
+    return null;
+  }
+}
 
 // Match frontend region
 const region = functions.region("us-east4");
 
 /* =========================
-   Helpers
+   HELPERS
 ========================= */
 
 function normalizeRole(role) {
@@ -57,11 +74,23 @@ function getMonthPrefix(year, month) {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
+function safeErrorMessage(error) {
+  return (
+    error?.message ||
+    error?.details ||
+    String(error || "Unknown error")
+  );
+}
+
+/* =========================
+   RECURSIVE FIRESTORE DELETE
+========================= */
+
 /**
- * Deletes all documents from a collection.
+ * Deletes every document in a collection.
  *
- * Before deleting each document, it also deletes any nested
- * subcollections under that document.
+ * Before deleting each document, it recursively deletes
+ * any nested subcollections.
  */
 async function deleteCollectionRecursive(
   collectionRef,
@@ -76,10 +105,6 @@ async function deleteCollectionRecursive(
       break;
     }
 
-    /*
-     * Delete nested subcollections before deleting
-     * the parent documents.
-     */
     for (const documentSnapshot of snapshot.docs) {
       const subcollections =
         await documentSnapshot.ref.listCollections();
@@ -107,9 +132,10 @@ async function deleteCollectionRecursive(
 }
 
 /**
- * Deletes a document and every subcollection located below it.
+ * Deletes one Firestore document and every subcollection
+ * located underneath it.
  *
- * This also works when the parent document was previously deleted
+ * It also works if the parent document no longer exists
  * but orphaned subcollections remain.
  */
 async function deleteDocumentTree(
@@ -129,28 +155,70 @@ async function deleteDocumentTree(
   await documentRef.delete();
 }
 
+/* =========================
+   STORAGE
+========================= */
+
+/**
+ * Best-effort Storage cleanup.
+ *
+ * IMPORTANT:
+ * This function never throws.
+ * Firestore cleanup remains successful even if
+ * the Storage bucket is unavailable or a file cannot
+ * be removed.
+ */
 async function deleteStoragePrefix(prefix) {
+  const bucket = getDefaultBucket();
+
+  if (!bucket) {
+    console.warn(
+      `[deleteStoragePrefix] No Storage bucket available. Skipped "${prefix}".`
+    );
+
+    return {
+      ok: false,
+      skipped: true,
+      message: "Storage bucket unavailable.",
+    };
+  }
+
   try {
     await bucket.deleteFiles({
       prefix,
     });
+
+    return {
+      ok: true,
+      skipped: false,
+      message: null,
+    };
   } catch (error) {
     console.warn(
-      `[deleteStoragePrefix] skipped for "${prefix}":`,
-      error?.message || error
+      `[deleteStoragePrefix] Storage cleanup failed for "${prefix}":`,
+      error
     );
+
+    return {
+      ok: false,
+      skipped: false,
+      message: safeErrorMessage(error),
+    };
   }
 }
 
+/* =========================
+   BAG TAG HELPERS
+========================= */
+
 /**
- * Returns all bagTags connected to a flight.
+ * Returns all global bagTags connected to one flight.
  *
- * Supports both:
+ * Supports:
  * - flightId
  * - currentFlightId
  *
- * This is important because newer tracking records may use
- * currentFlightId while older ones only use flightId.
+ * Results are deduplicated by bag tag document ID.
  */
 async function getBagTagDocsForFlight(flightId) {
   const results = new Map();
@@ -180,9 +248,13 @@ async function getBagTagDocsForFlight(flightId) {
       );
     });
   } catch (error) {
+    /*
+     * Do not fail deletion just because older deployments
+     * or records do not support currentFlightId.
+     */
     console.warn(
       `[getBagTagDocsForFlight] currentFlightId query skipped for ${flightId}:`,
-      error?.message || error
+      safeErrorMessage(error)
     );
   }
 
@@ -190,14 +262,10 @@ async function getBagTagDocsForFlight(flightId) {
 }
 
 /**
- * Deletes all global bagTags assigned to a flight.
- *
- * It also deletes:
+ * Deletes all global bagTag records connected to one flight,
+ * including:
  *
  * bagTags/{tag}/events/*
- *
- * Firestore does not delete subcollections automatically,
- * so recursive deletion is required.
  */
 async function deleteBagTagsIndexForFlight(
   flightId
@@ -220,11 +288,16 @@ async function deleteBagTagsIndexForFlight(
   return deletedBagTags;
 }
 
+/* =========================
+   FLIGHT LOOKUP
+========================= */
+
 /**
- * Returns all flight documents for one YYYY-MM month.
+ * Returns every flight document whose flightDate begins
+ * with the selected YYYY-MM.
  *
- * No new Firestore index is required because the filtering
- * is done after reading the flights collection.
+ * Filtering is performed in memory so no new Firestore
+ * composite index is required.
  */
 async function getFlightsForMonth(
   year,
@@ -256,15 +329,18 @@ async function getFlightsForMonth(
   );
 }
 
+/* =========================
+   DELETE ENTIRE FLIGHT
+========================= */
+
 /**
- * Deletes the entire flight tree and related global records.
+ * Deletes a complete flight and related baggage history.
  *
- * This includes every current or future subcollection under:
+ * Firestore is considered the primary cleanup.
+ * Storage is secondary and never makes the entire operation fail.
  *
- * flights/{flightId}
- *
- * Diagnostic STEP logging is included so failures can be
- * identified from Cloud Functions logs and returned to the frontend.
+ * Returns a structured result so Monthly Cleanup can continue
+ * processing the remaining flights even if one flight fails.
  */
 async function deleteEntireFlight(flightId) {
   const cleanFlightId = String(
@@ -281,19 +357,19 @@ async function deleteEntireFlight(flightId) {
     .collection("flights")
     .doc(cleanFlightId);
 
-  let flightSnapshot;
   let flightData = null;
+  let deletedBagTags = 0;
 
   /*
    * STEP 0
-   * Read the flight before deleting anything.
+   * Read flight information.
    */
   try {
     console.log(
       `[deleteEntireFlight] STEP 0 - reading flight ${cleanFlightId}`
     );
 
-    flightSnapshot =
+    const flightSnapshot =
       await flightRef.get();
 
     flightData =
@@ -305,27 +381,14 @@ async function deleteEntireFlight(flightId) {
       `[deleteEntireFlight] STEP 0 completed for ${cleanFlightId}`
     );
   } catch (error) {
-    console.error(
-      `[deleteEntireFlight] STEP 0 FAILED for ${cleanFlightId}:`,
-      error
-    );
-
     throw new Error(
-      `STEP 0 - Unable to read flight ${cleanFlightId}: ${
-        error?.message || error
-      }`
+      `STEP 0 - Unable to read flight ${cleanFlightId}: ${safeErrorMessage(error)}`
     );
   }
 
-  console.log(
-    `[deleteEntireFlight] Starting deletion for flight ${cleanFlightId}`
-  );
-
-  let deletedBagTags = 0;
-
   /*
    * STEP 1
-   * Delete global baggage tracking records.
+   * Delete global bagTags and their events.
    */
   try {
     console.log(
@@ -347,27 +410,14 @@ async function deleteEntireFlight(flightId) {
     );
 
     throw new Error(
-      `STEP 1 - Unable to delete bagTags for ${cleanFlightId}: ${
-        error?.message || error
-      }`
+      `STEP 1 - Unable to delete bagTags for ${cleanFlightId}: ${safeErrorMessage(error)}`
     );
   }
 
   /*
    * STEP 2
-   * Delete every subcollection and the flight document.
-   *
-   * This automatically includes:
-   *
-   * - aircraftScans
-   * - bagroomScans
-   * - counterScans
-   * - gateBagScans
-   * - allowedBagTags
-   * - reports
-   * - offloadReports
-   * - reopenReports
-   * - any future subcollection
+   * Delete every flight subcollection and finally
+   * the flight document itself.
    */
   try {
     console.log(
@@ -388,44 +438,36 @@ async function deleteEntireFlight(flightId) {
     );
 
     throw new Error(
-      `STEP 2 - Unable to delete Firestore flight data for ${cleanFlightId}: ${
-        error?.message || error
-      }`
+      `STEP 2 - Unable to delete Firestore flight data for ${cleanFlightId}: ${safeErrorMessage(error)}`
     );
   }
 
   /*
    * STEP 3
-   * Delete uploaded files associated with the flight.
+   * Best-effort Storage cleanup.
    *
-   * Storage failures are logged but do not fail the whole
-   * Firestore cleanup because deleteStoragePrefix already
-   * treats Storage cleanup as best-effort.
+   * Does not throw.
    */
-  try {
-    console.log(
-      `[deleteEntireFlight] STEP 3 - deleting Storage files for ${cleanFlightId}`
-    );
+  console.log(
+    `[deleteEntireFlight] STEP 3 - deleting Storage files for ${cleanFlightId}`
+  );
 
+  const storageResult =
     await deleteStoragePrefix(
       `flights/${cleanFlightId}/`
     );
 
-    console.log(
-      `[deleteEntireFlight] STEP 3 completed for ${cleanFlightId}`
-    );
-  } catch (error) {
-    console.warn(
-      `[deleteEntireFlight] STEP 3 Storage cleanup skipped for ${cleanFlightId}:`,
-      error?.message || error
-    );
-  }
+  console.log(
+    `[deleteEntireFlight] STEP 3 completed for ${cleanFlightId}. Storage ok: ${storageResult.ok}`
+  );
 
   console.log(
     `[deleteEntireFlight] Completed deletion for flight ${cleanFlightId}. Deleted bagTags: ${deletedBagTags}`
   );
 
   return {
+    ok: true,
+
     flightId:
       cleanFlightId,
 
@@ -438,6 +480,17 @@ async function deleteEntireFlight(flightId) {
       null,
 
     deletedBagTags,
+
+    storageCleanup: {
+      ok:
+        storageResult.ok,
+
+      skipped:
+        storageResult.skipped,
+
+      message:
+        storageResult.message,
+    },
   };
 }
 
@@ -445,16 +498,6 @@ async function deleteEntireFlight(flightId) {
    DELETE SINGLE FLIGHT
 ========================= */
 
-/**
- * Callable used by the frontend Delete Flight button.
- *
- * Expected frontend call:
- *
- * deleteFlightCascade({
- *   flightId,
- *   userRole: user.role
- * })
- */
 exports.deleteFlightCascade =
   region.https.onCall(
     async (data, context) => {
@@ -489,19 +532,16 @@ exports.deleteFlightCascade =
 
         throw new functions.https.HttpsError(
           "internal",
-          error?.message ||
-            "Unable to delete flight.",
+          safeErrorMessage(error),
           {
             originalMessage:
-              error?.message ||
-              null,
+              safeErrorMessage(error),
+
+            flightId,
 
             stack:
               error?.stack ||
               null,
-
-            flightId:
-              flightId,
           }
         );
       }
@@ -515,8 +555,8 @@ exports.deleteFlightCascade =
 /**
  * Station Manager only.
  *
+ * Preview only.
  * Does NOT delete anything.
- * Returns a preview of the month that would be deleted.
  */
 exports.previewMonthlyCleanup =
   region.https.onCall(
@@ -565,13 +605,9 @@ exports.previewMonthlyCleanup =
         };
 
         const flights = [];
-
         let bagTagCount = 0;
 
-        for (
-          const documentSnapshot
-          of flightDocs
-        ) {
+        for (const documentSnapshot of flightDocs) {
           const flight =
             documentSnapshot.data();
 
@@ -623,6 +659,9 @@ exports.previewMonthlyCleanup =
             status:
               status ||
               "OPEN",
+
+            trackedBagTags:
+              bagTagDocs.length,
           });
         }
 
@@ -680,19 +719,17 @@ exports.previewMonthlyCleanup =
 
         throw new functions.https.HttpsError(
           "internal",
-          error?.message ||
-            "Unable to preview monthly cleanup.",
+          safeErrorMessage(error),
           {
             originalMessage:
-              error?.message ||
-              null,
+              safeErrorMessage(error),
+
+            month:
+              monthPrefix,
 
             stack:
               error?.stack ||
               null,
-
-            month:
-              monthPrefix,
           }
         );
       }
@@ -707,18 +744,17 @@ exports.previewMonthlyCleanup =
  * Station Manager only.
  *
  * Deletes ALL flights for the selected month,
- * regardless of status:
+ * regardless of flight status.
  *
- * OPEN
- * RECEIVING
- * LOADING
- * LOADED
+ * IMPORTANT:
+ * Each flight is processed independently.
  *
- * Also deletes:
- * - every flight subcollection
- * - global bagTags
- * - bagTags/{tag}/events/*
- * - Firebase Storage files under flights/{flightId}/
+ * If one flight fails:
+ * - the cleanup continues with the next flight
+ * - successful deletions remain successful
+ * - failed flights are returned to the frontend
+ *
+ * This avoids one bad flight stopping an entire month.
  */
 exports.deleteFlightsByMonth =
   region.https.onCall(
@@ -767,38 +803,71 @@ exports.deleteFlightsByMonth =
         );
       }
 
+      let flightDocs;
+
       try {
         console.log(
           `[deleteFlightsByMonth] Starting monthly cleanup for ${monthPrefix}. Requested by: ${data?.username || "unknown"}`
         );
 
-        const flightDocs =
+        flightDocs =
           await getFlightsForMonth(
             year,
             month
           );
-
-        console.log(
-          `[deleteFlightsByMonth] Found ${flightDocs.length} flight(s) for ${monthPrefix}`
+      } catch (error) {
+        console.error(
+          "[deleteFlightsByMonth] Unable to load flights:",
+          error
         );
 
-        let deletedFlights = 0;
-        let deletedBagTags = 0;
+        throw new functions.https.HttpsError(
+          "internal",
+          `Unable to load flights for ${monthPrefix}: ${safeErrorMessage(error)}`,
+          {
+            originalMessage:
+              safeErrorMessage(error),
 
-        for (
-          const documentSnapshot
-          of flightDocs
-        ) {
-          const flight =
-            documentSnapshot.data();
+            month:
+              monthPrefix,
 
-          console.log(
-            `[deleteFlightsByMonth] Deleting flight ${flight?.flightNumber || documentSnapshot.id} (${documentSnapshot.id})`
-          );
+            stage:
+              "LOAD_MONTH_FLIGHTS",
+          }
+        );
+      }
 
+      console.log(
+        `[deleteFlightsByMonth] Found ${flightDocs.length} flight(s) for ${monthPrefix}`
+      );
+
+      let deletedFlights = 0;
+      let failedFlights = 0;
+      let deletedBagTags = 0;
+
+      const deleted = [];
+      const failures = [];
+      const storageWarnings = [];
+
+      for (const documentSnapshot of flightDocs) {
+        const flight =
+          documentSnapshot.data();
+
+        const flightId =
+          documentSnapshot.id;
+
+        const flightNumber =
+          flight?.flightNumber ||
+          flightId;
+
+        console.log(
+          `[deleteFlightsByMonth] Processing ${flightNumber} (${flightId})`
+        );
+
+        try {
           const result =
             await deleteEntireFlight(
-              documentSnapshot.id
+              flightId
             );
 
           deletedFlights += 1;
@@ -806,53 +875,120 @@ exports.deleteFlightsByMonth =
           deletedBagTags +=
             result.deletedBagTags ||
             0;
-        }
 
-        console.log(
-          `[deleteFlightsByMonth] Completed ${monthPrefix}. ` +
-            `Deleted flights: ${deletedFlights}. ` +
-            `Deleted bagTags: ${deletedBagTags}. ` +
-            `Requested by: ${data?.username || "unknown"}`
-        );
+          deleted.push({
+            flightId,
 
-        return {
-          ok: true,
+            flightNumber:
+              result.flightNumber ||
+              flightNumber,
 
-          month:
-            monthPrefix,
-
-          deletedFlights,
-
-          deletedBagTags,
-        };
-      } catch (error) {
-        console.error(
-          "[deleteFlightsByMonth]",
-          error
-        );
-
-        throw new functions.https.HttpsError(
-          "internal",
-          error?.message ||
-            "Unable to delete monthly flight data.",
-          {
-            originalMessage:
-              error?.message ||
+            flightDate:
+              result.flightDate ||
+              flight?.flightDate ||
               null,
 
-            stack:
-              error?.stack ||
-              null,
+            deletedBagTags:
+              result.deletedBagTags ||
+              0,
+          });
 
-            month:
-              monthPrefix,
+          if (
+            result.storageCleanup &&
+            !result.storageCleanup.ok
+          ) {
+            storageWarnings.push({
+              flightId,
 
-            requestedBy:
-              data?.username ||
-              null,
+              flightNumber:
+                result.flightNumber ||
+                flightNumber,
+
+              message:
+                result.storageCleanup.message ||
+                "Storage cleanup was skipped or failed.",
+            });
           }
-        );
+
+          console.log(
+            `[deleteFlightsByMonth] SUCCESS ${flightNumber} (${flightId})`
+          );
+        } catch (error) {
+          failedFlights += 1;
+
+          const failureMessage =
+            safeErrorMessage(error);
+
+          failures.push({
+            flightId,
+
+            flightNumber,
+
+            flightDate:
+              flight?.flightDate ||
+              null,
+
+            message:
+              failureMessage,
+          });
+
+          console.error(
+            `[deleteFlightsByMonth] FAILED ${flightNumber} (${flightId}):`,
+            error
+          );
+
+          /*
+           * IMPORTANT:
+           * Continue to the next flight.
+           */
+        }
       }
+
+      console.log(
+        `[deleteFlightsByMonth] Completed ${monthPrefix}. ` +
+          `Deleted flights: ${deletedFlights}. ` +
+          `Failed flights: ${failedFlights}. ` +
+          `Deleted bagTags: ${deletedBagTags}. ` +
+          `Requested by: ${data?.username || "unknown"}`
+      );
+
+      /*
+       * Even if one flight failed, return a successful callable
+       * response containing the failure details.
+       *
+       * This prevents Firebase from replacing our detailed result
+       * with the generic "functions/internal" message.
+       */
+      return {
+        ok:
+          failedFlights === 0,
+
+        partialSuccess:
+          deletedFlights > 0 &&
+          failedFlights > 0,
+
+        month:
+          monthPrefix,
+
+        requestedBy:
+          data?.username ||
+          null,
+
+        totalFlights:
+          flightDocs.length,
+
+        deletedFlights,
+
+        failedFlights,
+
+        deletedBagTags,
+
+        deleted,
+
+        failures,
+
+        storageWarnings,
+      };
     }
   );
 
@@ -865,6 +1001,8 @@ exports.deleteFlightsByMonth =
  * Existing cleanup option.
  *
  * Deletes only LOADED flights from the selected month.
+ *
+ * Also uses per-flight error handling.
  */
 exports.deleteLoadedFlightsByMonth =
   region.https.onCall(
@@ -897,42 +1035,58 @@ exports.deleteLoadedFlightsByMonth =
           month
         );
 
+      let flightDocs;
+
       try {
-        const flightDocs =
+        flightDocs =
           await getFlightsForMonth(
             year,
             month
           );
+      } catch (error) {
+        throw new functions.https.HttpsError(
+          "internal",
+          `Unable to load flights for ${monthPrefix}: ${safeErrorMessage(error)}`
+        );
+      }
 
-        const loadedFlightDocs =
-          flightDocs.filter(
-            (
-              documentSnapshot
-            ) => {
-              const status =
-                String(
-                  documentSnapshot
-                    .data()
-                    ?.status ||
-                    ""
-                )
-                  .trim()
-                  .toUpperCase();
+      const loadedFlightDocs =
+        flightDocs.filter(
+          (
+            documentSnapshot
+          ) => {
+            const status =
+              String(
+                documentSnapshot
+                  .data()
+                  ?.status ||
+                  ""
+              )
+                .trim()
+                .toUpperCase();
 
-              return (
-                status ===
-                "LOADED"
-              );
-            }
-          );
+            return (
+              status ===
+              "LOADED"
+            );
+          }
+        );
 
-        let deletedFlights = 0;
-        let deletedBagTags = 0;
+      let deletedFlights = 0;
+      let failedFlights = 0;
+      let deletedBagTags = 0;
 
-        for (
-          const documentSnapshot
-          of loadedFlightDocs
-        ) {
+      const failures = [];
+      const storageWarnings = [];
+
+      for (
+        const documentSnapshot
+        of loadedFlightDocs
+      ) {
+        const flight =
+          documentSnapshot.data();
+
+        try {
           const result =
             await deleteEntireFlight(
               documentSnapshot.id
@@ -943,42 +1097,70 @@ exports.deleteLoadedFlightsByMonth =
           deletedBagTags +=
             result.deletedBagTags ||
             0;
-        }
 
-        return {
-          ok: true,
+          if (
+            result.storageCleanup &&
+            !result.storageCleanup.ok
+          ) {
+            storageWarnings.push({
+              flightId:
+                documentSnapshot.id,
 
-          deletedFlights,
+              flightNumber:
+                result.flightNumber ||
+                flight?.flightNumber ||
+                documentSnapshot.id,
 
-          deletedBagTags,
-
-          month:
-            monthPrefix,
-        };
-      } catch (error) {
-        console.error(
-          "[deleteLoadedFlightsByMonth]",
-          error
-        );
-
-        throw new functions.https.HttpsError(
-          "internal",
-          error?.message ||
-            "Unable to delete flights.",
-          {
-            originalMessage:
-              error?.message ||
-              null,
-
-            stack:
-              error?.stack ||
-              null,
-
-            month:
-              monthPrefix,
+              message:
+                result.storageCleanup.message ||
+                "Storage cleanup was skipped or failed.",
+            });
           }
-        );
+        } catch (error) {
+          failedFlights += 1;
+
+          failures.push({
+            flightId:
+              documentSnapshot.id,
+
+            flightNumber:
+              flight?.flightNumber ||
+              documentSnapshot.id,
+
+            flightDate:
+              flight?.flightDate ||
+              null,
+
+            message:
+              safeErrorMessage(error),
+          });
+        }
       }
+
+      return {
+        ok:
+          failedFlights === 0,
+
+        partialSuccess:
+          deletedFlights > 0 &&
+          failedFlights > 0,
+
+        month:
+          monthPrefix,
+
+        totalFlights:
+          loadedFlightDocs.length,
+
+        deletedFlights,
+
+        failedFlights,
+
+        deletedBagTags,
+
+        failures,
+
+        storageWarnings,
+      };
     }
   );
 
@@ -989,9 +1171,8 @@ exports.deleteLoadedFlightsByMonth =
 /**
  * One-time maintenance function.
  *
- * This removes old bagTags whose flight document
- * was already deleted before the new cascade function
- * was installed.
+ * Removes global bagTags whose referenced flight
+ * document no longer exists.
  *
  * Supports:
  * - flightId
@@ -1014,8 +1195,10 @@ exports.cleanupOrphanedBagTags =
 
         let checkedBagTags = 0;
         let deletedOrphans = 0;
-        let skippedWithoutFlightId =
-          0;
+        let skippedWithoutFlightId = 0;
+        let failedOrphans = 0;
+
+        const failures = [];
 
         for (
           const bagTagSnapshot
@@ -1029,53 +1212,69 @@ exports.cleanupOrphanedBagTags =
           const flightId =
             String(
               bagTag?.flightId ||
-                bagTag
-                  ?.currentFlightId ||
+                bagTag?.currentFlightId ||
                 ""
             ).trim();
 
           if (!flightId) {
-            skippedWithoutFlightId +=
-              1;
-
+            skippedWithoutFlightId += 1;
             continue;
           }
 
-          const flightSnapshot =
-            await db
-              .collection(
-                "flights"
-              )
-              .doc(
-                flightId
-              )
-              .get();
+          try {
+            const flightSnapshot =
+              await db
+                .collection("flights")
+                .doc(flightId)
+                .get();
 
-          if (
-            flightSnapshot.exists
-          ) {
-            continue;
+            if (
+              flightSnapshot.exists
+            ) {
+              continue;
+            }
+
+            console.log(
+              `[cleanupOrphanedBagTags] Deleting orphan tag ${bagTagSnapshot.id}, missing flight ${flightId}`
+            );
+
+            await deleteDocumentTree(
+              bagTagSnapshot.ref
+            );
+
+            deletedOrphans += 1;
+          } catch (error) {
+            failedOrphans += 1;
+
+            failures.push({
+              tag:
+                bagTagSnapshot.id,
+
+              flightId,
+
+              message:
+                safeErrorMessage(error),
+            });
           }
-
-          console.log(
-            `[cleanupOrphanedBagTags] Deleting orphan tag ${bagTagSnapshot.id}, missing flight ${flightId}`
-          );
-
-          await deleteDocumentTree(
-            bagTagSnapshot.ref
-          );
-
-          deletedOrphans += 1;
         }
 
         return {
-          ok: true,
+          ok:
+            failedOrphans === 0,
+
+          partialSuccess:
+            deletedOrphans > 0 &&
+            failedOrphans > 0,
 
           checkedBagTags,
 
           deletedOrphans,
 
+          failedOrphans,
+
           skippedWithoutFlightId,
+
+          failures,
         };
       } catch (error) {
         console.error(
@@ -1085,12 +1284,10 @@ exports.cleanupOrphanedBagTags =
 
         throw new functions.https.HttpsError(
           "internal",
-          error?.message ||
-            "Unable to clean orphaned bag tags.",
+          safeErrorMessage(error),
           {
             originalMessage:
-              error?.message ||
-              null,
+              safeErrorMessage(error),
 
             stack:
               error?.stack ||
