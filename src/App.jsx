@@ -1,5 +1,5 @@
 // src/App.jsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   doc,
@@ -18,6 +18,7 @@ import PrivacyNoticePage, {
 
 import PrivacyAcknowledgementsPage from "./pages/PrivacyAcknowledgementsPage.jsx";
 import MonthlyCleanupPage from "./pages/MonthlyCleanupPage.jsx";
+import SystemMonitorPage from "./pages/SystemMonitorPage.jsx";
 
 import VersionUpdateNotice from "./components/VersionUpdateNotice.jsx";
 
@@ -30,6 +31,10 @@ import ReportsPage from "./pages/ReportsPage.jsx";
 import AdminUsersPage from "./pages/AdminUsersPage.jsx";
 import CounterScanPage from "./pages/CounterScanPage.jsx";
 import BaggageTrackingPage from "./pages/BaggageTrackingPage.jsx";
+
+import {
+  createPresenceHeartbeat,
+} from "./utils/systemLogger.js";
 
 function normalizeRole(role) {
   return String(role || "")
@@ -58,9 +63,13 @@ function getOperationalPositionLabel(value) {
   return labels[normalized] || normalized || "-";
 }
 
-function getSessionJson(key, fallback = null) {
+function getSessionJson(
+  key,
+  fallback = null
+) {
   try {
-    const saved = sessionStorage.getItem(key);
+    const saved =
+      sessionStorage.getItem(key);
 
     return saved
       ? JSON.parse(saved)
@@ -71,15 +80,16 @@ function getSessionJson(key, fallback = null) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(() =>
-    getSessionJson("blcsUser", null)
+  const [
+    user,
+    setUser,
+  ] = useState(() =>
+    getSessionJson(
+      "blcsUser",
+      null
+    )
   );
 
-  /*
-   * Operational session data.
-   * This is the position selected at login
-   * for the current shift/session.
-   */
   const [
     operationalSession,
     setOperationalSession,
@@ -134,14 +144,18 @@ export default function App() {
     );
   });
 
-  const [refreshKey, setRefreshKey] =
-    useState(0);
+  const [
+    refreshKey,
+    setRefreshKey,
+  ] = useState(0);
 
   const [
     privacyStatus,
     setPrivacyStatus,
   ] = useState(
-    user ? "checking" : "accepted"
+    user
+      ? "checking"
+      : "accepted"
   );
 
   const [
@@ -155,63 +169,91 @@ export default function App() {
 
   useEffect(() => {
     if (!user?.id) {
-      setPrivacyStatus("accepted");
+      setPrivacyStatus(
+        "accepted"
+      );
+
       return;
     }
 
     let active = true;
 
-    const checkPrivacy = async () => {
-      setPrivacyStatus("checking");
-
-      try {
-        const userRef = doc(
-          db,
-          "users",
-          user.id
+    const checkPrivacy =
+      async () => {
+        setPrivacyStatus(
+          "checking"
         );
 
-        const snap =
-          await getDoc(userRef);
+        try {
+          const userRef =
+            doc(
+              db,
+              "users",
+              user.id
+            );
 
-        if (!active) return;
+          const snap =
+            await getDoc(
+              userRef
+            );
 
-        if (!snap.exists()) {
-          setPrivacyStatus("required");
-          return;
-        }
+          if (!active) {
+            return;
+          }
 
-        const data = snap.data();
+          if (!snap.exists()) {
+            setPrivacyStatus(
+              "required"
+            );
 
-        const accepted =
-          data?.privacyConsent
-            ?.accepted === true;
+            return;
+          }
 
-        const version = String(
-          data?.privacyConsent
-            ?.version || ""
-        );
+          const data =
+            snap.data();
 
-        if (
-          accepted &&
-          version ===
-            PRIVACY_NOTICE_VERSION
-        ) {
-          setPrivacyStatus("accepted");
-        } else {
-          setPrivacyStatus("required");
-        }
-      } catch (error) {
-        console.error(
-          "Privacy consent check error:",
+          const accepted =
+            data
+              ?.privacyConsent
+              ?.accepted ===
+            true;
+
+          const version =
+            String(
+              data
+                ?.privacyConsent
+                ?.version ||
+                ""
+            );
+
+          if (
+            accepted &&
+            version ===
+              PRIVACY_NOTICE_VERSION
+          ) {
+            setPrivacyStatus(
+              "accepted"
+            );
+          } else {
+            setPrivacyStatus(
+              "required"
+            );
+          }
+        } catch (
           error
-        );
+        ) {
+          console.error(
+            "Privacy consent check error:",
+            error
+          );
 
-        if (active) {
-          setPrivacyStatus("required");
+          if (active) {
+            setPrivacyStatus(
+              "required"
+            );
+          }
         }
-      }
-    };
+      };
 
     checkPrivacy();
 
@@ -243,10 +285,12 @@ export default function App() {
 
     const nextOperationalSession = {
       operationalPosition:
-        operationalPosition || null,
+        operationalPosition ||
+        null,
 
       operationalPositionLabel:
-        operationalPositionLabel || null,
+        operationalPositionLabel ||
+        null,
 
       employeeFullName:
         sessionMeta
@@ -270,35 +314,53 @@ export default function App() {
       loginAt:
         sessionMeta
           ?.loginAt ||
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
     };
 
     const gc =
       operationalPosition ===
       "GATE_CONTROLLER"
-        ? userData?.username || null
+        ? userData
+            ?.username ||
+          null
         : sessionMeta
             ?.gateControllerUsername ||
           null;
 
-    setUser(userData);
+    setUser(
+      userData
+    );
 
     setOperationalSession(
       nextOperationalSession
     );
 
-    setGateControllerOnDuty(gc);
+    setGateControllerOnDuty(
+      gc
+    );
 
-    setCurrentView("dashboard");
+    setCurrentView(
+      "dashboard"
+    );
 
-    setSelectedFlightId(null);
-    setSelectedFlightNumber(null);
+    setSelectedFlightId(
+      null
+    );
 
-    setPrivacyStatus("checking");
+    setSelectedFlightNumber(
+      null
+    );
+
+    setPrivacyStatus(
+      "checking"
+    );
 
     sessionStorage.setItem(
       "blcsUser",
-      JSON.stringify(userData)
+      JSON.stringify(
+        userData
+      )
     );
 
     sessionStorage.setItem(
@@ -339,32 +401,48 @@ export default function App() {
 
   const handleAcceptPrivacy =
     async () => {
-      if (!user?.id) return;
+      if (!user?.id) {
+        return;
+      }
 
       try {
-        setSavingPrivacy(true);
-
-        const userRef = doc(
-          db,
-          "users",
-          user.id
+        setSavingPrivacy(
+          true
         );
+
+        const userRef =
+          doc(
+            db,
+            "users",
+            user.id
+          );
 
         await setDoc(
           userRef,
           {
             privacyConsent: {
-              accepted: true,
+              accepted:
+                true,
+
               version:
                 PRIVACY_NOTICE_VERSION,
+
               acceptedAt:
                 serverTimestamp(),
+
               acceptedBy: {
-                userId: user.id,
+                userId:
+                  user.id,
+
                 username:
-                  user.username || null,
+                  user
+                    .username ||
+                  null,
+
                 role:
-                  user.role || null,
+                  user
+                    .role ||
+                  null,
 
                 operationalPosition:
                   operationalSession
@@ -379,12 +457,17 @@ export default function App() {
             },
           },
           {
-            merge: true,
+            merge:
+              true,
           }
         );
 
-        setPrivacyStatus("accepted");
-      } catch (error) {
+        setPrivacyStatus(
+          "accepted"
+        );
+      } catch (
+        error
+      ) {
         console.error(
           "Privacy acceptance error:",
           error
@@ -394,7 +477,9 @@ export default function App() {
           "Unable to save your acceptance. Please check your connection and try again."
         );
       } finally {
-        setSavingPrivacy(false);
+        setSavingPrivacy(
+          false
+        );
       }
     };
 
@@ -405,21 +490,37 @@ export default function App() {
   const handleLogout = () => {
     sessionStorage.clear();
 
-    setUser(null);
+    setUser(
+      null
+    );
 
-    setOperationalSession(null);
+    setOperationalSession(
+      null
+    );
 
-    setGateControllerOnDuty(null);
+    setGateControllerOnDuty(
+      null
+    );
 
-    setSelectedFlightId(null);
+    setSelectedFlightId(
+      null
+    );
 
-    setSelectedFlightNumber(null);
+    setSelectedFlightNumber(
+      null
+    );
 
-    setCurrentView("dashboard");
+    setCurrentView(
+      "dashboard"
+    );
 
-    setRefreshKey(0);
+    setRefreshKey(
+      0
+    );
 
-    setPrivacyStatus("accepted");
+    setPrivacyStatus(
+      "accepted"
+    );
   };
 
   /* =========================
@@ -429,7 +530,9 @@ export default function App() {
   if (!user) {
     return (
       <LoginPage
-        onLogin={handleLogin}
+        onLogin={
+          handleLogin
+        }
       />
     );
   }
@@ -438,29 +541,48 @@ export default function App() {
      PRIVACY CHECK
   ========================= */
 
-  if (privacyStatus === "checking") {
+  if (
+    privacyStatus ===
+    "checking"
+  ) {
     return (
       <div
         style={{
-          minHeight: "100dvh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#0f172a",
-          color: "white",
+          minHeight:
+            "100dvh",
+
+          display:
+            "flex",
+
+          alignItems:
+            "center",
+
+          justifyContent:
+            "center",
+
+          background:
+            "#0f172a",
+
+          color:
+            "white",
+
           fontFamily:
             "system-ui, sans-serif",
         }}
       >
         <div
           style={{
-            textAlign: "center",
+            textAlign:
+              "center",
           }}
         >
           <div
             style={{
-              fontSize: "1.2rem",
-              fontWeight: 900,
+              fontSize:
+                "1.2rem",
+
+              fontWeight:
+                900,
             }}
           >
             BLCS
@@ -468,9 +590,14 @@ export default function App() {
 
           <div
             style={{
-              marginTop: 7,
-              color: "#cbd5e1",
-              fontSize: "0.82rem",
+              marginTop:
+                7,
+
+              color:
+                "#cbd5e1",
+
+              fontSize:
+                "0.82rem",
             }}
           >
             Verifying system access...
@@ -480,15 +607,27 @@ export default function App() {
     );
   }
 
-  if (privacyStatus === "required") {
+  if (
+    privacyStatus ===
+    "required"
+  ) {
     return (
       <PrivacyNoticePage
-        user={user}
-        saving={savingPrivacy}
+        user={
+          user
+        }
+
+        saving={
+          savingPrivacy
+        }
+
         onAccept={
           handleAcceptPrivacy
         }
-        onLogout={handleLogout}
+
+        onLogout={
+          handleLogout
+        }
       />
     );
   }
@@ -497,9 +636,10 @@ export default function App() {
      USER / PERMISSIONS
   ========================= */
 
-  const role = normalizeRole(
-    user.role
-  );
+  const role =
+    normalizeRole(
+      user.role
+    );
 
   const displayName =
     user?.fullName ||
@@ -508,13 +648,22 @@ export default function App() {
     user?.username ||
     "User";
 
-  const roleLabel = String(
-    user?.role || "user"
-  )
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (letter) =>
-      letter.toUpperCase()
-    );
+  const roleLabel =
+    String(
+      user?.role ||
+        "user"
+    )
+      .replaceAll(
+        "_",
+        " "
+      )
+      .replace(
+        /\b\w/g,
+        (
+          letter
+        ) =>
+          letter.toUpperCase()
+      );
 
   const activeOperationalPosition =
     normalizeOperationalPosition(
@@ -530,71 +679,136 @@ export default function App() {
     );
 
   const isStationManager =
-    role === "station_manager";
+    role ===
+    "station_manager";
 
-  /*
-   * System Role still controls permanent
-   * administrative permissions.
-   *
-   * Operational Position records what the
-   * employee is actually doing for this shift.
-   */
   const canCreateFlights =
-    role === "station_manager" ||
-    role === "duty_manager" ||
-    role === "supervisor" ||
-    role === "gate_controller";
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller";
 
   const canEditGateTotals =
-    role === "station_manager" ||
-    role === "duty_manager" ||
-    role === "supervisor" ||
-    role === "gate_controller" ||
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller" ||
     activeOperationalPosition ===
       "GATE_CONTROLLER";
 
   /*
-   * This object is passed to all operational
-   * pages so scans/reports can record both:
-   *
-   * - permanent system role
-   * - selected shift position
+   * useMemo prevents the presence
+   * heartbeat effect from being rebuilt
+   * unnecessarily on every render.
    */
-  const operationalContext = {
-    operationalPosition:
-      activeOperationalPosition ||
-      null,
+  const operationalContext =
+    useMemo(
+      () => ({
+        operationalPosition:
+          activeOperationalPosition ||
+          null,
 
-    operationalPositionLabel:
-      activeOperationalPositionLabel ||
-      null,
+        operationalPositionLabel:
+          activeOperationalPositionLabel ||
+          null,
 
-    employeeFullName:
-      operationalSession
-        ?.employeeFullName ||
-      displayName,
+        employeeFullName:
+          operationalSession
+            ?.employeeFullName ||
+          displayName,
 
-    basePosition:
-      operationalSession
-        ?.basePosition ||
-      user?.position ||
-      null,
+        basePosition:
+          operationalSession
+            ?.basePosition ||
+          user?.position ||
+          null,
 
-    systemRole:
-      role || null,
+        systemRole:
+          role ||
+          null,
 
-    loginAt:
-      operationalSession
-        ?.loginAt ||
-      null,
-  };
+        loginAt:
+          operationalSession
+            ?.loginAt ||
+          null,
+      }),
+      [
+        activeOperationalPosition,
+        activeOperationalPositionLabel,
+        operationalSession
+          ?.employeeFullName,
+        operationalSession
+          ?.basePosition,
+        operationalSession
+          ?.loginAt,
+        displayName,
+        user?.position,
+        role,
+      ]
+    );
+
+  /* =========================
+     SYSTEM PRESENCE
+  ========================= */
+
+  useEffect(() => {
+    if (
+      !user?.id ||
+      privacyStatus !==
+        "accepted"
+    ) {
+      return undefined;
+    }
+
+    const stopHeartbeat =
+      createPresenceHeartbeat({
+        user,
+
+        operationalContext,
+
+        getCurrentView:
+          () =>
+            sessionStorage.getItem(
+              "currentView"
+            ) ||
+            currentView,
+      });
+
+    return () => {
+      if (
+        typeof stopHeartbeat ===
+        "function"
+      ) {
+        stopHeartbeat();
+      }
+    };
+  }, [
+    user?.id,
+    user?.username,
+    user?.role,
+    currentView,
+    privacyStatus,
+    operationalContext,
+  ]);
 
   /* =========================
      NAVIGATION
   ========================= */
 
-  const goToView = (view) => {
-    setCurrentView(view);
+  const goToView = (
+    view
+  ) => {
+    setCurrentView(
+      view
+    );
 
     sessionStorage.setItem(
       "currentView",
@@ -605,7 +819,9 @@ export default function App() {
   const selectFlight = (
     flightId
   ) => {
-    setSelectedFlightId(flightId);
+    setSelectedFlightId(
+      flightId
+    );
 
     sessionStorage.setItem(
       "selectedFlightId",
@@ -613,11 +829,15 @@ export default function App() {
     );
   };
 
-  const handleSoftRefresh = () => {
-    setRefreshKey(
-      (prev) => prev + 1
-    );
-  };
+  const handleSoftRefresh =
+    () => {
+      setRefreshKey(
+        (
+          prev
+        ) =>
+          prev + 1
+      );
+    };
 
   const handleOpenFlightFromDashboard =
     (
@@ -630,10 +850,13 @@ export default function App() {
       );
 
       setSelectedFlightNumber(
-        flightNumber || null
+        flightNumber ||
+        null
       );
 
-      setCurrentView(targetView);
+      setCurrentView(
+        targetView
+      );
 
       sessionStorage.setItem(
         "selectedFlightId",
@@ -645,7 +868,9 @@ export default function App() {
         targetView
       );
 
-      if (flightNumber) {
+      if (
+        flightNumber
+      ) {
         sessionStorage.setItem(
           "selectedFlightNumber",
           flightNumber
@@ -661,199 +886,273 @@ export default function App() {
      PAGE ROUTER
   ========================= */
 
-  const renderView = () => {
-    if (
-      currentView === "dashboard"
-    ) {
-      return (
-        <DashboardPage
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-          onOpenFlight={
-            handleOpenFlightFromDashboard
-          }
-          gateControllerOnDuty={
-            gateControllerOnDuty
-          }
-        />
-      );
-    }
+  const renderView =
+    () => {
+      if (
+        currentView ===
+        "dashboard"
+      ) {
+        return (
+          <DashboardPage
+            user={
+              user
+            }
 
-    if (
-      currentView === "flights"
-    ) {
-      return (
-        <FlightsPage
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-          canCreateFlights={
-            canCreateFlights
-          }
-          onFlightSelected={(
-            flightId
-          ) =>
-            selectFlight(
+            operationalContext={
+              operationalContext
+            }
+
+            onOpenFlight={
+              handleOpenFlightFromDashboard
+            }
+
+            gateControllerOnDuty={
+              gateControllerOnDuty
+            }
+          />
+        );
+      }
+
+      if (
+        currentView ===
+        "flights"
+      ) {
+        return (
+          <FlightsPage
+            user={
+              user
+            }
+
+            operationalContext={
+              operationalContext
+            }
+
+            canCreateFlights={
+              canCreateFlights
+            }
+
+            onFlightSelected={(
               flightId
-            )
-          }
-        />
-      );
-    }
+            ) =>
+              selectFlight(
+                flightId
+              )
+            }
+          />
+        );
+      }
 
-    if (
-      currentView === "tracking"
-    ) {
-      return (
-        <BaggageTrackingPage
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-        />
-      );
-    }
+      if (
+        currentView ===
+        "tracking"
+      ) {
+        return (
+          <BaggageTrackingPage
+            user={
+              user
+            }
 
-    if (
-      currentView === "adminUsers"
-    ) {
-      return (
-        <AdminUsersPage
-          user={user}
-        />
-      );
-    }
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
 
-    if (
-      currentView ===
-      "privacyAcknowledgements"
-    ) {
-      return (
-        <PrivacyAcknowledgementsPage
-          user={user}
-        />
-      );
-    }
+      if (
+        currentView ===
+        "adminUsers"
+      ) {
+        return (
+          <AdminUsersPage
+            user={
+              user
+            }
+          />
+        );
+      }
 
-    if (
-      currentView ===
-      "monthlyCleanup"
-    ) {
-      return (
-        <MonthlyCleanupPage
-          user={user}
-        />
-      );
-    }
+      if (
+        currentView ===
+        "privacyAcknowledgements"
+      ) {
+        return (
+          <PrivacyAcknowledgementsPage
+            user={
+              user
+            }
+          />
+        );
+      }
 
-    if (!selectedFlightId) {
-      return (
-        <div
-          style={{
-            padding: 20,
-            background: "white",
-            borderRadius: 14,
-            border:
-              "1px solid #e5e7eb",
-            color: "#64748b",
-          }}
-        >
-          Please select a flight first.
-        </div>
-      );
-    }
+      if (
+        currentView ===
+        "monthlyCleanup"
+      ) {
+        return (
+          <MonthlyCleanupPage
+            user={
+              user
+            }
+          />
+        );
+      }
 
-    if (
-      currentView === "counter"
-    ) {
-      return (
-        <CounterScanPage
-          flightId={
-            selectedFlightId
-          }
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-        />
-      );
-    }
+      if (
+        currentView ===
+        "systemMonitor"
+      ) {
+        return (
+          <SystemMonitorPage
+            user={
+              user
+            }
+          />
+        );
+      }
 
-    if (
-      currentView === "gate"
-    ) {
-      return (
-        <GateControllerPage
-          flightId={
-            selectedFlightId
-          }
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-          gateControllerOnDuty={
-            gateControllerOnDuty
-          }
-          canEdit={
-            canEditGateTotals
-          }
-        />
-      );
-    }
+      if (
+        !selectedFlightId
+      ) {
+        return (
+          <div
+            style={{
+              padding:
+                20,
 
-    if (
-      currentView === "bagroom"
-    ) {
-      return (
-        <BagroomScanPage
-          flightId={
-            selectedFlightId
-          }
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-        />
-      );
-    }
+              background:
+                "white",
 
-    if (
-      currentView === "aircraft"
-    ) {
-      return (
-        <AircraftScanPage
-          flightId={
-            selectedFlightId
-          }
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-        />
-      );
-    }
+              borderRadius:
+                14,
 
-    if (
-      currentView === "reports"
-    ) {
-      return (
-        <ReportsPage
-          flightId={
-            selectedFlightId
-          }
-          user={user}
-          operationalContext={
-            operationalContext
-          }
-        />
-      );
-    }
+              border:
+                "1px solid #e5e7eb",
 
-    return null;
-  };
+              color:
+                "#64748b",
+            }}
+          >
+            Please select a flight first.
+          </div>
+        );
+      }
+
+      if (
+        currentView ===
+        "counter"
+      ) {
+        return (
+          <CounterScanPage
+            flightId={
+              selectedFlightId
+            }
+
+            user={
+              user
+            }
+
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
+
+      if (
+        currentView ===
+        "gate"
+      ) {
+        return (
+          <GateControllerPage
+            flightId={
+              selectedFlightId
+            }
+
+            user={
+              user
+            }
+
+            operationalContext={
+              operationalContext
+            }
+
+            gateControllerOnDuty={
+              gateControllerOnDuty
+            }
+
+            canEdit={
+              canEditGateTotals
+            }
+          />
+        );
+      }
+
+      if (
+        currentView ===
+        "bagroom"
+      ) {
+        return (
+          <BagroomScanPage
+            flightId={
+              selectedFlightId
+            }
+
+            user={
+              user
+            }
+
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
+
+      if (
+        currentView ===
+        "aircraft"
+      ) {
+        return (
+          <AircraftScanPage
+            flightId={
+              selectedFlightId
+            }
+
+            user={
+              user
+            }
+
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
+
+      if (
+        currentView ===
+        "reports"
+      ) {
+        return (
+          <ReportsPage
+            flightId={
+              selectedFlightId
+            }
+
+            user={
+              user
+            }
+
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
+
+      return null;
+    };
 
   /* =========================
      APP
@@ -863,9 +1162,14 @@ export default function App() {
     <div
       className="app-container"
       style={{
-        maxWidth: 1100,
-        margin: "0 auto",
-        padding: 16,
+        maxWidth:
+          1100,
+
+        margin:
+          "0 auto",
+
+        padding:
+          16,
       }}
     >
       <VersionUpdateNotice />
@@ -873,12 +1177,14 @@ export default function App() {
       <header
         className="app-header"
         style={{
-          marginBottom: 16,
+          marginBottom:
+            16,
         }}
       >
         <h1
           style={{
-            marginBottom: 12,
+            marginBottom:
+              12,
           }}
         >
           Baggage Loading Control System
@@ -886,21 +1192,36 @@ export default function App() {
 
         <div
           style={{
-            display: "flex",
+            display:
+              "flex",
+
             justifyContent:
               "space-between",
-            alignItems: "flex-start",
-            gap: 16,
-            flexWrap: "wrap",
+
+            alignItems:
+              "flex-start",
+
+            gap:
+              16,
+
+            flexWrap:
+              "wrap",
           }}
         >
           <nav
             className="nav-buttons"
             style={{
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-              flex: "1 1 620px",
+              display:
+                "flex",
+
+              gap:
+                8,
+
+              flexWrap:
+                "wrap",
+
+              flex:
+                "1 1 620px",
             }}
           >
             <button
@@ -915,7 +1236,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("flights")
+                goToView(
+                  "flights"
+                )
               }
             >
               Flights
@@ -923,7 +1246,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("counter")
+                goToView(
+                  "counter"
+                )
               }
               disabled={
                 !selectedFlightId
@@ -934,7 +1259,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("gate")
+                goToView(
+                  "gate"
+                )
               }
               disabled={
                 !selectedFlightId
@@ -945,7 +1272,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("bagroom")
+                goToView(
+                  "bagroom"
+                )
               }
               disabled={
                 !selectedFlightId
@@ -956,7 +1285,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("aircraft")
+                goToView(
+                  "aircraft"
+                )
               }
               disabled={
                 !selectedFlightId
@@ -967,7 +1298,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("tracking")
+                goToView(
+                  "tracking"
+                )
               }
             >
               Baggage Tracking
@@ -975,7 +1308,9 @@ export default function App() {
 
             <button
               onClick={() =>
-                goToView("reports")
+                goToView(
+                  "reports"
+                )
               }
               disabled={
                 !selectedFlightId
@@ -1009,16 +1344,42 @@ export default function App() {
                 <button
                   onClick={() =>
                     goToView(
+                      "systemMonitor"
+                    )
+                  }
+                  style={{
+                    border:
+                      "1px solid #bfdbfe",
+
+                    background:
+                      "#eff6ff",
+
+                    color:
+                      "#1d4ed8",
+
+                    fontWeight:
+                      800,
+                  }}
+                >
+                  System Monitor
+                </button>
+
+                <button
+                  onClick={() =>
+                    goToView(
                       "monthlyCleanup"
                     )
                   }
                   style={{
                     border:
                       "1px solid #fecaca",
+
                     background:
                       "#fff7f7",
+
                     color:
                       "#b91c1c",
+
                     fontWeight:
                       800,
                   }}
@@ -1033,24 +1394,41 @@ export default function App() {
 
           <div
             style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "flex-end",
-              gap: 8,
-              minWidth: 225,
+              display:
+                "flex",
+
+              flexDirection:
+                "column",
+
+              alignItems:
+                "flex-end",
+
+              gap:
+                8,
+
+              minWidth:
+                225,
             }}
           >
             <div
               style={{
-                textAlign: "right",
-                lineHeight: 1.25,
+                textAlign:
+                  "right",
+
+                lineHeight:
+                  1.25,
               }}
             >
               <div
                 style={{
-                  fontSize: "0.95rem",
-                  color: "#0f172a",
-                  fontWeight: 900,
+                  fontSize:
+                    "0.95rem",
+
+                  color:
+                    "#0f172a",
+
+                  fontWeight:
+                    900,
                 }}
               >
                 {displayName}
@@ -1058,9 +1436,14 @@ export default function App() {
 
               <div
                 style={{
-                  marginTop: 3,
-                  fontSize: "0.72rem",
-                  color: "#64748b",
+                  marginTop:
+                    3,
+
+                  fontSize:
+                    "0.72rem",
+
+                  color:
+                    "#64748b",
                 }}
               >
                 @{user?.username} -{" "}
@@ -1110,9 +1493,14 @@ export default function App() {
                   "GATE_CONTROLLER" && (
                   <div
                     style={{
-                      marginTop: 5,
-                      fontSize: "0.72rem",
-                      color: "#475569",
+                      marginTop:
+                        5,
+
+                      fontSize:
+                        "0.72rem",
+
+                      color:
+                        "#475569",
                     }}
                   >
                     Gate Controller:{" "}
@@ -1127,11 +1515,17 @@ export default function App() {
 
             <div
               style={{
-                display: "flex",
-                gap: 7,
+                display:
+                  "flex",
+
+                gap:
+                  7,
+
                 justifyContent:
                   "flex-end",
-                flexWrap: "wrap",
+
+                flexWrap:
+                  "wrap",
               }}
             >
               <button
@@ -1143,20 +1537,43 @@ export default function App() {
                 style={{
                   display:
                     "inline-flex",
-                  alignItems: "center",
+
+                  alignItems:
+                    "center",
+
                   justifyContent:
                     "center",
-                  gap: 6,
-                  minHeight: 37,
-                  padding: "7px 12px",
-                  borderRadius: 10,
+
+                  gap:
+                    6,
+
+                  minHeight:
+                    37,
+
+                  padding:
+                    "7px 12px",
+
+                  borderRadius:
+                    10,
+
                   border:
                     "1px solid #cbd5e1",
-                  background: "white",
-                  color: "#334155",
-                  fontWeight: 800,
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
+
+                  background:
+                    "white",
+
+                  color:
+                    "#334155",
+
+                  fontWeight:
+                    800,
+
+                  fontSize:
+                    "0.78rem",
+
+                  cursor:
+                    "pointer",
+
                   boxShadow:
                     "0 1px 3px rgba(15,23,42,0.06)",
                 }}
@@ -1173,20 +1590,42 @@ export default function App() {
                 style={{
                   display:
                     "inline-flex",
-                  alignItems: "center",
+
+                  alignItems:
+                    "center",
+
                   justifyContent:
                     "center",
-                  gap: 6,
-                  minHeight: 37,
-                  padding: "7px 12px",
-                  borderRadius: 10,
+
+                  gap:
+                    6,
+
+                  minHeight:
+                    37,
+
+                  padding:
+                    "7px 12px",
+
+                  borderRadius:
+                    10,
+
                   border:
                     "1px solid #fecaca",
-                  background: "#fff7f7",
-                  color: "#b91c1c",
-                  fontWeight: 800,
-                  fontSize: "0.78rem",
-                  cursor: "pointer",
+
+                  background:
+                    "#fff7f7",
+
+                  color:
+                    "#b91c1c",
+
+                  fontWeight:
+                    800,
+
+                  fontSize:
+                    "0.78rem",
+
+                  cursor:
+                    "pointer",
                 }}
               >
                 Logout
@@ -1198,17 +1637,35 @@ export default function App() {
         {selectedFlightId && (
           <div
             style={{
-              marginTop: 12,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 10px",
-              borderRadius: 10,
-              background: "#eff6ff",
+              marginTop:
+                12,
+
+              display:
+                "inline-flex",
+
+              alignItems:
+                "center",
+
+              gap:
+                6,
+
+              padding:
+                "6px 10px",
+
+              borderRadius:
+                10,
+
+              background:
+                "#eff6ff",
+
               border:
                 "1px solid #dbeafe",
-              color: "#1e40af",
-              fontSize: "0.82rem",
+
+              color:
+                "#1e40af",
+
+              fontSize:
+                "0.82rem",
             }}
           >
             <strong>
@@ -1217,7 +1674,8 @@ export default function App() {
 
             <span
               style={{
-                fontWeight: 900,
+                fontWeight:
+                  900,
               }}
             >
               {selectedFlightNumber ||
@@ -1227,7 +1685,11 @@ export default function App() {
         )}
       </header>
 
-      <main key={refreshKey}>
+      <main
+        key={
+          refreshKey
+        }
+      >
         {renderView()}
       </main>
     </div>
