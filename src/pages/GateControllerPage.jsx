@@ -1,4 +1,4 @@
-/ src/pages/GateControllerPage.jsx
+// src/pages/GateControllerPage.jsx
 import React, {
   useEffect,
   useMemo,
