@@ -2267,6 +2267,26 @@ export default function BagroomScanPage({
 
             background:
               "#f8fafc",
+
+            position:
+              compactScreen
+                ? "sticky"
+                : "static",
+
+            top:
+              compactScreen
+                ? 0
+                : "auto",
+
+            zIndex:
+              compactScreen
+                ? 4
+                : "auto",
+
+            boxShadow:
+              compactScreen
+                ? "0 8px 18px rgba(15,23,42,0.06)"
+                : "none",
           }}
         >
           <div
@@ -2472,8 +2492,8 @@ export default function BagroomScanPage({
                           isLoadingCompleted
                         }
                         style={{
-                          minHeight: 46,
-                          padding: "6px 4px",
+                          minHeight: 50,
+                          padding: "7px 4px",
                           borderRadius: 10,
 
                           border:
@@ -2539,7 +2559,7 @@ export default function BagroomScanPage({
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
-                  minHeight: 50,
+                  minHeight: 52,
                   padding: "10px 12px",
                   borderRadius: 10,
 
@@ -2674,8 +2694,8 @@ export default function BagroomScanPage({
 
               minHeight:
                 compactScreen
-                  ? 62
-                  : 54,
+                  ? 66
+                  : 56,
 
               padding: "10px 12px",
               borderRadius: 12,
@@ -2696,7 +2716,7 @@ export default function BagroomScanPage({
 
               fontSize:
                 compactScreen
-                  ? "1.45rem"
+                  ? "1.48rem"
                   : "1.2rem",
 
               fontWeight: 900,
@@ -2770,7 +2790,10 @@ export default function BagroomScanPage({
             }
             style={{
               width: "100%",
-              minHeight: 54,
+              minHeight:
+                compactScreen
+                  ? 56
+                  : 54,
               marginTop: 10,
               borderRadius: 12,
 
@@ -3850,10 +3873,10 @@ function LocationButton({
       disabled={disabled}
       style={{
         minHeight:
-          62,
+          64,
 
         padding:
-          "7px 4px",
+          "8px 4px",
 
         borderRadius:
           10,
@@ -3946,7 +3969,7 @@ function ModeButton({
           1,
 
         minHeight:
-          44,
+          46,
 
         borderRadius:
           10,
@@ -4069,10 +4092,10 @@ function ScanCard({
     <div
       style={{
         marginBottom:
-          6,
+          7,
 
         padding:
-          9,
+          10,
 
         borderRadius:
           10,
@@ -4081,6 +4104,9 @@ function ScanCard({
 
         border:
           `1px solid ${color}33`,
+
+        borderLeft:
+          `5px solid ${color}`,
       }}
     >
       <div
@@ -4275,10 +4301,10 @@ function DeleteButton({
       disabled={busy}
       style={{
         minHeight:
-          32,
+          34,
 
         padding:
-          "4px 8px",
+          "5px 9px",
 
         borderRadius:
           999,
