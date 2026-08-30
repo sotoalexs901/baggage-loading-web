@@ -464,6 +464,17 @@ function getEventTime(event) {
   );
 }
 
+/*
+ * IMPORTANT:
+ * This page is already tracking ONE bag at a time.
+ * Therefore, the bag tag itself must NOT be used
+ * to identify duplicate normal movement events.
+ *
+ * Some old embedded Bagroom events do not include
+ * "tag", while the fallback copy does include it.
+ * If tag is part of the signature, the same
+ * Bagroom movement appears twice.
+ */
 function eventSignature(event) {
   const type =
     normalizeEventType(
@@ -471,16 +482,11 @@ function eventSignature(event) {
         event?.event
     );
 
-  const tag =
-    cleanTag(
-      event?.tag ||
-        event?.bagTag
-    );
-
   const location =
     normalizeLocation(
       event?.receivingLocation ||
-        event?.location
+        event?.location ||
+        event?.trackingLocation
     );
 
   const flightId =
@@ -499,9 +505,10 @@ function eventSignature(event) {
     );
 
   /*
-   * These represent one physical movement.
-   * They may exist in several Firebase sources,
-   * so timestamp is intentionally excluded.
+   * One normal physical movement per bag/flight.
+   * Timestamp and tag are intentionally excluded
+   * so duplicate copies from different Firebase
+   * sources collapse into ONE timeline item.
    */
   const singleMovementTypes = [
     "COUNTER_SCAN",
@@ -518,7 +525,6 @@ function eventSignature(event) {
   ) {
     return [
       type,
-      tag,
       flightId,
       location,
       zone,
@@ -527,9 +533,8 @@ function eventSignature(event) {
   }
 
   /*
-   * Historical actions such as Offload/Reload
-   * can legitimately happen more than once.
-   * Keep timestamp for those.
+   * Historical actions may legitimately happen
+   * more than once, so preserve timestamp there.
    */
   const time =
     getTimestampMs(
@@ -538,7 +543,6 @@ function eventSignature(event) {
 
   return [
     type,
-    tag,
     flightId,
     location,
     zone,
@@ -571,13 +575,12 @@ function mergeUniqueEvents(
         );
 
       /*
-       * Priority is based on call order:
-       *
+       * Call order determines priority:
        * 1. event subcollection
        * 2. embedded events[]
-       * 3. fallback scan documents
+       * 3. fallback scan docs
        *
-       * The first/best copy wins.
+       * First copy wins.
        */
       if (
         !map.has(
