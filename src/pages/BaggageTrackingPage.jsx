@@ -15,6 +15,12 @@ import {
 
 import { db } from "../firebase";
 
+import {
+  logSystemIncident,
+  logSystemSuccess,
+  startSystemTimer,
+} from "../utils/systemLogger.js";
+
 const BAG_TAG_LENGTH = 10;
 const MOBILE_BREAKPOINT = 760;
 
@@ -1003,10 +1009,34 @@ export default function BaggageTrackingPage({
             tagInput
         );
 
+      const timer =
+        startSystemTimer();
+
       if (!tag) {
         setErr(
           "Enter a bag tag number."
         );
+
+        void logSystemIncident({
+          module:
+            "TRACKING",
+          action:
+            "SEARCH_BAG",
+          status:
+            "WARNING",
+          severity:
+            "LOW",
+          errorType:
+            "VALIDATION",
+          message:
+            "Tracking search attempted without a bag tag.",
+          user,
+          operationalContext,
+          durationMs:
+            timer.elapsed(),
+          currentView:
+            "tracking",
+        });
 
         return;
       }
@@ -1018,6 +1048,29 @@ export default function BaggageTrackingPage({
         setErr(
           `Bag tag must contain exactly ${BAG_TAG_LENGTH} digits.`
         );
+
+        void logSystemIncident({
+          module:
+            "TRACKING",
+          action:
+            "SEARCH_BAG",
+          status:
+            "WARNING",
+          severity:
+            "LOW",
+          errorType:
+            "VALIDATION",
+          message:
+            `Bag tag must contain exactly ${BAG_TAG_LENGTH} digits.`,
+          user,
+          operationalContext,
+          bagTag:
+            tag || null,
+          durationMs:
+            timer.elapsed(),
+          currentView:
+            "tracking",
+        });
 
         return;
       }
@@ -1046,6 +1099,29 @@ export default function BaggageTrackingPage({
           setErr(
             `No tracking found for bag tag ${tag}.`
           );
+
+          void logSystemIncident({
+            module:
+              "TRACKING",
+            action:
+              "SEARCH_BAG",
+            status:
+              "WARNING",
+            severity:
+              "LOW",
+            errorType:
+              "NOT_FOUND",
+            message:
+              `No tracking found for bag tag ${tag}.`,
+            user,
+            operationalContext,
+            bagTag:
+              tag,
+            durationMs:
+              timer.elapsed(),
+            currentView:
+              "tracking",
+          });
 
           return;
         }
@@ -1094,6 +1170,33 @@ export default function BaggageTrackingPage({
             "Events read error:",
             eventError
           );
+
+          void logSystemIncident({
+            module:
+              "TRACKING",
+            action:
+              "READ_EVENT_HISTORY",
+            status:
+              "WARNING",
+            severity:
+              "MEDIUM",
+            errorType:
+              "EVENTS_READ",
+            errorCode:
+              eventError?.code ||
+              null,
+            message:
+              eventError?.message ||
+              "Unable to read tracking event history.",
+            user,
+            operationalContext,
+            bagTag:
+              tag,
+            durationMs:
+              timer.elapsed(),
+            currentView:
+              "tracking",
+          });
         }
 
         const embeddedEvents =
@@ -1142,6 +1245,33 @@ export default function BaggageTrackingPage({
             "Fallback tracking error:",
             fallbackError
           );
+
+          void logSystemIncident({
+            module:
+              "TRACKING",
+            action:
+              "READ_FALLBACK_HISTORY",
+            status:
+              "WARNING",
+            severity:
+              "MEDIUM",
+            errorType:
+              "FALLBACK_READ",
+            errorCode:
+              fallbackError?.code ||
+              null,
+            message:
+              fallbackError?.message ||
+              "Unable to load fallback tracking history.",
+            user,
+            operationalContext,
+            bagTag:
+              tag,
+            durationMs:
+              timer.elapsed(),
+            currentView:
+              "tracking",
+          });
         }
 
         const merged =
@@ -1154,6 +1284,15 @@ export default function BaggageTrackingPage({
         setEvents(
           merged
         );
+
+        void logSystemSuccess({
+          module:
+            "TRACKING",
+          action:
+            "SEARCH_BAG",
+          durationMs:
+            timer.elapsed(),
+        });
       } catch (e) {
         console.error(
           "Baggage tracking search error:",
@@ -1163,6 +1302,33 @@ export default function BaggageTrackingPage({
         setErr(
           "Could not load tracking. Check Firestore rules/connection."
         );
+
+        void logSystemIncident({
+          module:
+            "TRACKING",
+          action:
+            "SEARCH_BAG",
+          status:
+            "ERROR",
+          severity:
+            "HIGH",
+          errorType:
+            "TRACKING_SEARCH",
+          errorCode:
+            e?.code ||
+            null,
+          message:
+            e?.message ||
+            "Could not load tracking.",
+          user,
+          operationalContext,
+          bagTag:
+            tag || null,
+          durationMs:
+            timer.elapsed(),
+          currentView:
+            "tracking",
+        });
       } finally {
         setLoading(false);
 
