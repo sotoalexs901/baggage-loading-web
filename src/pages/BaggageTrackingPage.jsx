@@ -471,11 +471,6 @@ function eventSignature(event) {
         event?.event
     );
 
-  const time =
-    getTimestampMs(
-      getEventTime(event)
-    );
-
   const tag =
     cleanTag(
       event?.tag ||
@@ -488,17 +483,63 @@ function eventSignature(event) {
         event?.location
     );
 
+  const flightId =
+    String(
+      event?.flightId || ""
+    );
+
   const zone =
-    event?.zone ??
-    "";
+    String(
+      event?.zone ?? ""
+    );
 
   const cart =
-    event?.cartNumber ??
-    "";
+    String(
+      event?.cartNumber ?? ""
+    );
+
+  /*
+   * These represent one physical movement.
+   * They may exist in several Firebase sources,
+   * so timestamp is intentionally excluded.
+   */
+  const singleMovementTypes = [
+    "COUNTER_SCAN",
+    "BAGROOM_SCAN",
+    "OVERSIZE_SCAN",
+    "GATE_RAMP_SCAN",
+    "AIRCRAFT_LOAD",
+  ];
+
+  if (
+    singleMovementTypes.includes(
+      type
+    )
+  ) {
+    return [
+      type,
+      tag,
+      flightId,
+      location,
+      zone,
+      cart,
+    ].join("|");
+  }
+
+  /*
+   * Historical actions such as Offload/Reload
+   * can legitimately happen more than once.
+   * Keep timestamp for those.
+   */
+  const time =
+    getTimestampMs(
+      getEventTime(event)
+    );
 
   return [
     type,
     tag,
+    flightId,
     location,
     zone,
     cart,
@@ -529,6 +570,15 @@ function mergeUniqueEvents(
           event
         );
 
+      /*
+       * Priority is based on call order:
+       *
+       * 1. event subcollection
+       * 2. embedded events[]
+       * 3. fallback scan documents
+       *
+       * The first/best copy wins.
+       */
       if (
         !map.has(
           signature
@@ -1043,12 +1093,6 @@ export default function BaggageTrackingPage({
           );
         }
 
-        /*
-         * BagroomScanPage also keeps an events[]
-         * history directly on the bagTags document.
-         * Read it so Bagroom, Oversize, Gate/Ramp,
-         * and receiving-delete history is not lost.
-         */
         const embeddedEvents =
           Array.isArray(
             mainData.events
