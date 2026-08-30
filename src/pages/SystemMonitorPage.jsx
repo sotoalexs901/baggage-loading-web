@@ -18,11 +18,19 @@ import {
   where,
 } from "firebase/firestore";
 
-import { db } from "../firebase";
+import { httpsCallable } from "firebase/functions";
+
+import {
+  db,
+  functions,
+} from "../firebase";
 
 import {
   BLCS_VERSION,
   isPresenceOnline,
+  logSystemIncident,
+  logSystemSuccess,
+  startSystemTimer,
 } from "../utils/systemLogger.js";
 
 const MODULES = [
@@ -409,12 +417,175 @@ export default function SystemMonitorPage({
     setResolvingIncident,
   ] = useState(false);
 
+  const [
+    backendHealth,
+    setBackendHealth,
+  ] = useState({
+    checking: false,
+    ok: null,
+    version: null,
+    region: null,
+    message: null,
+    durationMs: null,
+    checkedAt: null,
+    error: null,
+  });
+
   const today =
     useMemo(
       () =>
         getTodayKey(),
       []
     );
+
+  /* =========================
+     BACKEND HEALTH
+  ========================= */
+
+  useEffect(() => {
+    if (
+      role !==
+      "station_manager"
+    ) {
+      return undefined;
+    }
+
+    let cancelled =
+      false;
+
+    const checkBackend =
+      async () => {
+        const timer =
+          startSystemTimer();
+
+        if (!cancelled) {
+          setBackendHealth(
+            (current) => ({
+              ...current,
+              checking:
+                true,
+              error:
+                null,
+            })
+          );
+        }
+
+        try {
+          const healthCheck =
+            httpsCallable(
+              functions,
+              "blcsFunctionHealth"
+            );
+
+          const response =
+            await healthCheck({});
+
+          const result =
+            response?.data ||
+            {};
+
+          const durationMs =
+            timer.elapsed();
+
+          if (!cancelled) {
+            setBackendHealth({
+              checking:
+                false,
+              ok:
+                result?.ok ===
+                true,
+              version:
+                result?.version ||
+                null,
+              region:
+                result?.region ||
+                null,
+              message:
+                result?.message ||
+                null,
+              durationMs,
+              checkedAt:
+                new Date(),
+              error:
+                null,
+            });
+          }
+
+          void logSystemSuccess({
+            module:
+              "BACKEND",
+            action:
+              "HEALTH_CHECK",
+            durationMs,
+          });
+        } catch (error) {
+          const durationMs =
+            timer.elapsed();
+
+          const errorCode =
+            error?.code ||
+            null;
+
+          const errorMessage =
+            error?.message ||
+            "Backend health check failed.";
+
+          if (!cancelled) {
+            setBackendHealth({
+              checking:
+                false,
+              ok:
+                false,
+              version:
+                null,
+              region:
+                null,
+              message:
+                null,
+              durationMs,
+              checkedAt:
+                new Date(),
+              error:
+                errorMessage,
+            });
+          }
+
+          void logSystemIncident({
+            module:
+              "BACKEND",
+            action:
+              "HEALTH_CHECK",
+            status:
+              "ERROR",
+            severity:
+              "HIGH",
+            errorType:
+              "BACKEND_HEALTH",
+            errorCode,
+            message:
+              errorMessage,
+            user,
+            durationMs,
+            currentView:
+              "system-monitor",
+            metadata: {
+              function:
+                "blcsFunctionHealth",
+            },
+          });
+        }
+      };
+
+    void checkBackend();
+
+    return () => {
+      cancelled =
+        true;
+    };
+  }, [
+    role,
+    user?.id,
+  ]);
 
   /* =========================
      METRICS
@@ -1153,7 +1324,67 @@ export default function SystemMonitorPage({
               800,
           }}
         >
-          BLCS Version {BLCS_VERSION} · {today}
+          BLCS Version {BLCS_VERSION} - {today}
+        </div>
+
+        <div
+          style={{
+            marginTop:
+              10,
+
+            padding:
+              10,
+
+            borderRadius:
+              10,
+
+            background:
+              backendHealth.checking
+                ? "#eff6ff"
+                : backendHealth.ok ===
+                    true
+                  ? "#f0fdf4"
+                  : backendHealth.ok ===
+                      false
+                    ? "#fef2f2"
+                    : "#f8fafc",
+
+            border:
+              backendHealth.checking
+                ? "1px solid #bfdbfe"
+                : backendHealth.ok ===
+                    true
+                  ? "1px solid #bbf7d0"
+                  : backendHealth.ok ===
+                      false
+                    ? "1px solid #fecaca"
+                    : "1px solid #e2e8f0",
+
+            color:
+              backendHealth.ok ===
+              false
+                ? "#991b1b"
+                : backendHealth.ok ===
+                    true
+                  ? "#166534"
+                  : "#475569",
+
+            fontSize:
+              "0.78rem",
+          }}
+        >
+          <strong>
+            Backend:
+          </strong>{" "}
+          {backendHealth.checking
+            ? "Checking..."
+            : backendHealth.ok ===
+                true
+              ? `Online${backendHealth.version ? ` - ${backendHealth.version}` : ""}${backendHealth.durationMs ? ` - ${backendHealth.durationMs} ms` : ""}`
+              : backendHealth.ok ===
+                  false
+                ? `Unavailable - ${backendHealth.error || "Health check failed"}`
+                : "Not checked"}
         </div>
       </section>
 
