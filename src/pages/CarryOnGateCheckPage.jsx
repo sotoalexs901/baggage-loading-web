@@ -23,6 +23,7 @@ import CarryOnGatePage from "./CarryOnGatePage.jsx";
 import CarryOnRampPage from "./CarryOnRampPage.jsx";
 import CarryOnLoadPage from "./CarryOnLoadPage.jsx";
 import CarryOnReportPage from "./CarryOnReportPage.jsx";
+import CarryOnTrackingPage from "./CarryOnTrackingPage.jsx";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
@@ -3511,9 +3512,13 @@ export default function CarryOnGateCheckPage({
 
         {activeTab ===
           "TRACKING" && (
-          <ComingSoon
-            title="Carry-On Tracking"
-            description="Timeline from Counter Assigned through Aircraft Loaded."
+          <CarryOnTrackingPage
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+            onSelectCarryOnFlight={
+              setSelectedCarryOnFlightId
+            }
           />
         )}
 
