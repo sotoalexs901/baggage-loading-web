@@ -56,6 +56,8 @@ function statusLabel(status) {
       return "Ramp Received";
     case "AIRCRAFT_LOADED":
       return "Aircraft Loaded";
+    case "OFFLOADED":
+      return "Offloaded";
     default:
       return status || "-";
   }
@@ -71,6 +73,8 @@ function statusRank(status) {
       return 3;
     case "AIRCRAFT_LOADED":
       return 4;
+    case "OFFLOADED":
+      return 5;
     default:
       return 0;
   }
@@ -188,6 +192,7 @@ export default function CarryOnTrackingPage({
       gate: 0,
       ramp: 0,
       loaded: 0,
+      offloaded: 0,
     };
 
     assignments.forEach((item) => {
@@ -209,6 +214,10 @@ export default function CarryOnTrackingPage({
 
       if (status === "AIRCRAFT_LOADED") {
         values.loaded += 1;
+      }
+
+      if (status === "OFFLOADED") {
+        values.offloaded += 1;
       }
     });
 
@@ -244,6 +253,10 @@ export default function CarryOnTrackingPage({
             item?.assignedSeat,
             item?.compartment,
             item?.status,
+            item?.gateCollectionNoteCombined,
+            item?.offloadReason,
+            item?.counterRecordedWeightLbs,
+            item?.gateVerifiedWeightLbs,
           ]
             .filter(Boolean)
             .join(" ")
@@ -498,6 +511,11 @@ export default function CarryOnTrackingPage({
                 label="Loaded"
                 value={totals.loaded}
               />
+
+              <Metric
+                label="Offloaded"
+                value={totals.offloaded}
+              />
             </div>
 
             <div
@@ -581,6 +599,10 @@ export default function CarryOnTrackingPage({
 
                   <option value="AIRCRAFT_LOADED">
                     Aircraft Loaded
+                  </option>
+
+                  <option value="OFFLOADED">
+                    Offloaded
                   </option>
                 </select>
               </label>
@@ -735,7 +757,9 @@ function TrackingCard({
       key: "COUNTER_ASSIGNED",
       label: "Counter Assigned",
       active:
-        statusRank(status) >= 1,
+        status === "OFFLOADED"
+          ? Boolean(item.counterAssignedAt)
+          : statusRank(status) >= 1,
       time:
         item.counterAssignedAt,
       actor:
@@ -745,7 +769,9 @@ function TrackingCard({
       key: "GATE_COLLECTED",
       label: "Gate Collected",
       active:
-        statusRank(status) >= 2,
+        status === "OFFLOADED"
+          ? Boolean(item.gateCollectedAt)
+          : statusRank(status) >= 2,
       time:
         item.gateCollectedAt,
       actor:
@@ -755,7 +781,9 @@ function TrackingCard({
       key: "RAMP_RECEIVED",
       label: "Ramp Received",
       active:
-        statusRank(status) >= 3,
+        status === "OFFLOADED"
+          ? Boolean(item.rampReceivedAt)
+          : statusRank(status) >= 3,
       time:
         item.rampReceivedAt,
       actor:
@@ -765,7 +793,9 @@ function TrackingCard({
       key: "AIRCRAFT_LOADED",
       label: "Aircraft Loaded",
       active:
-        statusRank(status) >= 4,
+        status === "OFFLOADED"
+          ? Boolean(item.aircraftLoadedAt)
+          : statusRank(status) >= 4,
       time:
         item.aircraftLoadedAt,
       actor:
@@ -839,6 +869,32 @@ function TrackingCard({
               ? ` - ${item.compartment}`
               : ""}
           </div>
+
+          <div
+            style={{
+              marginTop: 4,
+              color: "#64748b",
+              fontSize: "0.75rem",
+            }}
+          >
+            Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
+            {" - "}
+            Gate Verified: {item.gateVerifiedWeightLbs || "-"} lb
+          </div>
+
+          {item.gateCollectionNoteCombined && (
+            <div
+              style={{
+                marginTop: 4,
+                color: "#92400e",
+                fontSize: "0.74rem",
+                fontWeight: 800,
+              }}
+            >
+              Gate Note: {item.gateCollectionNoteCombined}
+            </div>
+          )}
+
         </div>
 
         <StatusBadge
@@ -938,6 +994,25 @@ function TrackingCard({
         ))}
       </div>
 
+      {status === "OFFLOADED" && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 9,
+            borderRadius: 9,
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#991b1b",
+            fontSize: "0.76rem",
+            fontWeight: 800,
+          }}
+        >
+          Offloaded: {formatTimestamp(item.offloadedAt)}
+          {" - "}
+          Reason: {item.offloadReason || "-"}
+        </div>
+      )}
+
       {status ===
         "AIRCRAFT_LOADED" && (
         <div
@@ -1011,6 +1086,34 @@ function PassengerFullDetail({
           />
 
           <Info
+            label="Counter Weight"
+            value={
+              item.counterRecordedWeightLbs
+                ? `${item.counterRecordedWeightLbs} lb`
+                : "-"
+            }
+          />
+
+          <Info
+            label="Gate Verified Weight"
+            value={
+              item.gateVerifiedWeightLbs
+                ? `${item.gateVerifiedWeightLbs} lb`
+                : "-"
+            }
+          />
+
+          <Info
+            label="Gate Notes"
+            value={item.gateCollectionNoteCombined || "-"}
+          />
+
+          <Info
+            label="Offload Reason"
+            value={item.offloadReason || "-"}
+          />
+
+          <Info
             label="Compartment"
             value={item.compartment || "-"}
           />
@@ -1075,6 +1178,19 @@ function PassengerFullDetail({
             : null
         }
       />
+
+      {cleanUpper(item.status) === "OFFLOADED" && (
+        <DetailStep
+          title="Offloaded"
+          time={item.offloadedAt}
+          actor={item.offloadedBy}
+          extra={
+            item.offloadReason
+              ? `Reason: ${item.offloadReason}`
+              : null
+          }
+        />
+      )}
     </div>
   );
 }
@@ -1318,6 +1434,15 @@ function StatusBadge({
         "#bbf7d0",
       color:
         "#166534",
+    },
+    OFFLOADED: {
+      label: "OFFLOADED",
+      background:
+        "#fef2f2",
+      border:
+        "#fecaca",
+      color:
+        "#991b1b",
     },
   };
 
