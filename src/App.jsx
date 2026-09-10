@@ -980,9 +980,6 @@ export default function App() {
               canCreateFlights
             }
 
-            /*
-             * Regular baggage flight.
-             */
             onFlightSelected={(
               flightId,
               flightNumber
@@ -993,17 +990,27 @@ export default function App() {
               )
             }
 
-            /*
-             * Carry-On-only flight.
-             * Opens the independent Carry-On SETUP flow.
-             */
-            onCarryOnFlightSelected={(
+            onOpenCarryOnSetup={(
               carryOnFlightId
-            ) =>
-              handleOpenCarryOnFromDashboard(
+            ) => {
+              if (
                 carryOnFlightId
-              )
-            }
+              ) {
+                sessionStorage.setItem(
+                  "selectedCarryOnFlightId",
+                  carryOnFlightId
+                );
+              }
+
+              sessionStorage.setItem(
+                "carryOnActiveTab",
+                "SETUP"
+              );
+
+              goToView(
+                "carryOnGateChecks"
+              );
+            }}
           />
         );
       }
