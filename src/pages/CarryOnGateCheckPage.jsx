@@ -156,6 +156,9 @@ async function readPdfDocumentData(
   const lines =
     [];
 
+  const pages =
+    [];
+
   for (
     let pageNumber = 1;
     pageNumber <=
@@ -170,15 +173,8 @@ async function readPdfDocumentData(
     const content =
       await page.getTextContent();
 
-    /*
-     * PDF text items are not guaranteed to arrive in the same
-     * order that they appear visually on the page.
-     *
-     * For manifests we rebuild visual rows using the Y coordinate,
-     * then sort each row from left to right.
-     */
-    const rowMap =
-      new Map();
+    const pageItems =
+      [];
 
     for (
       const item of
@@ -201,26 +197,44 @@ async function readPdfDocumentData(
           ? item.transform
           : [];
 
-      const x =
-        Number(
-          transform?.[4] ||
-          0
-        );
+      pageItems.push({
+        value,
 
-      const y =
-        Number(
-          transform?.[5] ||
-          0
-        );
+        x:
+          Number(
+            transform?.[4] ||
+            0
+          ),
 
-      /*
-       * Rounding Y to the nearest 2 points gives enough tolerance
-       * for text items that belong to the same printed table row.
-       */
+        y:
+          Number(
+            transform?.[5] ||
+            0
+          ),
+      });
+    }
+
+    pages.push({
+      pageNumber,
+      items:
+        pageItems,
+    });
+
+    /*
+     * Also build readable visual rows. This remains useful
+     * for flight metadata and as a fallback parser.
+     */
+    const rowMap =
+      new Map();
+
+    for (
+      const item of
+        pageItems
+    ) {
       const yKey =
         Math.round(
-          y / 2
-        ) * 2;
+          item.y / 4
+        ) * 4;
 
       if (
         !rowMap.has(
@@ -237,10 +251,9 @@ async function readPdfDocumentData(
         .get(
           yKey
         )
-        .push({
-          x,
-          value,
-        });
+        .push(
+          item
+        );
     }
 
     const pageRows =
@@ -301,6 +314,7 @@ async function readPdfDocumentData(
   return {
     fullText,
     lines,
+    pages,
   };
 }
 
@@ -445,190 +459,486 @@ function parseFlightMeta(
 function parsePassengerManifest(
   documentData
 ) {
-  const lines =
-    Array.isArray(
-      documentData?.lines
-    )
-      ? documentData.lines
-      : String(
-          documentData?.fullText ||
-          documentData ||
-          ""
-        )
-          .split(
-            /\n+/
-          )
-          .map(
-            (
-              line
-            ) =>
-              line.trim()
-          )
-          .filter(
-            Boolean
-          );
-
   const passengers =
     [];
 
   const seen =
     new Set();
 
-  /*
-   * We detect rows by their stable manifest structure:
-   *
-   * Seq + SEC + PNR + passenger name + DOB + Gender + Dest + Seat
-   *
-   * Example:
-   * 34 C QZL81I ALFONSO VALDES ELIAN 03-Dec-1999 M HAV 11B 7
-   *
-   * This does not depend on bag count, bag tags, PNR remarks or
-   * other columns after Seat.
-   */
-  const rowRegex =
-    /^(\d{1,3})\s+[A-Z]\s+[A-Z0-9]{4,10}\s+(.+?)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+[MF]\s+[A-Z]{3}\s+(\d{1,2}[A-F])(?:\s|$)/i;
+  const pages =
+    Array.isArray(
+      documentData?.pages
+    )
+      ? documentData.pages
+      : [];
 
-  for (
-    let index = 0;
-    index <
-    lines.length;
-    index += 1
-  ) {
-    let line =
-      String(
-        lines[index] ||
-        ""
-      )
-        .replace(
-          /\s+/g,
-          " "
-        )
-        .trim();
+  const dobRegex =
+    /^\d{2}-[A-Za-z]{3}-\d{4}$/;
 
-    if (!line) {
-      continue;
-    }
+  const seatRegex =
+    /^\d{1,2}[A-F]$/i;
 
-    let match =
-      line.match(
-        rowRegex
-      );
+  const addPassenger =
+    ({
+      sequence,
+      passengerName,
+      originalSeat,
+    }) => {
+      const cleanSequence =
+        String(
+          sequence ||
+          ""
+        ).trim();
 
-    /*
-     * Some passenger names wrap to a second visual line in the PDF.
-     * If the first row starts with Seq/SEC/PNR but does not yet contain
-     * the DOB/seat fields, join the next visual row and try again.
-     */
-    if (
-      !match &&
-      /^\d{1,3}\s+[A-Z]\s+[A-Z0-9]{4,10}\s+/i.test(
-        line
-      ) &&
-      index + 1 <
-        lines.length
-    ) {
-      const combined =
-        `${line} ${String(
-          lines[
-            index + 1
-          ] ||
+      const cleanName =
+        String(
+          passengerName ||
           ""
         )
           .replace(
             /\s+/g,
             " "
           )
-          .trim()}`;
+          .trim();
 
-      const combinedMatch =
-        combined.match(
+      const cleanSeat =
+        normalizeSeat(
+          originalSeat
+        );
+
+      if (
+        !cleanSequence ||
+        !cleanName ||
+        !cleanSeat
+      ) {
+        return;
+      }
+
+      const key =
+        `${cleanSequence}_${cleanName}_${cleanSeat}`;
+
+      if (
+        seen.has(
+          key
+        )
+      ) {
+        return;
+      }
+
+      seen.add(
+        key
+      );
+
+      passengers.push({
+        id:
+          safeDocId(
+            `PAX_${cleanSequence}`
+          ),
+
+        sequence:
+          cleanSequence,
+
+        passengerName:
+          cleanName,
+
+        originalSeat:
+          cleanSeat,
+
+        source:
+          "MANIFEST",
+      });
+    };
+
+  /*
+   * PRIMARY PARSER
+   *
+   * A passenger row always contains a DOB. We use each DOB as the
+   * vertical anchor for the row instead of relying on PDF text order.
+   * This is much more reliable for table PDFs where text fragments
+   * are emitted by column instead of by visual row.
+   */
+  for (
+    const page of
+      pages
+  ) {
+    const items =
+      Array.isArray(
+        page?.items
+      )
+        ? page.items
+        : [];
+
+    const dobAnchors =
+      items
+        .filter(
+          (
+            item
+          ) =>
+            dobRegex.test(
+              String(
+                item?.value ||
+                ""
+              )
+            )
+        )
+        .sort(
+          (
+            a,
+            b
+          ) =>
+            b.y -
+            a.y
+        );
+
+    for (
+      let index = 0;
+      index <
+      dobAnchors.length;
+      index += 1
+    ) {
+      const dob =
+        dobAnchors[index];
+
+      const previousDob =
+        dobAnchors[
+          index - 1
+        ];
+
+      const nextDob =
+        dobAnchors[
+          index + 1
+        ];
+
+      const topBoundary =
+        previousDob
+          ? (
+              previousDob.y +
+              dob.y
+            ) / 2
+          : dob.y +
+            14;
+
+      const bottomBoundary =
+        nextDob
+          ? (
+              dob.y +
+              nextDob.y
+            ) / 2
+          : dob.y -
+            14;
+
+      const rowItems =
+        items
+          .filter(
+            (
+              item
+            ) =>
+              item.y <=
+                topBoundary &&
+              item.y >
+                bottomBoundary
+          )
+          .sort(
+            (
+              a,
+              b
+            ) =>
+              a.x -
+              b.x
+          );
+
+      if (
+        rowItems.length ===
+        0
+      ) {
+        continue;
+      }
+
+      const dobX =
+        dob.x;
+
+      const leftItems =
+        rowItems.filter(
+          (
+            item
+          ) =>
+            item.x <
+              dobX -
+                2 &&
+            item !==
+              dob
+        );
+
+      const rightItems =
+        rowItems.filter(
+          (
+            item
+          ) =>
+            item.x >
+              dobX +
+                2
+        );
+
+      /*
+       * Left side expected:
+       * Seq | SEC | PNR | Redress(optional) | Last Name | First Name
+       */
+      const sequenceIndex =
+        leftItems.findIndex(
+          (
+            item
+          ) =>
+            /^\d{1,3}$/.test(
+              String(
+                item.value ||
+                ""
+              )
+            )
+        );
+
+      if (
+        sequenceIndex <
+        0
+      ) {
+        continue;
+      }
+
+      const sequenceItem =
+        leftItems[
+          sequenceIndex
+        ];
+
+      const afterSequence =
+        leftItems.slice(
+          sequenceIndex +
+            1
+        );
+
+      const secIndex =
+        afterSequence.findIndex(
+          (
+            item
+          ) =>
+            /^[A-Z]$/i.test(
+              String(
+                item.value ||
+                ""
+              )
+            )
+        );
+
+      if (
+        secIndex <
+        0
+      ) {
+        continue;
+      }
+
+      const afterSec =
+        afterSequence.slice(
+          secIndex +
+            1
+        );
+
+      const pnrIndex =
+        afterSec.findIndex(
+          (
+            item
+          ) =>
+            /^[A-Z0-9]{4,10}$/i.test(
+              String(
+                item.value ||
+                ""
+              )
+            )
+        );
+
+      if (
+        pnrIndex <
+        0
+      ) {
+        continue;
+      }
+
+      const pnrItem =
+        afterSec[
+          pnrIndex
+        ];
+
+      /*
+       * Passenger name is everything between the PNR column and DOB.
+       * Wrapped last names are captured because the complete vertical
+       * band between neighboring DOB rows is included.
+       */
+      const nameItems =
+        leftItems.filter(
+          (
+            item
+          ) =>
+            item.x >
+              pnrItem.x +
+                1
+        );
+
+      const passengerName =
+        nameItems
+          .map(
+            (
+              item
+            ) =>
+              String(
+                item.value ||
+                ""
+              ).trim()
+          )
+          .filter(
+            (
+              value
+            ) =>
+              value &&
+              !dobRegex.test(
+                value
+              )
+          )
+          .join(
+            " "
+          )
+          .replace(
+            /\s+/g,
+            " "
+          )
+          .trim();
+
+      /*
+       * Seat is the first valid seat code to the right of DOB.
+       * We intentionally ignore Bags / Bag Tags / Remarks.
+       */
+      const seatItem =
+        rightItems.find(
+          (
+            item
+          ) =>
+            seatRegex.test(
+              String(
+                item.value ||
+                ""
+              )
+            )
+        );
+
+      if (
+        !seatItem
+      ) {
+        continue;
+      }
+
+      addPassenger({
+        sequence:
+          sequenceItem.value,
+
+        passengerName,
+
+        originalSeat:
+          seatItem.value,
+      });
+    }
+  }
+
+  /*
+   * FALLBACK 1 - visual rows
+   */
+  if (
+    passengers.length ===
+    0
+  ) {
+    const lines =
+      Array.isArray(
+        documentData?.lines
+      )
+        ? documentData.lines
+        : [];
+
+    const rowRegex =
+      /^(\d{1,3})\s+[A-Z]\s+[A-Z0-9]{4,10}\s+(.+?)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+[MF]\s+[A-Z]{3}\s+(\d{1,2}[A-F])(?:\s|$)/i;
+
+    for (
+      let index = 0;
+      index <
+      lines.length;
+      index += 1
+    ) {
+      let line =
+        String(
+          lines[index] ||
+          ""
+        )
+          .replace(
+            /\s+/g,
+            " "
+          )
+          .trim();
+
+      let match =
+        line.match(
           rowRegex
         );
 
       if (
-        combinedMatch
+        !match &&
+        /^\d{1,3}\s+[A-Z]\s+[A-Z0-9]{4,10}\s+/i.test(
+          line
+        ) &&
+        index + 1 <
+          lines.length
       ) {
-        line =
-          combined;
+        const combined =
+          `${line} ${String(
+            lines[
+              index + 1
+            ] ||
+            ""
+          )
+            .replace(
+              /\s+/g,
+              " "
+            )
+            .trim()}`;
 
-        match =
-          combinedMatch;
+        const combinedMatch =
+          combined.match(
+            rowRegex
+          );
 
-        index +=
-          1;
+        if (
+          combinedMatch
+        ) {
+          match =
+            combinedMatch;
+
+          index +=
+            1;
+        }
+      }
+
+      if (
+        match
+      ) {
+        addPassenger({
+          sequence:
+            match[1],
+
+          passengerName:
+            match[2],
+
+          originalSeat:
+            match[4],
+        });
       }
     }
-
-    if (!match) {
-      continue;
-    }
-
-    const sequence =
-      String(
-        match[1]
-      );
-
-    const rawName =
-      String(
-        match[2] ||
-        ""
-      )
-        .trim()
-        .replace(
-          /\s+/g,
-          " "
-        );
-
-    const originalSeat =
-      normalizeSeat(
-        match[4]
-      );
-
-    if (
-      !rawName ||
-      !originalSeat
-    ) {
-      continue;
-    }
-
-    const key =
-      `${sequence}_${rawName}_${originalSeat}`;
-
-    if (
-      seen.has(
-        key
-      )
-    ) {
-      continue;
-    }
-
-    seen.add(
-      key
-    );
-
-    passengers.push({
-      id:
-        safeDocId(
-          `PAX_${sequence}`
-        ),
-
-      sequence,
-
-      passengerName:
-        rawName,
-
-      originalSeat,
-
-      source:
-        "MANIFEST",
-    });
   }
 
   /*
-   * Fallback:
-   * If visual row reconstruction still yields nothing, try the
-   * complete text as one stream. This keeps the parser resilient
-   * across slightly different PDF generators.
+   * FALLBACK 2 - complete text stream
    */
   if (
     passengers.length ===
@@ -663,58 +973,16 @@ function parsePassengerManifest(
     while (
       match
     ) {
-      const sequence =
-        String(
-          match[1]
-        );
+      addPassenger({
+        sequence:
+          match[1],
 
-      const rawName =
-        String(
-          match[2] ||
-          ""
-        )
-          .trim()
-          .replace(
-            /\s+/g,
-            " "
-          );
+        passengerName:
+          match[2],
 
-      const originalSeat =
-        normalizeSeat(
-          match[4]
-        );
-
-      const key =
-        `${sequence}_${rawName}_${originalSeat}`;
-
-      if (
-        rawName &&
-        originalSeat &&
-        !seen.has(
-          key
-        )
-      ) {
-        seen.add(
-          key
-        );
-
-        passengers.push({
-          id:
-            safeDocId(
-              `PAX_${sequence}`
-            ),
-
-          sequence,
-
-          passengerName:
-            rawName,
-
-          originalSeat,
-
-          source:
-            "MANIFEST",
-        });
-      }
+        originalSeat:
+          match[4],
+      });
 
       match =
         fallbackRegex.exec(
