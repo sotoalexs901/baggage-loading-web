@@ -90,6 +90,12 @@ export default function CarryOnTrackingPage({
   const [statusFilter, setStatusFilter] =
     useState("ALL");
 
+  const [selectedAssignmentId, setSelectedAssignmentId] =
+    useState("");
+
+  const [printMode, setPrintMode] =
+    useState("FULL");
+
   const [error, setError] =
     useState("");
 
@@ -130,6 +136,7 @@ export default function CarryOnTrackingPage({
   useEffect(() => {
     if (!selectedCarryOnFlightId) {
       setAssignments([]);
+      setSelectedAssignmentId("");
       return undefined;
     }
 
@@ -263,6 +270,33 @@ export default function CarryOnTrackingPage({
       statusFilter,
     ]);
 
+  const selectedAssignment = useMemo(
+    () =>
+      assignments.find(
+        (item) =>
+          item.id === selectedAssignmentId
+      ) || null,
+    [assignments, selectedAssignmentId]
+  );
+
+  const printFullTracking = () => {
+    setPrintMode("FULL");
+
+    window.setTimeout(() => {
+      window.print();
+    }, 50);
+  };
+
+  const printPassengerDetail = () => {
+    if (!selectedAssignment) return;
+
+    setPrintMode("PASSENGER");
+
+    window.setTimeout(() => {
+      window.print();
+    }, 50);
+  };
+
   return (
     <div
       style={{
@@ -270,7 +304,53 @@ export default function CarryOnTrackingPage({
         gap: 14,
       }}
     >
+      <style>
+        {`
+          @media print {
+            body * {
+              visibility: hidden !important;
+            }
+
+            #carry-on-tracking-print-area,
+            #carry-on-tracking-print-area * {
+              visibility: visible !important;
+            }
+
+            #carry-on-tracking-print-area {
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              width: 100% !important;
+              padding: 18px !important;
+              box-sizing: border-box !important;
+              background: white !important;
+            }
+
+            .tracking-no-print {
+              display: none !important;
+            }
+
+            .tracking-print-full-only {
+              display: ${
+                printMode === "FULL"
+                  ? "block"
+                  : "none"
+              } !important;
+            }
+
+            .tracking-print-passenger-only {
+              display: ${
+                printMode === "PASSENGER"
+                  ? "block"
+                  : "none"
+              } !important;
+            }
+          }
+        `}
+      </style>
+
       <div
+        className="tracking-no-print"
         style={{
           display: "flex",
           justifyContent: "space-between",
@@ -295,52 +375,81 @@ export default function CarryOnTrackingPage({
           </p>
         </div>
 
-        <label
+        <div
           style={{
-            display: "grid",
-            gap: 5,
-            minWidth: 240,
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "flex-end",
           }}
         >
-          <span
+          <label
             style={{
-              color: "#475569",
-              fontSize: "0.75rem",
-              fontWeight: 800,
+              display: "grid",
+              gap: 5,
+              minWidth: 240,
             }}
           >
-            Carry-On Flight
-          </span>
+            <span
+              style={{
+                color: "#475569",
+                fontSize: "0.75rem",
+                fontWeight: 800,
+              }}
+            >
+              Carry-On Flight
+            </span>
 
-          <select
-            value={
-              selectedCarryOnFlightId || ""
-            }
-            onChange={(event) =>
-              onSelectCarryOnFlight?.(
-                event.target.value || null
-              )
-            }
-            style={inputStyle}
-          >
-            <option value="">
-              Select flight
-            </option>
-
-            {flights.map((flight) => (
-              <option
-                key={flight.id}
-                value={flight.id}
-              >
-                {flight.flightNumber} - {flight.flightDate}
+            <select
+              value={
+                selectedCarryOnFlightId || ""
+              }
+              onChange={(event) => {
+                onSelectCarryOnFlight?.(
+                  event.target.value || null
+                );
+                setSelectedAssignmentId("");
+              }}
+              style={inputStyle}
+            >
+              <option value="">
+                Select flight
               </option>
-            ))}
-          </select>
-        </label>
+
+              {flights.map((flight) => (
+                <option
+                  key={flight.id}
+                  value={flight.id}
+                >
+                  {flight.flightNumber} - {flight.flightDate}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={printFullTracking}
+            disabled={!selectedFlight}
+            style={{
+              ...secondaryButton,
+              opacity:
+                selectedFlight ? 1 : 0.55,
+            }}
+          >
+            Print Full Detail
+          </button>
+        </div>
       </div>
 
       {selectedFlight ? (
-        <>
+        <div
+          id="carry-on-tracking-print-area"
+          style={{
+            display: "grid",
+            gap: 14,
+          }}
+        >
           <div
             style={{
               padding: 12,
@@ -350,6 +459,16 @@ export default function CarryOnTrackingPage({
               background: "#f5f3ff",
             }}
           >
+            <div
+              style={{
+                color: "#64748b",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+              }}
+            >
+              BLCS OPERATIONS - CARRY-ON TRACKING
+            </div>
+
             <strong>
               {selectedFlight.flightNumber}
               {" - "}
@@ -376,141 +495,244 @@ export default function CarryOnTrackingPage({
           </div>
 
           <div
+            className="tracking-print-full-only"
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(130px, 1fr))",
-              gap: 8,
+              gap: 14,
             }}
           >
-            <Metric
-              label="Total"
-              value={totals.total}
-            />
-            <Metric
-              label="At Counter"
-              value={totals.counter}
-            />
-            <Metric
-              label="At Gate"
-              value={totals.gate}
-            />
-            <Metric
-              label="At Ramp"
-              value={totals.ramp}
-            />
-            <Metric
-              label="Loaded"
-              value={totals.loaded}
-            />
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "minmax(220px, 1fr) minmax(180px, 240px)",
-              gap: 8,
-            }}
-          >
-            <label
-              style={{
-                display: "grid",
-                gap: 5,
-              }}
-            >
-              <span
-                style={{
-                  color: "#475569",
-                  fontSize: "0.75rem",
-                  fontWeight: 800,
-                }}
-              >
-                Search
-              </span>
-
-              <input
-                type="text"
-                value={search}
-                placeholder="Passenger, Gate Check, Seat..."
-                onChange={(event) =>
-                  setSearch(
-                    event.target.value
-                  )
-                }
-                style={inputStyle}
-              />
-            </label>
-
-            <label
-              style={{
-                display: "grid",
-                gap: 5,
-              }}
-            >
-              <span
-                style={{
-                  color: "#475569",
-                  fontSize: "0.75rem",
-                  fontWeight: 800,
-                }}
-              >
-                Status
-              </span>
-
-              <select
-                value={statusFilter}
-                onChange={(event) =>
-                  setStatusFilter(
-                    event.target.value
-                  )
-                }
-                style={inputStyle}
-              >
-                <option value="ALL">
-                  All
-                </option>
-
-                <option value="COUNTER_ASSIGNED">
-                  Counter Assigned
-                </option>
-
-                <option value="GATE_COLLECTED">
-                  Gate Collected
-                </option>
-
-                <option value="RAMP_RECEIVED">
-                  Ramp Received
-                </option>
-
-                <option value="AIRCRAFT_LOADED">
-                  Aircraft Loaded
-                </option>
-              </select>
-            </label>
-          </div>
-
-          {filteredAssignments.length ===
-          0 ? (
-            <Notice
-              tone="warning"
-              text="No Carry-On assignments match the current filter."
-            />
-          ) : (
             <div
               style={{
                 display: "grid",
-                gap: 10,
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(130px, 1fr))",
+                gap: 8,
               }}
             >
-              {filteredAssignments.map(
-                (item) => (
-                  <TrackingCard
-                    key={item.id}
-                    item={item}
-                  />
-                )
-              )}
+              <Metric
+                label="Total"
+                value={totals.total}
+              />
+              <Metric
+                label="At Counter"
+                value={totals.counter}
+              />
+              <Metric
+                label="At Gate"
+                value={totals.gate}
+              />
+              <Metric
+                label="At Ramp"
+                value={totals.ramp}
+              />
+              <Metric
+                label="Loaded"
+                value={totals.loaded}
+              />
+            </div>
+
+            <div
+              className="tracking-no-print"
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "minmax(220px, 1fr) minmax(180px, 240px)",
+                gap: 8,
+              }}
+            >
+              <label
+                style={{
+                  display: "grid",
+                  gap: 5,
+                }}
+              >
+                <span
+                  style={{
+                    color: "#475569",
+                    fontSize: "0.75rem",
+                    fontWeight: 800,
+                  }}
+                >
+                  Search
+                </span>
+
+                <input
+                  type="text"
+                  value={search}
+                  placeholder="Passenger, Gate Check, Seat..."
+                  onChange={(event) =>
+                    setSearch(
+                      event.target.value
+                    )
+                  }
+                  style={inputStyle}
+                />
+              </label>
+
+              <label
+                style={{
+                  display: "grid",
+                  gap: 5,
+                }}
+              >
+                <span
+                  style={{
+                    color: "#475569",
+                    fontSize: "0.75rem",
+                    fontWeight: 800,
+                  }}
+                >
+                  Status
+                </span>
+
+                <select
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(
+                      event.target.value
+                    )
+                  }
+                  style={inputStyle}
+                >
+                  <option value="ALL">
+                    All
+                  </option>
+
+                  <option value="COUNTER_ASSIGNED">
+                    Counter Assigned
+                  </option>
+
+                  <option value="GATE_COLLECTED">
+                    Gate Collected
+                  </option>
+
+                  <option value="RAMP_RECEIVED">
+                    Ramp Received
+                  </option>
+
+                  <option value="AIRCRAFT_LOADED">
+                    Aircraft Loaded
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            {filteredAssignments.length ===
+            0 ? (
+              <Notice
+                tone="warning"
+                text="No Carry-On assignments match the current filter."
+              />
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                {filteredAssignments.map(
+                  (item) => (
+                    <TrackingCard
+                      key={item.id}
+                      item={item}
+                      selected={
+                        item.id ===
+                        selectedAssignmentId
+                      }
+                      onSelect={() =>
+                        setSelectedAssignmentId(
+                          item.id
+                        )
+                      }
+                    />
+                  )
+                )}
+              </div>
+            )}
+          </div>
+
+          {selectedAssignment && (
+            <div
+              className="tracking-print-passenger-only"
+              style={{
+                display:
+                  printMode === "PASSENGER"
+                    ? "block"
+                    : "none",
+              }}
+            >
+              <PassengerFullDetail
+                item={selectedAssignment}
+                selectedFlight={selectedFlight}
+              />
+            </div>
+          )}
+
+          {selectedAssignment && (
+            <div
+              className="tracking-no-print"
+              style={{
+                padding: 13,
+                borderRadius: 12,
+                border:
+                  "1px solid #c4b5fd",
+                background: "#faf5ff",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent:
+                    "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <strong>
+                    Selected Passenger
+                  </strong>
+
+                  <div
+                    style={{
+                      marginTop: 3,
+                      color: "#64748b",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    {selectedAssignment.passengerName || "-"}
+                    {" - "}
+                    {selectedAssignment.gateCheckNumber || "-"}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={printPassengerDetail}
+                    style={primaryButton}
+                  >
+                    Print Passenger Detail
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedAssignmentId("")
+                    }
+                    style={secondaryButton}
+                  >
+                    Clear Selection
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -520,7 +742,7 @@ export default function CarryOnTrackingPage({
               text={error}
             />
           )}
-        </>
+        </div>
       ) : (
         <Notice
           tone="warning"
@@ -531,7 +753,11 @@ export default function CarryOnTrackingPage({
   );
 }
 
-function TrackingCard({ item }) {
+function TrackingCard({
+  item,
+  selected,
+  onSelect,
+}) {
   const status =
     cleanUpper(item?.status);
 
@@ -579,13 +805,22 @@ function TrackingCard({ item }) {
   ];
 
   return (
-    <div
+    <button
+      type="button"
+      onClick={onSelect}
       style={{
+        width: "100%",
+        textAlign: "left",
         padding: 13,
         borderRadius: 12,
-        border:
-          "1px solid #e2e8f0",
-        background: "white",
+        border: selected
+          ? "2px solid #7c3aed"
+          : "1px solid #e2e8f0",
+        background: selected
+          ? "#faf5ff"
+          : "white",
+        cursor: "pointer",
+        font: "inherit",
       }}
     >
       <div
@@ -752,11 +987,239 @@ function TrackingCard({ item }) {
           Final location: {item.compartment || "-"}
         </div>
       )}
+    </button>
+  );
+}
+
+function PassengerFullDetail({
+  item,
+  selectedFlight,
+}) {
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 14,
+      }}
+    >
+      <div
+        style={{
+          padding: 14,
+          borderRadius: 12,
+          border:
+            "1px solid #cbd5e1",
+          background: "white",
+        }}
+      >
+        <div
+          style={{
+            color: "#64748b",
+            fontSize: "0.72rem",
+            fontWeight: 800,
+          }}
+        >
+          BLCS OPERATIONS
+        </div>
+
+        <h2
+          style={{
+            margin: "4px 0 0",
+          }}
+        >
+          Carry-On Passenger Full Detail
+        </h2>
+
+        <div
+          style={{
+            marginTop: 10,
+            display: "grid",
+            gridTemplateColumns:
+              "repeat(auto-fit, minmax(150px, 1fr))",
+            gap: 10,
+          }}
+        >
+          <Info
+            label="Passenger"
+            value={item.passengerName || "-"}
+          />
+
+          <Info
+            label="Seat"
+            value={item.assignedSeat || "-"}
+          />
+
+          <Info
+            label="Gate Check"
+            value={item.gateCheckNumber || "-"}
+          />
+
+          <Info
+            label="Status"
+            value={statusLabel(item.status)}
+          />
+
+          <Info
+            label="Compartment"
+            value={item.compartment || "-"}
+          />
+
+          <Info
+            label="Source"
+            value={item.passengerSource || "-"}
+          />
+
+          <Info
+            label="Flight"
+            value={selectedFlight?.flightNumber || "-"}
+          />
+
+          <Info
+            label="Date"
+            value={selectedFlight?.flightDate || "-"}
+          />
+
+          <Info
+            label="Route"
+            value={`${selectedFlight?.origin || "-"} -> ${selectedFlight?.destination || "-"}`}
+          />
+
+          <Info
+            label="Gate"
+            value={selectedFlight?.gate || "-"}
+          />
+
+          <Info
+            label="Tail"
+            value={selectedFlight?.tailNumber || "-"}
+          />
+        </div>
+      </div>
+
+      <DetailStep
+        title="1. Counter Assigned"
+        time={item.counterAssignedAt}
+        actor={item.counterAssignedBy}
+      />
+
+      <DetailStep
+        title="2. Gate Collected"
+        time={item.gateCollectedAt}
+        actor={item.gateCollectedBy}
+      />
+
+      <DetailStep
+        title="3. Ramp Received"
+        time={item.rampReceivedAt}
+        actor={item.rampReceivedBy}
+      />
+
+      <DetailStep
+        title="4. Aircraft Loaded"
+        time={item.aircraftLoadedAt}
+        actor={item.aircraftLoadedBy}
+        extra={
+          item.compartment
+            ? `Compartment: ${item.compartment}`
+            : null
+        }
+      />
     </div>
   );
 }
 
-function StatusBadge({ status }) {
+function DetailStep({
+  title,
+  time,
+  actor,
+  extra,
+}) {
+  const complete = Boolean(time);
+
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 11,
+        border: complete
+          ? "1px solid #bbf7d0"
+          : "1px solid #e2e8f0",
+        background: complete
+          ? "#f0fdf4"
+          : "#f8fafc",
+      }}
+    >
+      <strong>
+        {title}
+      </strong>
+
+      <div
+        style={{
+          marginTop: 6,
+          color: "#475569",
+          fontSize: "0.8rem",
+        }}
+      >
+        Time: {formatTimestamp(time)}
+      </div>
+
+      <div
+        style={{
+          marginTop: 3,
+          color: "#64748b",
+          fontSize: "0.78rem",
+        }}
+      >
+        By: {actorName(actor)}
+      </div>
+
+      {extra && (
+        <div
+          style={{
+            marginTop: 3,
+            color: "#166534",
+            fontSize: "0.78rem",
+            fontWeight: 800,
+          }}
+        >
+          {extra}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Info({
+  label,
+  value,
+}) {
+  return (
+    <div>
+      <div
+        style={{
+          color: "#64748b",
+          fontSize: "0.68rem",
+          fontWeight: 800,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          marginTop: 2,
+          color: "#0f172a",
+          fontWeight: 800,
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({
+  status,
+}) {
   const normalized =
     cleanUpper(status);
 
@@ -911,4 +1374,26 @@ const inputStyle = {
     "1px solid #cbd5e1",
   background: "white",
   fontSize: "0.9rem",
+};
+
+const primaryButton = {
+  padding: "10px 14px",
+  borderRadius: 10,
+  border:
+    "1px solid #7c3aed",
+  background: "#7c3aed",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const secondaryButton = {
+  padding: "10px 14px",
+  borderRadius: 10,
+  border:
+    "1px solid #cbd5e1",
+  background: "white",
+  color: "#334155",
+  fontWeight: 900,
+  cursor: "pointer",
 };
