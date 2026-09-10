@@ -1,4 +1,4 @@
-// src/pages/CarryOnGatePage.jsx
+/ src/pages/CarryOnGatePage.jsx
 
 import React, {
   useEffect,
@@ -105,6 +105,8 @@ export default function CarryOnGatePage({
   const [assignments, setAssignments] = useState([]);
   const [processingId, setProcessingId] = useState("");
   const [offloadingId, setOffloadingId] = useState("");
+  const [restoringId, setRestoringId] = useState("");
+  const [closingFlight, setClosingFlight] = useState(false);
   const [noteTypeById, setNoteTypeById] = useState({});
   const [noteTextById, setNoteTextById] = useState({});
   const [weightById, setWeightById] = useState({});
@@ -183,6 +185,57 @@ export default function CarryOnGatePage({
       ) || null,
     [flights, selectedCarryOnFlightId]
   );
+
+  const flightClosed =
+    cleanUpper(
+      selectedFlight?.status
+    ) === "CLOSED";
+
+  const loadedCount =
+    assignments.filter(
+      (item) =>
+        cleanUpper(item?.status) ===
+        "AIRCRAFT_LOADED"
+    ).length;
+
+  const rampCount =
+    assignments.filter(
+      (item) =>
+        cleanUpper(item?.status) ===
+        "RAMP_RECEIVED"
+    ).length;
+
+  const activeAssignments =
+    assignments.filter(
+      (item) =>
+        cleanUpper(item?.status) !==
+        "OFFLOADED"
+    );
+
+  const allActiveLoaded =
+    activeAssignments.length > 0 &&
+    activeAssignments.every(
+      (item) =>
+        cleanUpper(item?.status) ===
+        "AIRCRAFT_LOADED"
+    );
+
+  const workflowStage =
+    flightClosed
+      ? "CLOSED"
+      : allActiveLoaded
+        ? "LOADED"
+        : assignments.some(
+            (item) =>
+              cleanUpper(item?.status) ===
+              "GATE_COLLECTED" ||
+              cleanUpper(item?.status) ===
+              "RAMP_RECEIVED"
+          )
+          ? "GATE_RECEIVING"
+          : assignments.length > 0
+            ? "CHECKING"
+            : "OPEN";
 
   const waitingAtGate = useMemo(
     () =>
@@ -312,6 +365,13 @@ export default function CarryOnGatePage({
     }
 
     if (!selectedFlight || !assignment) return;
+
+    if (flightClosed) {
+      setError(
+        "This Carry-On flight is closed."
+      );
+      return;
+    }
 
     const note = getDraftNote(assignment.id);
     const verifiedWeightLbs =
@@ -496,6 +556,13 @@ export default function CarryOnGatePage({
 
     if (!selectedFlight || !assignment) return;
 
+    if (flightClosed) {
+      setError(
+        "This Carry-On flight is closed."
+      );
+      return;
+    }
+
     const note = getDraftNote(assignment.id);
 
     const existingNote =
@@ -654,6 +721,313 @@ export default function CarryOnGatePage({
     }
   };
 
+  const restoreOffloadedToGate = async (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateGate) {
+      setError(
+        "You do not have permission to restore this Carry-On."
+      );
+      return;
+    }
+
+    if (flightClosed) {
+      setError(
+        "This flight is closed."
+      );
+      return;
+    }
+
+    if (!selectedFlight || !assignment) return;
+
+    const ok = window.confirm(
+      `Return this Carry-On to Ready for Gate Pickup?\n\n` +
+        `Passenger: ${assignment.passengerName || "-"}\n` +
+        `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
+        `Previous Offload Reason: ${assignment.offloadReason || "-"}`
+    );
+
+    if (!ok) return;
+
+    try {
+      setRestoringId(assignment.id);
+
+      const assignmentRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "assignments",
+        assignment.id
+      );
+
+      const gateCheckRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        assignment.id
+      );
+
+      await runTransaction(db, async (transaction) => {
+        const assignmentSnap =
+          await transaction.get(assignmentRef);
+
+        if (!assignmentSnap.exists()) {
+          throw new Error(
+            "Carry-On assignment no longer exists."
+          );
+        }
+
+        const data = assignmentSnap.data();
+        const currentStatus =
+          cleanUpper(data?.status);
+
+        if (currentStatus !== "OFFLOADED") {
+          throw new Error(
+            `Only OFFLOADED Carry-Ons can be returned to Gate pickup. Current status: ${currentStatus || "UNKNOWN"}.`
+          );
+        }
+
+        transaction.set(
+          assignmentRef,
+          {
+            status: "COUNTER_ASSIGNED",
+            restoredFromOffloadAt:
+              serverTimestamp(),
+            restoredFromOffloadBy:
+              actor,
+            previousOffloadReason:
+              data?.offloadReason || null,
+            previousOffloadedAt:
+              data?.offloadedAt || null,
+            previousOffloadedBy:
+              data?.offloadedBy || null,
+            offloadReason: null,
+            offloadNote: null,
+            offloadNoteType: null,
+            offloadedAt: null,
+            offloadedBy: null,
+            statusBeforeOffload: null,
+            gateCollectedAt: null,
+            gateCollectedBy: null,
+            gateCollectionNoteType: null,
+            gateCollectionNote: null,
+            gateCollectionNoteCombined: null,
+            gateVerifiedWeightLbs: null,
+            gateWeightVerifiedAt: null,
+            gateWeightVerifiedBy: null,
+            rampReceivedAt: null,
+            rampReceivedBy: null,
+            aircraftLoadedAt: null,
+            aircraftLoadedBy: null,
+            compartment: null,
+            updatedAt: serverTimestamp(),
+            updatedBy: actor,
+          },
+          { merge: true }
+        );
+
+        transaction.set(
+          gateCheckRef,
+          {
+            status: "ASSIGNED",
+            restoredFromOffloadAt:
+              serverTimestamp(),
+            restoredFromOffloadBy:
+              actor,
+            offloadReason: null,
+            offloadedAt: null,
+            offloadedBy: null,
+            statusBeforeOffload: null,
+            gateCollectedAt: null,
+            gateCollectedBy: null,
+            gateCollectionNoteType: null,
+            gateCollectionNote: null,
+            gateCollectionNoteCombined: null,
+            gateVerifiedWeightLbs: null,
+            gateWeightVerifiedAt: null,
+            gateWeightVerifiedBy: null,
+            rampReceivedAt: null,
+            rampReceivedBy: null,
+            aircraftLoadedAt: null,
+            aircraftLoadedBy: null,
+            compartment: null,
+          },
+          { merge: true }
+        );
+      });
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `restore_gate_${assignment.id}_${Date.now()}`
+          ),
+          {
+            type: "OFFLOAD_RESTORED_TO_GATE",
+            status: "COUNTER_ASSIGNED",
+            assignmentId: assignment.id,
+            passengerId:
+              assignment.passengerId || null,
+            passengerName:
+              assignment.passengerName || null,
+            assignedSeat:
+              assignment.assignedSeat || null,
+            gateCheckNumber:
+              assignment.gateCheckNumber || null,
+            previousOffloadReason:
+              assignment.offloadReason || null,
+            message:
+              `Carry-On ${assignment.gateCheckNumber || assignment.id} returned to Ready for Gate Pickup.`,
+            createdAt: serverTimestamp(),
+            createdBy: actor,
+          }
+        );
+      } catch (eventError) {
+        console.error(
+          "Carry-On restore event write error:",
+          eventError
+        );
+      }
+
+      setMessage(
+        `${assignment.gateCheckNumber} returned to Ready for Gate Pickup.`
+      );
+
+      setDashboardFilter(
+        "WAITING_GATE"
+      );
+    } catch (restoreError) {
+      console.error(
+        "Carry-On Gate restore error:",
+        restoreError
+      );
+
+      setError(
+        restoreError?.message ||
+          "Unable to restore Carry-On."
+      );
+    } finally {
+      setRestoringId("");
+    }
+  };
+
+  const closeCarryOnFlight = async () => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateGate) {
+      setError(
+        "You do not have permission to close this Carry-On flight."
+      );
+      return;
+    }
+
+    if (!selectedFlight) return;
+
+    if (flightClosed) {
+      setMessage(
+        "This Carry-On flight is already closed."
+      );
+      return;
+    }
+
+    const pending = assignments.filter((item) => {
+      const status = cleanUpper(item?.status);
+
+      return (
+        status !== "AIRCRAFT_LOADED" &&
+        status !== "OFFLOADED"
+      );
+    });
+
+    if (pending.length > 0) {
+      setError(
+        `Flight cannot be closed yet. ${pending.length} active Carry-On item(s) are still pending.`
+      );
+      return;
+    }
+
+    const ok = window.confirm(
+      `Close Carry-On flight ${selectedFlight.flightNumber || ""}?\n\n` +
+        `Loaded: ${loadedCount}\n` +
+        `Offloaded: ${offloaded.length}\n\n` +
+        `No further Gate collection will be allowed from this page.`
+    );
+
+    if (!ok) return;
+
+    try {
+      setClosingFlight(true);
+
+      await setDoc(
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id
+        ),
+        {
+          status: "CLOSED",
+          closedAt: serverTimestamp(),
+          closedBy: actor,
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+        },
+        { merge: true }
+      );
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `flight_closed_${Date.now()}`
+          ),
+          {
+            type: "FLIGHT_CLOSED",
+            status: "CLOSED",
+            loadedCount,
+            offloadedCount:
+              offloaded.length,
+            message:
+              `Carry-On flight ${selectedFlight.flightNumber || selectedFlight.id} closed.`,
+            createdAt:
+              serverTimestamp(),
+            createdBy:
+              actor,
+          }
+        );
+      } catch (eventError) {
+        console.error(
+          "Carry-On flight close event write error:",
+          eventError
+        );
+      }
+
+      setMessage(
+        `Flight ${selectedFlight.flightNumber || ""} closed successfully.`
+      );
+    } catch (closeError) {
+      console.error(
+        "Carry-On flight close error:",
+        closeError
+      );
+
+      setError(
+        closeError?.message ||
+          "Unable to close Carry-On flight."
+      );
+    } finally {
+      setClosingFlight(false);
+    }
+  };
+
   return (
     <div
       style={{
@@ -763,6 +1137,175 @@ export default function CarryOnGatePage({
             </div>
           </div>
 
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 12,
+              border: "1px solid #e2e8f0",
+              background: "white",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: "#64748b",
+                    fontSize: "0.68rem",
+                    fontWeight: 800,
+                  }}
+                >
+                  FLIGHT PROGRESS
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 3,
+                    color: "#0f172a",
+                    fontWeight: 900,
+                  }}
+                >
+                  {flightClosed
+                    ? "Flight Closed"
+                    : "Live Carry-On Operation"}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeCarryOnFlight}
+                disabled={
+                  closingFlight ||
+                  flightClosed ||
+                  !canOperateGate
+                }
+                style={{
+                  ...closeButton,
+                  opacity:
+                    closingFlight ||
+                    flightClosed ||
+                    !canOperateGate
+                      ? 0.55
+                      : 1,
+                }}
+              >
+                {flightClosed
+                  ? "Flight Closed"
+                  : closingFlight
+                    ? "Closing..."
+                    : "Close Flight"}
+              </button>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(4, minmax(0, 1fr))",
+                gap: 6,
+                marginTop: 12,
+              }}
+            >
+              <StageSegment
+                label="Open"
+                active={
+                  workflowStage === "OPEN"
+                }
+                complete={
+                  workflowStage !== "OPEN"
+                }
+              />
+
+              <StageSegment
+                label="Checking"
+                active={
+                  workflowStage === "CHECKING"
+                }
+                complete={
+                  ["GATE_RECEIVING", "LOADED", "CLOSED"].includes(
+                    workflowStage
+                  )
+                }
+              />
+
+              <StageSegment
+                label="Receiving at Gate"
+                active={
+                  workflowStage === "GATE_RECEIVING"
+                }
+                complete={
+                  ["LOADED", "CLOSED"].includes(
+                    workflowStage
+                  )
+                }
+              />
+
+              <StageSegment
+                label="Loaded"
+                active={
+                  workflowStage === "LOADED" ||
+                  workflowStage === "CLOSED"
+                }
+                complete={
+                  workflowStage === "CLOSED"
+                }
+              />
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(120px, 1fr))",
+                gap: 7,
+                marginTop: 10,
+              }}
+            >
+              <MiniStat
+                label="Need Pickup"
+                value={waitingAtGate.length}
+              />
+              <MiniStat
+                label="At Gate"
+                value={collectedAtGate.length}
+              />
+              <MiniStat
+                label="At Ramp"
+                value={rampCount}
+              />
+              <MiniStat
+                label="Loaded"
+                value={loadedCount}
+              />
+            </div>
+          </div>
+
+          <div
+            style={{
+              padding: 8,
+              borderRadius: 12,
+              border: "1px solid #e2e8f0",
+              background: "#f8fafc",
+            }}
+          >
+            <div
+              style={{
+                color: "#64748b",
+                fontSize: "0.66rem",
+                fontWeight: 800,
+                marginBottom: 4,
+              }}
+            >
+              QUICK FIND
+            </div>
+
           <input
             type="search"
             value={searchTerm}
@@ -770,6 +1313,7 @@ export default function CarryOnGatePage({
             placeholder="Search by Seat or Gate Check"
             style={inputStyle}
           />
+          </div>
 
           <div
             style={{
@@ -904,7 +1448,10 @@ export default function CarryOnGatePage({
                     offloading={
                       offloadingId === item.id
                     }
-                    canOperate={canOperateGate}
+                    canOperate={
+                      canOperateGate &&
+                      !flightClosed
+                    }
                   />
                 ))}
               </div>
@@ -1166,6 +1713,33 @@ export default function CarryOnGatePage({
                     >
                       Reason: {item.offloadReason || "-"}
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        restoreOffloadedToGate(item)
+                      }
+                      disabled={
+                        restoringId === item.id ||
+                        flightClosed ||
+                        !canOperateGate
+                      }
+                      style={{
+                        ...restoreButton,
+                        marginTop: 9,
+                        width: "100%",
+                        opacity:
+                          restoringId === item.id ||
+                          flightClosed ||
+                          !canOperateGate
+                            ? 0.55
+                            : 1,
+                      }}
+                    >
+                      {restoringId === item.id
+                        ? "Restoring..."
+                        : "Return to Ready for Gate Pickup"}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -1412,6 +1986,79 @@ function GateActionCard({
             ? "Offloading..."
             : "Offload"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function StageSegment({
+  label,
+  active,
+  complete,
+}) {
+  const emphasized =
+    active || complete;
+
+  return (
+    <div
+      style={{
+        minWidth: 0,
+        padding: "8px 5px",
+        borderRadius: 9,
+        border: emphasized
+          ? "1px solid #86efac"
+          : "1px solid #e2e8f0",
+        background: active
+          ? "#dcfce7"
+          : complete
+            ? "#f0fdf4"
+            : "#f8fafc",
+        color: emphasized
+          ? "#166534"
+          : "#94a3b8",
+        textAlign: "center",
+        fontSize: "0.64rem",
+        fontWeight: 900,
+        lineHeight: 1.15,
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+}) {
+  return (
+    <div
+      style={{
+        padding: 8,
+        borderRadius: 9,
+        border: "1px solid #e2e8f0",
+        background: "#f8fafc",
+      }}
+    >
+      <div
+        style={{
+          color: "#64748b",
+          fontSize: "0.62rem",
+          fontWeight: 800,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          marginTop: 2,
+          color: "#0f172a",
+          fontSize: "1rem",
+          fontWeight: 900,
+        }}
+      >
+        {value}
       </div>
     </div>
   );
@@ -1738,6 +2385,27 @@ const dangerButton = {
   borderRadius: 10,
   border: "1px solid #dc2626",
   background: "#dc2626",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+
+const restoreButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #2563eb",
+  background: "#eff6ff",
+  color: "#1d4ed8",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const closeButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #0f172a",
+  background: "#0f172a",
   color: "white",
   fontWeight: 900,
   cursor: "pointer",
