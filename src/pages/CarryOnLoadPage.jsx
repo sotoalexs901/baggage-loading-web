@@ -94,6 +94,9 @@ export default function CarryOnLoadPage({
   const [compartmentByAssignment, setCompartmentByAssignment] =
     useState({});
   const [loadingId, setLoadingId] = useState("");
+  const [offloadingId, setOffloadingId] = useState("");
+  const [offloadReasonById, setOffloadReasonById] =
+    useState({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -206,6 +209,22 @@ export default function CarryOnLoadPage({
     [assignments]
   );
 
+  const offloaded = useMemo(
+    () =>
+      assignments
+        .filter(
+          (item) =>
+            cleanUpper(item?.status) ===
+            "OFFLOADED"
+        )
+        .sort((a, b) =>
+          String(a.gateCheckNumber || "").localeCompare(
+            String(b.gateCheckNumber || "")
+          )
+        ),
+    [assignments]
+  );
+
   const compartmentTotals = useMemo(() => {
     return loaded.reduce(
       (totals, item) => {
@@ -229,6 +248,166 @@ export default function CarryOnLoadPage({
       }
     );
   }, [loaded]);
+
+  const offloadCarryOn = async (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateLoad) {
+      setError(
+        "You do not have permission to Offload this Carry-On."
+      );
+      return;
+    }
+
+    if (!selectedFlight || !assignment) return;
+
+    const reason = String(
+      offloadReasonById[assignment.id] || ""
+    )
+      .trim()
+      .replace(/\s+/g, " ");
+
+    if (!reason) {
+      setError(
+        "Enter an Offload reason before continuing."
+      );
+      return;
+    }
+
+    const ok = window.confirm(
+      `OFFLOAD this Carry-On before loading?\n\n` +
+        `Passenger: ${assignment.passengerName || "-"}\n` +
+        `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
+        `Reason: ${reason}`
+    );
+
+    if (!ok) return;
+
+    try {
+      setOffloadingId(assignment.id);
+
+      const assignmentRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "assignments",
+        assignment.id
+      );
+
+      const gateCheckRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        assignment.id
+      );
+
+      await runTransaction(db, async (transaction) => {
+        const assignmentSnap =
+          await transaction.get(assignmentRef);
+
+        if (!assignmentSnap.exists()) {
+          throw new Error(
+            "Carry-On assignment no longer exists."
+          );
+        }
+
+        const currentStatus =
+          cleanUpper(
+            assignmentSnap.data()?.status
+          );
+
+        if (currentStatus !== "RAMP_RECEIVED") {
+          throw new Error(
+            `This Carry-On cannot be Offloaded from status ${currentStatus || "UNKNOWN"}.`
+          );
+        }
+
+        transaction.set(
+          assignmentRef,
+          {
+            status: "OFFLOADED",
+            statusBeforeOffload: "RAMP_RECEIVED",
+            offloadedAt: serverTimestamp(),
+            offloadedBy: actor,
+            offloadReason: reason,
+            offloadStage: "LOAD",
+            updatedAt: serverTimestamp(),
+            updatedBy: actor,
+          },
+          { merge: true }
+        );
+
+        transaction.set(
+          gateCheckRef,
+          {
+            status: "OFFLOADED",
+            statusBeforeOffload: "RAMP_RECEIVED",
+            offloadedAt: serverTimestamp(),
+            offloadedBy: actor,
+            offloadReason: reason,
+            offloadStage: "LOAD",
+          },
+          { merge: true }
+        );
+      });
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `load_offload_${assignment.id}_${Date.now()}`
+          ),
+          {
+            type: "OFFLOADED",
+            status: "OFFLOADED",
+            assignmentId: assignment.id,
+            passengerId: assignment.passengerId || null,
+            passengerName: assignment.passengerName || null,
+            assignedSeat: assignment.assignedSeat || null,
+            gateCheckNumber:
+              assignment.gateCheckNumber || null,
+            offloadReason: reason,
+            offloadStage: "LOAD",
+            message:
+              `Carry-On ${assignment.gateCheckNumber || assignment.id} Offloaded before Aircraft Loading.`,
+            createdAt: serverTimestamp(),
+            createdBy: actor,
+          }
+        );
+      } catch (eventError) {
+        console.error(
+          "Carry-On Load Offload event error:",
+          eventError
+        );
+      }
+
+      setOffloadReasonById((previous) => ({
+        ...previous,
+        [assignment.id]: "",
+      }));
+
+      setMessage(
+        `${assignment.gateCheckNumber} Offloaded before loading.`
+      );
+    } catch (offloadError) {
+      console.error(
+        "Carry-On Load Offload error:",
+        offloadError
+      );
+
+      setError(
+        offloadError?.message ||
+          "Unable to Offload Carry-On."
+      );
+    } finally {
+      setOffloadingId("");
+    }
+  };
 
   const markLoaded = async (assignment) => {
     setMessage("");
@@ -539,6 +718,11 @@ export default function CarryOnLoadPage({
             />
 
             <Metric
+              label="Offloaded"
+              value={offloaded.length}
+            />
+
+            <Metric
               label="Forward"
               value={compartmentTotals.FORWARD}
             />
@@ -642,70 +826,135 @@ export default function CarryOnLoadPage({
 
                       <div
                         style={{
-                          display: "flex",
+                          display: "grid",
                           gap: 7,
-                          flexWrap: "wrap",
-                          alignItems: "center",
+                          minWidth: 300,
                         }}
                       >
-                        <select
-                          value={
-                            compartmentByAssignment[
-                              item.id
-                            ] || ""
-                          }
-                          onChange={(event) =>
-                            setCompartmentByAssignment(
-                              (previous) => ({
-                                ...previous,
-                                [item.id]:
-                                  event.target.value,
-                              })
-                            )
-                          }
+                        <div
                           style={{
-                            ...inputStyle,
-                            minWidth: 145,
+                            display: "flex",
+                            gap: 7,
+                            flexWrap: "wrap",
+                            alignItems: "center",
                           }}
                         >
-                          <option value="">
-                            Compartment
-                          </option>
-                          <option value="FORWARD">
-                            FORWARD
-                          </option>
-                          <option value="MIDDLE">
-                            MIDDLE
-                          </option>
-                          <option value="AFT">
-                            AFT
-                          </option>
-                        </select>
+                          <select
+                            value={
+                              compartmentByAssignment[
+                                item.id
+                              ] || ""
+                            }
+                            onChange={(event) =>
+                              setCompartmentByAssignment(
+                                (previous) => ({
+                                  ...previous,
+                                  [item.id]:
+                                    event.target.value,
+                                })
+                              )
+                            }
+                            style={{
+                              ...inputStyle,
+                              minWidth: 145,
+                            }}
+                          >
+                            <option value="">
+                              Compartment
+                            </option>
+                            <option value="FORWARD">
+                              FORWARD
+                            </option>
+                            <option value="MIDDLE">
+                              MIDDLE
+                            </option>
+                            <option value="AFT">
+                              AFT
+                            </option>
+                          </select>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            markLoaded(item)
-                          }
-                          disabled={
-                            loadingId ===
-                              item.id ||
-                            !canOperateLoad
-                          }
-                          style={{
-                            ...primaryButton,
-                            opacity:
-                              loadingId ===
-                                item.id ||
+                          <button
+                            type="button"
+                            onClick={() =>
+                              markLoaded(item)
+                            }
+                            disabled={
+                              loadingId === item.id ||
+                              offloadingId === item.id ||
                               !canOperateLoad
-                                ? 0.55
-                                : 1,
+                            }
+                            style={{
+                              ...primaryButton,
+                              opacity:
+                                loadingId === item.id ||
+                                offloadingId === item.id ||
+                                !canOperateLoad
+                                  ? 0.55
+                                  : 1,
+                            }}
+                          >
+                            {loadingId === item.id
+                              ? "Saving..."
+                              : "Loaded"}
+                          </button>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 7,
+                            flexWrap: "wrap",
+                            alignItems: "center",
                           }}
                         >
-                          {loadingId === item.id
-                            ? "Saving..."
-                            : "Loaded"}
-                        </button>
+                          <input
+                            type="text"
+                            value={
+                              offloadReasonById[
+                                item.id
+                              ] || ""
+                            }
+                            placeholder="Offload reason..."
+                            onChange={(event) =>
+                              setOffloadReasonById(
+                                (previous) => ({
+                                  ...previous,
+                                  [item.id]:
+                                    event.target.value,
+                                })
+                              )
+                            }
+                            style={{
+                              ...inputStyle,
+                              minWidth: 190,
+                            }}
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              offloadCarryOn(item)
+                            }
+                            disabled={
+                              offloadingId === item.id ||
+                              loadingId === item.id ||
+                              !canOperateLoad
+                            }
+                            style={{
+                              ...dangerButton,
+                              opacity:
+                                offloadingId === item.id ||
+                                loadingId === item.id ||
+                                !canOperateLoad
+                                  ? 0.55
+                                  : 1,
+                            }}
+                          >
+                            {offloadingId === item.id
+                              ? "Offloading..."
+                              : "Offload"}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -782,6 +1031,88 @@ export default function CarryOnLoadPage({
                       Compartment: {item.compartment || "-"}
                       {" - "}
                       Loaded: {formatTimestamp(item.aircraftLoadedAt)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              ...panelStyle,
+              border: "1px solid #fecaca",
+              background: "#fff7f7",
+            }}
+          >
+            <h4
+              style={{
+                margin: 0,
+                color: "#991b1b",
+              }}
+            >
+              Offloaded
+            </h4>
+
+            {offloaded.length === 0 ? (
+              <p
+                style={{
+                  color: "#64748b",
+                  fontSize: "0.82rem",
+                }}
+              >
+                No Carry-On items have been Offloaded.
+              </p>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: 7,
+                  marginTop: 9,
+                }}
+              >
+                {offloaded.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: 10,
+                      borderRadius: 10,
+                      border: "1px solid #fecaca",
+                      background: "white",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <strong>
+                        {item.passengerName}
+                      </strong>
+
+                      <span
+                        style={{
+                          color: "#991b1b",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {item.gateCheckNumber}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 4,
+                        color: "#64748b",
+                        fontSize: "0.78rem",
+                      }}
+                    >
+                      Reason: {item.offloadReason || "-"}
+                      {" - "}
+                      Stage: {item.offloadStage || "-"}
                     </div>
                   </div>
                 ))}
