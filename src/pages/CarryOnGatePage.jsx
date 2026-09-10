@@ -72,6 +72,7 @@ const NOTE_OPTIONS = [
   "PASSENGER REFUSED GATE CHECK",
   "OVERSIZE / SPECIAL HANDLING",
   "TAG ISSUE",
+  "WEIGHT ISSUE",
   "OTHER",
 ];
 
@@ -106,6 +107,9 @@ export default function CarryOnGatePage({
   const [offloadingId, setOffloadingId] = useState("");
   const [noteTypeById, setNoteTypeById] = useState({});
   const [noteTextById, setNoteTextById] = useState({});
+  const [weightById, setWeightById] = useState({});
+  const [dashboardFilter, setDashboardFilter] =
+    useState("WAITING_GATE");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -243,6 +247,27 @@ export default function CarryOnGatePage({
     };
   };
 
+  const getDraftWeight = (assignmentId) => {
+    const raw = String(
+      weightById[assignmentId] || ""
+    ).trim();
+
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Number(raw);
+
+    if (
+      !Number.isFinite(parsed) ||
+      parsed <= 0
+    ) {
+      return NaN;
+    }
+
+    return Math.round(parsed * 10) / 10;
+  };
+
   const clearDraftNote = (assignmentId) => {
     setNoteTypeById((previous) => ({
       ...previous,
@@ -250,6 +275,11 @@ export default function CarryOnGatePage({
     }));
 
     setNoteTextById((previous) => ({
+      ...previous,
+      [assignmentId]: "",
+    }));
+
+    setWeightById((previous) => ({
       ...previous,
       [assignmentId]: "",
     }));
@@ -269,12 +299,25 @@ export default function CarryOnGatePage({
     if (!selectedFlight || !assignment) return;
 
     const note = getDraftNote(assignment.id);
+    const verifiedWeightLbs =
+      getDraftWeight(assignment.id);
+
+    if (
+      verifiedWeightLbs === null ||
+      Number.isNaN(verifiedWeightLbs)
+    ) {
+      setError(
+        "Enter the verified Gate weight in pounds before confirming collection."
+      );
+      return;
+    }
 
     const ok = window.confirm(
       `Confirm Collected at Gate?\n\n` +
         `Passenger: ${assignment.passengerName || "-"}\n` +
         `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
         `Seat: ${assignment.assignedSeat || "-"}\n` +
+        `Weight: ${verifiedWeightLbs} lb\n` +
         `Note: ${note.combined || "None"}`
     );
 
@@ -331,6 +374,12 @@ export default function CarryOnGatePage({
               note.text || null,
             gateCollectionNoteCombined:
               note.combined || null,
+            gateVerifiedWeightLbs:
+              verifiedWeightLbs,
+            gateWeightVerifiedAt:
+              serverTimestamp(),
+            gateWeightVerifiedBy:
+              actor,
             updatedAt: serverTimestamp(),
             updatedBy: actor,
           },
@@ -349,6 +398,12 @@ export default function CarryOnGatePage({
               note.text || null,
             gateCollectionNoteCombined:
               note.combined || null,
+            gateVerifiedWeightLbs:
+              verifiedWeightLbs,
+            gateWeightVerifiedAt:
+              serverTimestamp(),
+            gateWeightVerifiedBy:
+              actor,
           },
           { merge: true }
         );
@@ -378,6 +433,8 @@ export default function CarryOnGatePage({
               note.text || null,
             gateCollectionNoteCombined:
               note.combined || null,
+            gateVerifiedWeightLbs:
+              verifiedWeightLbs,
             message:
               `Carry-On ${assignment.gateCheckNumber || assignment.id} collected at Gate.`,
             createdAt: serverTimestamp(),
@@ -610,7 +667,7 @@ export default function CarryOnGatePage({
               fontSize: "0.82rem",
             }}
           >
-            Confirm collection, record Gate notes, or Offload an item when required.
+            Verify Carry-On weight, confirm collection, record Gate notes, or Offload an item when required.
           </p>
         </div>
 
@@ -695,27 +752,60 @@ export default function CarryOnGatePage({
             style={{
               display: "grid",
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(150px, 1fr))",
+                "repeat(auto-fit, minmax(145px, 1fr))",
               gap: 8,
             }}
           >
-            <Metric
-              label="Waiting at Gate"
+            <DashboardMetric
+              label="Need Gate Pickup"
               value={waitingAtGate.length}
+              active={dashboardFilter === "WAITING_GATE"}
+              onClick={() => setDashboardFilter("WAITING_GATE")}
             />
-            <Metric
-              label="Collected"
+
+            <DashboardMetric
+              label="Collected / To Ramp"
               value={collectedAtGate.length}
+              active={dashboardFilter === "GATE_COLLECTED"}
+              onClick={() => setDashboardFilter("GATE_COLLECTED")}
             />
-            <Metric
+
+            <DashboardMetric
+              label="At Ramp"
+              value={
+                assignments.filter(
+                  (item) =>
+                    cleanUpper(item?.status) === "RAMP_RECEIVED"
+                ).length
+              }
+              active={dashboardFilter === "RAMP_RECEIVED"}
+              onClick={() => setDashboardFilter("RAMP_RECEIVED")}
+            />
+
+            <DashboardMetric
+              label="Loaded"
+              value={
+                assignments.filter(
+                  (item) =>
+                    cleanUpper(item?.status) === "AIRCRAFT_LOADED"
+                ).length
+              }
+              active={dashboardFilter === "AIRCRAFT_LOADED"}
+              onClick={() => setDashboardFilter("AIRCRAFT_LOADED")}
+            />
+
+            <DashboardMetric
               label="Offloaded"
               value={offloaded.length}
-            />
-            <Metric
-              label="Total Assigned"
-              value={assignments.length}
+              active={dashboardFilter === "OFFLOADED"}
+              onClick={() => setDashboardFilter("OFFLOADED")}
             />
           </div>
+
+          <GateDashboardDetail
+            filter={dashboardFilter}
+            assignments={assignments}
+          />
 
           {!canOperateGate && (
             <Notice
@@ -750,6 +840,17 @@ export default function CarryOnGatePage({
                     }
                     noteText={
                       noteTextById[item.id] || ""
+                    }
+                    weight={
+                      weightById[item.id] || ""
+                    }
+                    setWeight={(value) =>
+                      setWeightById(
+                        (previous) => ({
+                          ...previous,
+                          [item.id]: value,
+                        })
+                      )
                     }
                     setNoteType={(value) =>
                       setNoteTypeById(
@@ -835,6 +936,10 @@ export default function CarryOnGatePage({
                           }}
                         >
                           Seat: {item.assignedSeat || "-"}
+                          {" - "}
+                          Counter: {item.counterRecordedWeightLbs || "-"} lb
+                          {" - "}
+                          Gate Verified: {item.gateVerifiedWeightLbs || "-"} lb
                           {" - "}
                           Collected: {formatTimestamp(item.gateCollectedAt)}
                         </div>
@@ -1071,6 +1176,8 @@ function GateActionCard({
   item,
   noteType,
   noteText,
+  weight,
+  setWeight,
   setNoteType,
   setNoteText,
   onCollect,
@@ -1138,11 +1245,46 @@ function GateActionCard({
         style={{
           display: "grid",
           gridTemplateColumns:
-            "minmax(180px, 240px) minmax(220px, 1fr)",
+            "minmax(140px, 180px) minmax(180px, 240px) minmax(220px, 1fr)",
           gap: 8,
           marginTop: 10,
         }}
       >
+        <label
+          style={{
+            display: "grid",
+            gap: 5,
+          }}
+        >
+          <span style={fieldLabel}>
+            Verify Gate Weight (lb)
+          </span>
+
+          <div
+            style={{
+              marginBottom: 4,
+              color: "#64748b",
+              fontSize: "0.72rem",
+              fontWeight: 700,
+            }}
+          >
+            Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
+          </div>
+
+          <input
+            type="number"
+            min="0.1"
+            step="0.1"
+            inputMode="decimal"
+            value={weight}
+            placeholder="Example: 22.5"
+            onChange={(event) =>
+              setWeight(event.target.value)
+            }
+            style={inputStyle}
+          />
+        </label>
+
         <label
           style={{
             display: "grid",
@@ -1247,6 +1389,199 @@ function GateActionCard({
             : "Offload"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function DashboardMetric({
+  label,
+  value,
+  active,
+  onClick,
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        padding: 11,
+        borderRadius: 10,
+        border: active
+          ? "2px solid #7c3aed"
+          : "1px solid #e2e8f0",
+        background: active
+          ? "#faf5ff"
+          : "#f8fafc",
+        textAlign: "left",
+        cursor: "pointer",
+        font: "inherit",
+      }}
+    >
+      <div
+        style={{
+          color: "#64748b",
+          fontSize: "0.68rem",
+          fontWeight: 700,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          marginTop: 2,
+          color: "#0f172a",
+          fontSize: "1.15rem",
+          fontWeight: 900,
+        }}
+      >
+        {value}
+      </div>
+
+      <div
+        style={{
+          marginTop: 4,
+          color: "#7c3aed",
+          fontSize: "0.66rem",
+          fontWeight: 800,
+        }}
+      >
+        View details
+      </div>
+    </button>
+  );
+}
+
+function GateDashboardDetail({
+  filter,
+  assignments,
+}) {
+  const rows = assignments
+    .filter((item) => {
+      const status = cleanUpper(item?.status);
+
+      if (filter === "WAITING_GATE") {
+        return status === "COUNTER_ASSIGNED";
+      }
+
+      return status === filter;
+    })
+    .sort((a, b) =>
+      String(a.gateCheckNumber || "").localeCompare(
+        String(b.gateCheckNumber || "")
+      )
+    );
+
+  const labels = {
+    WAITING_GATE:
+      "Carry-Ons Still Waiting for Gate Pickup",
+    GATE_COLLECTED:
+      "Collected at Gate / Waiting for Ramp",
+    RAMP_RECEIVED:
+      "Carry-Ons at Ramp",
+    AIRCRAFT_LOADED:
+      "Carry-Ons Loaded on Aircraft",
+    OFFLOADED:
+      "Offloaded Carry-Ons",
+  };
+
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 12,
+        border: "1px solid #ddd6fe",
+        background: "#faf5ff",
+      }}
+    >
+      <h4 style={{ margin: 0 }}>
+        {labels[filter] || "Operational Detail"}
+      </h4>
+
+      {rows.length === 0 ? (
+        <p
+          style={{
+            margin: "8px 0 0",
+            color: "#64748b",
+            fontSize: "0.8rem",
+          }}
+        >
+          No Carry-On items in this status.
+        </p>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gap: 7,
+            marginTop: 9,
+          }}
+        >
+          {rows.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                padding: 9,
+                borderRadius: 9,
+                border: "1px solid #e2e8f0",
+                background: "white",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <strong>
+                  {item.passengerName || "-"}
+                </strong>
+
+                <span
+                  style={{
+                    color: "#6d28d9",
+                    fontWeight: 900,
+                  }}
+                >
+                  {item.gateCheckNumber || "-"}
+                </span>
+              </div>
+
+              <div
+                style={{
+                  marginTop: 4,
+                  color: "#64748b",
+                  fontSize: "0.75rem",
+                }}
+              >
+                Seat: {item.assignedSeat || "-"}
+                {" - "}
+                Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
+                {item.gateVerifiedWeightLbs
+                  ? ` - Gate Verified: ${item.gateVerifiedWeightLbs} lb`
+                  : ""}
+                {item.compartment
+                  ? ` - Compartment: ${item.compartment}`
+                  : ""}
+              </div>
+
+              {item.offloadReason && (
+                <div
+                  style={{
+                    marginTop: 4,
+                    color: "#991b1b",
+                    fontSize: "0.74rem",
+                    fontWeight: 800,
+                  }}
+                >
+                  Offload Reason: {item.offloadReason}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
