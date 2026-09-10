@@ -249,6 +249,55 @@ export default function CarryOnCounterPage({
   );
 
   const [
+    assignmentSearch,
+    setAssignmentSearch,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editingAssignmentId,
+    setEditingAssignmentId,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editPassengerName,
+    setEditPassengerName,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editSeatId,
+    setEditSeatId,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editGateCheckId,
+    setEditGateCheckId,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editWeight,
+    setEditWeight,
+  ] = useState(
+    ""
+  );
+
+  const [
+    savingAssignmentEdit,
+    setSavingAssignmentEdit,
+  ] = useState(
+    false
+  );
+
+  const [
     assigning,
     setAssigning,
   ] = useState(
@@ -628,6 +677,26 @@ export default function CarryOnCounterPage({
         selectedGateCheckId
     ) ||
     null;
+
+  const filteredAssignments = useMemo(() => {
+    const query = String(assignmentSearch || "")
+      .trim()
+      .toLowerCase();
+
+    if (!query) return assignments;
+
+    return assignments.filter((item) =>
+      [
+        item.passengerName,
+        item.assignedSeat,
+        item.gateCheckNumber,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [assignments, assignmentSearch]);
 
   const createAssignment =
     async ({
@@ -1046,6 +1115,245 @@ export default function CarryOnCounterPage({
         }
       );
     };
+
+  const beginAssignmentEdit = (item) => {
+    if (cleanUpper(item?.status) !== "COUNTER_ASSIGNED") {
+      setError("Only Carry-Ons still at Counter can be edited here.");
+      return;
+    }
+
+    setEditingAssignmentId(item.id);
+    setEditPassengerName(item.passengerName || "");
+    setEditSeatId(item.assignedSeat ? safeDocId(item.assignedSeat) : "");
+    setEditGateCheckId(item.id || "");
+    setEditWeight(String(item.counterRecordedWeightLbs || ""));
+    setMessage("");
+    setError("");
+  };
+
+  const cancelAssignmentEdit = () => {
+    setEditingAssignmentId("");
+    setEditPassengerName("");
+    setEditSeatId("");
+    setEditGateCheckId("");
+    setEditWeight("");
+  };
+
+  const saveAssignmentEdit = async (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateCounter || !selectedFlight || !assignment) return;
+
+    const passengerName = String(editPassengerName || "").trim();
+    const newWeight = Number(editWeight);
+    const oldSeatId = safeDocId(assignment.assignedSeat || "");
+    const oldGateCheckId = assignment.id;
+    const newSeatId = editSeatId || oldSeatId;
+    const newGateCheckId = editGateCheckId || oldGateCheckId;
+    const newSeat = seats.find((item) => item.id === newSeatId) || null;
+    const newGateCheck = gateChecks.find((item) => item.id === newGateCheckId) || null;
+
+    if (!passengerName) {
+      setError("Passenger Name is required.");
+      return;
+    }
+
+    if (!Number.isFinite(newWeight) || newWeight <= 0) {
+      setError("Enter a valid Carry-On weight in pounds.");
+      return;
+    }
+
+    if (!newSeat || !newGateCheck) {
+      setError("Select a valid Seat and Gate Check number.");
+      return;
+    }
+
+    try {
+      setSavingAssignmentEdit(true);
+
+      const oldAssignmentRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "assignments", oldGateCheckId
+      );
+      const nextAssignmentRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "assignments", newGateCheckId
+      );
+      const passengerRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "passengers", assignment.passengerId
+      );
+      const oldSeatRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "availableSeats", oldSeatId
+      );
+      const nextSeatRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "availableSeats", newSeatId
+      );
+      const oldGateCheckRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "gateCheckNumbers", oldGateCheckId
+      );
+      const nextGateCheckRef = doc(
+        db, "carryOnFlights", selectedFlight.id, "gateCheckNumbers", newGateCheckId
+      );
+
+      await runTransaction(db, async (transaction) => {
+        const refs = [
+          oldAssignmentRef,
+          passengerRef,
+          oldSeatRef,
+          nextSeatRef,
+          oldGateCheckRef,
+          nextGateCheckRef,
+        ];
+        if (newGateCheckId !== oldGateCheckId) refs.push(nextAssignmentRef);
+
+        const snaps = [];
+        for (const ref of refs) snaps.push(await transaction.get(ref));
+
+        const oldAssignmentSnap = snaps[0];
+        if (!oldAssignmentSnap.exists()) {
+          throw new Error("Carry-On assignment no longer exists.");
+        }
+        const currentData = oldAssignmentSnap.data();
+        if (cleanUpper(currentData?.status) !== "COUNTER_ASSIGNED") {
+          throw new Error("This Carry-On already moved beyond Counter and can no longer be edited here.");
+        }
+
+        const nextSeatSnap = snaps[3];
+        if (
+          newSeatId !== oldSeatId &&
+          (!nextSeatSnap.exists() || cleanUpper(nextSeatSnap.data()?.status) !== "AVAILABLE")
+        ) {
+          throw new Error("The selected seat is no longer available.");
+        }
+
+        const nextGateSnap = snaps[5];
+        if (
+          newGateCheckId !== oldGateCheckId &&
+          (!nextGateSnap.exists() || cleanUpper(nextGateSnap.data()?.status) !== "AVAILABLE")
+        ) {
+          throw new Error("The selected Gate Check number is no longer available.");
+        }
+
+        if (newGateCheckId !== oldGateCheckId) {
+          const nextAssignmentSnap = snaps[6];
+          if (nextAssignmentSnap?.exists()) {
+            throw new Error("The selected Gate Check number already has an assignment.");
+          }
+        }
+
+        const updatedAssignment = {
+          ...currentData,
+          passengerName,
+          assignedSeat: newSeat.seatNumber,
+          assignedSeatType: newSeat.seatType || null,
+          gateCheckNumber: newGateCheck.gateCheckNumber,
+          gateCheckSource: newGateCheck.source || currentData.gateCheckSource || "PRELOADED",
+          counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
+          editedAt: serverTimestamp(),
+          editedBy: actor,
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+        };
+
+        if (newSeatId !== oldSeatId) {
+          transaction.set(oldSeatRef, {
+            status: "AVAILABLE",
+            assignmentId: null,
+            passengerId: null,
+            passengerName: null,
+            gateCheckNumber: null,
+            assignedAt: null,
+            assignedBy: null,
+          }, { merge: true });
+        }
+
+        transaction.set(nextSeatRef, {
+          status: "ASSIGNED",
+          assignmentId: newGateCheckId,
+          passengerId: assignment.passengerId,
+          passengerName,
+          gateCheckNumber: newGateCheck.gateCheckNumber,
+          assignedAt: currentData.counterAssignedAt || serverTimestamp(),
+          assignedBy: currentData.counterAssignedBy || actor,
+        }, { merge: true });
+
+        if (newGateCheckId !== oldGateCheckId) {
+          transaction.set(oldGateCheckRef, {
+            status: "AVAILABLE",
+            assignmentId: null,
+            passengerId: null,
+            passengerName: null,
+            assignedSeat: null,
+            counterRecordedWeightLbs: null,
+            assignedAt: null,
+            assignedBy: null,
+          }, { merge: true });
+        }
+
+        transaction.set(nextGateCheckRef, {
+          status: "ASSIGNED",
+          assignmentId: newGateCheckId,
+          passengerId: assignment.passengerId,
+          passengerName,
+          assignedSeat: newSeat.seatNumber,
+          counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
+          assignedAt: currentData.counterAssignedAt || serverTimestamp(),
+          assignedBy: currentData.counterAssignedBy || actor,
+        }, { merge: true });
+
+        transaction.set(passengerRef, {
+          passengerName,
+          assigned: true,
+          assignedSeat: newSeat.seatNumber,
+          gateCheckNumber: newGateCheck.gateCheckNumber,
+          assignmentId: newGateCheckId,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+
+        transaction.set(nextAssignmentRef, updatedAssignment, { merge: false });
+        if (newGateCheckId !== oldGateCheckId) {
+          transaction.delete(oldAssignmentRef);
+        }
+      });
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `counter_edit_${newGateCheckId}_${Date.now()}`
+          ),
+          {
+            type: "COUNTER_ASSIGNMENT_EDITED",
+            status: "COUNTER_ASSIGNED",
+            assignmentId: newGateCheckId,
+            previousAssignmentId: oldGateCheckId,
+            passengerId: assignment.passengerId,
+            passengerName,
+            previousPassengerName: assignment.passengerName || null,
+            assignedSeat: newSeat.seatNumber,
+            previousSeat: assignment.assignedSeat || null,
+            gateCheckNumber: newGateCheck.gateCheckNumber,
+            previousGateCheckNumber: assignment.gateCheckNumber || null,
+            counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
+            createdAt: serverTimestamp(),
+            createdBy: actor,
+          }
+        );
+      } catch (eventError) {
+        console.error("Carry-On Counter edit event error:", eventError);
+      }
+
+      cancelAssignmentEdit();
+      setMessage("Counter assignment updated successfully.");
+    } catch (editError) {
+      console.error("Carry-On Counter assignment edit error:", editError);
+      setError(editError?.message || "Unable to update Counter assignment.");
+    } finally {
+      setSavingAssignmentEdit(false);
+    }
+  };
 
   const assignCarryOn =
     async () => {
@@ -1975,6 +2283,20 @@ export default function CarryOnCounterPage({
               Current Assignments
             </h4>
 
+            <div
+              style={{
+                marginTop: 10,
+              }}
+            >
+              <input
+                type="search"
+                value={assignmentSearch}
+                onChange={(event) => setAssignmentSearch(event.target.value)}
+                placeholder="Search by Seat or Gate Check"
+                style={inputStyle}
+              />
+            </div>
+
             {assignments.length ===
             0 ? (
               <p
@@ -2001,7 +2323,7 @@ export default function CarryOnCounterPage({
                     9,
                 }}
               >
-                {assignments
+                {filteredAssignments
                   .slice()
                   .sort(
                     (
@@ -2095,6 +2417,107 @@ export default function CarryOnCounterPage({
                             ? " - LAST MINUTE"
                             : ""}
                         </div>
+
+
+                        {cleanUpper(item.status) === "COUNTER_ASSIGNED" && (
+                          <div style={{ marginTop: 10 }}>
+                            {editingAssignmentId === item.id ? (
+                              <div
+                                style={{
+                                  display: "grid",
+                                  gap: 8,
+                                  padding: 10,
+                                  borderRadius: 10,
+                                  border: "1px solid #c4b5fd",
+                                  background: "#faf5ff",
+                                }}
+                              >
+                                <TextField
+                                  label="Passenger Name"
+                                  value={editPassengerName}
+                                  onChange={setEditPassengerName}
+                                  placeholder="Passenger Name"
+                                />
+
+                                <SelectField
+                                  label="Assigned Seat"
+                                  value={editSeatId}
+                                  onChange={setEditSeatId}
+                                >
+                                  {seats
+                                    .filter((seat) =>
+                                      seat.id === safeDocId(item.assignedSeat || "") ||
+                                      cleanUpper(seat.status) === "AVAILABLE"
+                                    )
+                                    .sort((a, b) =>
+                                      String(a.seatNumber || "").localeCompare(String(b.seatNumber || ""))
+                                    )
+                                    .map((seat) => (
+                                      <option key={seat.id} value={seat.id}>
+                                        {seat.seatNumber}
+                                      </option>
+                                    ))}
+                                </SelectField>
+
+                                <SelectField
+                                  label="Gate Check Number"
+                                  value={editGateCheckId}
+                                  onChange={setEditGateCheckId}
+                                >
+                                  {gateChecks
+                                    .filter((gateCheck) =>
+                                      gateCheck.id === item.id ||
+                                      cleanUpper(gateCheck.status) === "AVAILABLE"
+                                    )
+                                    .sort((a, b) =>
+                                      String(a.gateCheckNumber || "").localeCompare(String(b.gateCheckNumber || ""))
+                                    )
+                                    .map((gateCheck) => (
+                                      <option key={gateCheck.id} value={gateCheck.id}>
+                                        {gateCheck.gateCheckNumber}
+                                      </option>
+                                    ))}
+                                </SelectField>
+
+                                <TextField
+                                  label="Carry-On Weight (lb)"
+                                  value={editWeight}
+                                  onChange={setEditWeight}
+                                  placeholder="Example: 22.5"
+                                  type="number"
+                                  inputMode="decimal"
+                                />
+
+                                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveAssignmentEdit(item)}
+                                    disabled={savingAssignmentEdit}
+                                    style={{ ...primaryButton, opacity: savingAssignmentEdit ? 0.55 : 1 }}
+                                  >
+                                    {savingAssignmentEdit ? "Saving..." : "Save Changes"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={cancelAssignmentEdit}
+                                    disabled={savingAssignmentEdit}
+                                    style={secondaryButton}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => beginAssignmentEdit(item)}
+                                style={secondaryButton}
+                              >
+                                Edit Assignment
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   )}
@@ -2400,6 +2823,16 @@ const inputStyle = {
 
   fontSize:
     "0.9rem",
+};
+
+const secondaryButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  color: "#334155",
+  fontWeight: 900,
+  cursor: "pointer",
 };
 
 const primaryButton = {
