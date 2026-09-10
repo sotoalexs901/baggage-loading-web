@@ -15,7 +15,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 
-import { db } from "../firebase";
+import { db } from "../../firebase";
 
 function normalizeRole(
   value
@@ -214,6 +214,13 @@ export default function CarryOnCounterPage({
   );
 
   const [
+    carryOnWeight,
+    setCarryOnWeight,
+  ] = useState(
+    ""
+  );
+
+  const [
     lastMinuteName,
     setLastMinuteName,
   ] = useState(
@@ -230,6 +237,13 @@ export default function CarryOnCounterPage({
   const [
     lastMinuteGateCheck,
     setLastMinuteGateCheck,
+  ] = useState(
+    ""
+  );
+
+  const [
+    lastMinuteWeight,
+    setLastMinuteWeight,
   ] = useState(
     ""
   );
@@ -626,6 +640,7 @@ export default function CarryOnCounterPage({
       gateCheckId,
       gateCheckNumber,
       gateCheckSource,
+      counterWeightLbs,
       createPassenger = false,
       createSeat = false,
       createGateCheck = false,
@@ -884,6 +899,9 @@ export default function CarryOnCounterPage({
               assignedSeat:
                 seatNumber,
 
+              counterRecordedWeightLbs:
+                counterWeightLbs,
+
               assignedAt:
                 serverTimestamp(),
 
@@ -925,6 +943,15 @@ export default function CarryOnCounterPage({
               gateCheckNumber,
 
               gateCheckSource,
+
+              counterRecordedWeightLbs:
+                counterWeightLbs,
+
+              counterWeightRecordedAt:
+                serverTimestamp(),
+
+              counterWeightRecordedBy:
+                actor,
 
               status:
                 "COUNTER_ASSIGNED",
@@ -1005,6 +1032,9 @@ export default function CarryOnCounterPage({
 
           gateCheckNumber,
 
+          counterRecordedWeightLbs:
+            counterWeightLbs,
+
           message:
             `Carry-On ${gateCheckNumber} assigned at Counter.`,
 
@@ -1037,6 +1067,11 @@ export default function CarryOnCounterPage({
         return;
       }
 
+      const parsedWeight =
+        Number(
+          carryOnWeight
+        );
+
       if (
         !selectedFlight ||
         !selectedPassenger ||
@@ -1045,6 +1080,20 @@ export default function CarryOnCounterPage({
       ) {
         setError(
           "Select Passenger, Assigned Seat and Gate Check Number."
+        );
+
+        return;
+      }
+
+      if (
+        !Number.isFinite(
+          parsedWeight
+        ) ||
+        parsedWeight <=
+          0
+      ) {
+        setError(
+          "Enter a valid Carry-On weight in pounds."
         );
 
         return;
@@ -1091,6 +1140,13 @@ export default function CarryOnCounterPage({
             selectedGateCheck
               .source ||
             "PRELOADED",
+
+          counterWeightLbs:
+            Math.round(
+              parsedWeight *
+                10
+            ) /
+            10,
         });
 
         setMessage(
@@ -1106,6 +1162,10 @@ export default function CarryOnCounterPage({
         );
 
         setSelectedGateCheckId(
+          ""
+        );
+
+        setCarryOnWeight(
           ""
         );
       } catch (
@@ -1178,13 +1238,23 @@ export default function CarryOnCounterPage({
           lastMinuteGateCheck
         );
 
+      const parsedWeight =
+        Number(
+          lastMinuteWeight
+        );
+
       if (
         !passengerName ||
         !seatNumber ||
-        !gateCheckNumber
+        !gateCheckNumber ||
+        !Number.isFinite(
+          parsedWeight
+        ) ||
+        parsedWeight <=
+          0
       ) {
         setError(
-          "Passenger Name, Assigned Seat and Gate Check Number are required."
+          "Passenger Name, Assigned Seat, Gate Check Number and valid Carry-On Weight are required."
         );
 
         return;
@@ -1273,6 +1343,13 @@ export default function CarryOnCounterPage({
 
           createGateCheck:
             !existingGateCheck,
+
+          counterWeightLbs:
+            Math.round(
+              parsedWeight *
+                10
+            ) /
+            10,
         });
 
         setMessage(
@@ -1288,6 +1365,10 @@ export default function CarryOnCounterPage({
         );
 
         setLastMinuteGateCheck(
+          ""
+        );
+
+        setLastMinuteWeight(
           ""
         );
       } catch (
@@ -1681,6 +1762,19 @@ export default function CarryOnCounterPage({
                   )
                 )}
               </SelectField>
+
+              <TextField
+                label="Carry-On Weight (lb)"
+                value={
+                  carryOnWeight
+                }
+                onChange={
+                  setCarryOnWeight
+                }
+                placeholder="Example: 22.5"
+                type="number"
+                inputMode="decimal"
+              />
             </div>
 
             <button
@@ -1806,6 +1900,19 @@ export default function CarryOnCounterPage({
                   setLastMinuteGateCheck
                 }
                 placeholder="Example: GC823999"
+              />
+
+              <TextField
+                label="Carry-On Weight (lb)"
+                value={
+                  lastMinuteWeight
+                }
+                onChange={
+                  setLastMinuteWeight
+                }
+                placeholder="Example: 22.5"
+                type="number"
+                inputMode="decimal"
               />
             </div>
 
@@ -1980,6 +2087,8 @@ export default function CarryOnCounterPage({
                         >
                           Seat: {item.assignedSeat || "-"}
                           {" - "}
+                          Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
+                          {" - "}
                           Status: {item.status || "COUNTER_ASSIGNED"}
                           {item.passengerSource ===
                           "LAST_MINUTE"
@@ -2137,6 +2246,8 @@ function TextField({
   value,
   onChange,
   placeholder,
+  type = "text",
+  inputMode,
 }) {
   return (
     <label
@@ -2164,7 +2275,13 @@ function TextField({
       </span>
 
       <input
-        type="text"
+        type={
+          type
+        }
+
+        inputMode={
+          inputMode
+        }
 
         value={
           value
