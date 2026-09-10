@@ -13,6 +13,8 @@ import {
 
 import { db } from "../firebase";
 
+const BLCS_LOGO_SRC = "/blcs-icon-512.png";
+
 function cleanUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -365,6 +367,8 @@ export default function CarryOnReportPage({
                 display: "flex",
                 justifyContent:
                   "space-between",
+                alignItems:
+                  "flex-start",
                 gap: 12,
                 flexWrap: "wrap",
               }}
@@ -387,21 +391,35 @@ export default function CarryOnReportPage({
                 >
                   Carry-On Gate Check Report
                 </h2>
-              </div>
 
-              <div
-                style={{
-                  textAlign: "right",
-                  fontSize: "0.82rem",
-                }}
-              >
-                <strong>
+                <div
+                  style={{
+                    marginTop: 8,
+                    color: "#0f172a",
+                    fontWeight: 800,
+                    fontSize: "0.92rem",
+                  }}
+                >
                   {selectedFlight.flightNumber}
-                </strong>
-                <div>
+                  {" - "}
                   {selectedFlight.flightDate}
                 </div>
               </div>
+
+              <img
+                src={BLCS_LOGO_SRC}
+                alt="BLCSYSTEM logo"
+                style={{
+                  width: 84,
+                  maxWidth: "100%",
+                  height: "auto",
+                  objectFit: "contain",
+                }}
+                onError={(event) => {
+                  event.currentTarget.style.display =
+                    "none";
+                }}
+              />
             </div>
 
             <div
