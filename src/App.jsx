@@ -981,10 +981,7 @@ export default function App() {
             }
 
             /*
-             * IMPORTANT FIX:
-             *
-             * FlightsPage now sends:
-             * flightId + flightNumber
+             * Regular baggage flight.
              */
             onFlightSelected={(
               flightId,
@@ -993,6 +990,18 @@ export default function App() {
               selectFlight(
                 flightId,
                 flightNumber
+              )
+            }
+
+            /*
+             * Carry-On-only flight.
+             * Opens the independent Carry-On SETUP flow.
+             */
+            onCarryOnFlightSelected={(
+              carryOnFlightId
+            ) =>
+              handleOpenCarryOnFromDashboard(
+                carryOnFlightId
               )
             }
           />
