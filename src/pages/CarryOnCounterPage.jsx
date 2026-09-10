@@ -17,6 +17,28 @@ import {
 
 import { db } from "../firebase";
 
+function getTodayYYYYMMDD() {
+  const now = new Date();
+
+  const year = now.getFullYear();
+
+  const month = String(
+    now.getMonth() + 1
+  ).padStart(
+    2,
+    "0"
+  );
+
+  const day = String(
+    now.getDate()
+  ).padStart(
+    2,
+    "0"
+  );
+
+  return `${year}-${month}-${day}`;
+}
+
 function normalizeRole(
   value
 ) {
@@ -122,6 +144,13 @@ export default function CarryOnCounterPage({
   selectedCarryOnFlightId,
   onSelectCarryOnFlight,
 }) {
+  const today =
+    useMemo(
+      () =>
+        getTodayYYYYMMDD(),
+      []
+    );
+
   const role =
     normalizeRole(
       user?.role
@@ -344,16 +373,29 @@ export default function CarryOnCounterPage({
           snap
         ) => {
           const rows =
-            snap.docs.map(
-              (
-                item
-              ) => ({
-                id:
-                  item.id,
+            snap.docs
+              .map(
+                (
+                  item
+                ) => ({
+                  id:
+                    item.id,
 
-                ...item.data(),
-              })
-            );
+                  ...item.data(),
+                })
+              )
+              .filter(
+                (
+                  item
+                ) =>
+                  String(
+                    item.flightDate ||
+                    ""
+                  ) ===
+                  today &&
+                  item?.isDeleted !==
+                    true
+              );
 
           rows.sort(
             (
@@ -392,7 +434,9 @@ export default function CarryOnCounterPage({
 
     return () =>
       unsub();
-  }, []);
+  }, [
+    today,
+  ]);
 
   useEffect(() => {
     if (
@@ -510,6 +554,38 @@ export default function CarryOnCounterPage({
     };
   }, [
     selectedCarryOnFlightId,
+  ]);
+
+  useEffect(() => {
+    const selectedIsToday =
+      flights.some(
+        (
+          flight
+        ) =>
+          flight.id ===
+          selectedCarryOnFlightId
+      );
+
+    if (selectedIsToday) {
+      return;
+    }
+
+    if (flights.length === 1) {
+      onSelectCarryOnFlight?.(
+        flights[0].id
+      );
+      return;
+    }
+
+    if (selectedCarryOnFlightId) {
+      onSelectCarryOnFlight?.(
+        null
+      );
+    }
+  }, [
+    flights,
+    selectedCarryOnFlightId,
+    onSelectCarryOnFlight,
   ]);
 
   const selectedFlight =
@@ -1783,7 +1859,7 @@ export default function CarryOnCounterPage({
                 800,
             }}
           >
-            Carry-On Flight
+            Today's Carry-On Flight
           </span>
 
           <select
@@ -1807,7 +1883,7 @@ export default function CarryOnCounterPage({
             }
           >
             <option value="">
-              Select flight
+              Select today's flight
             </option>
 
             {flights.map(
@@ -2745,7 +2821,7 @@ export default function CarryOnCounterPage({
       ) : (
         <Notice
           tone="warning"
-          text="Select a Carry-On flight to begin Counter assignments."
+          text={`No Carry-On flight is selected for today (${today}).`}
         />
       )}
     </div>
