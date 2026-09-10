@@ -19,6 +19,7 @@ import {
 import { db } from "../firebase";
 
 import CarryOnCounterPage from "./CarryOnCounterPage.jsx";
+import CarryOnGatePage from "./CarryOnGatePage.jsx";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
@@ -3452,9 +3453,19 @@ export default function CarryOnGateCheckPage({
 
         {activeTab ===
           "GATE" && (
-          <ComingSoon
-            title="Gate Collection"
-            description="Gate Controller will mark each assigned Carry-On as Collected at Gate."
+          <CarryOnGatePage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+            onSelectCarryOnFlight={
+              setSelectedCarryOnFlightId
+            }
           />
         )}
 
