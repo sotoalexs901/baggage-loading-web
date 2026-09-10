@@ -167,10 +167,22 @@ export default function CarryOnReportPage({
   const loadedCount =
     loadedRows.length;
 
+  const offloadedRows =
+    rows.filter(
+      (item) =>
+        cleanUpper(item?.status) ===
+        "OFFLOADED"
+    );
+
+  const offloadedCount =
+    offloadedRows.length;
+
   const remainingToLoad =
     Math.max(
       0,
-      assignedCount - loadedCount
+      assignedCount -
+      loadedCount -
+      offloadedCount
     );
 
   const additionalCount =
@@ -477,6 +489,11 @@ export default function CarryOnReportPage({
             />
 
             <Metric
+              label="Offloaded"
+              value={offloadedCount}
+            />
+
+            <Metric
               label="Remaining"
               value={remainingToLoad}
             />
@@ -516,7 +533,7 @@ export default function CarryOnReportPage({
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                minWidth: 1500,
+                minWidth: 2050,
                 fontSize: "0.76rem",
               }}
             >
@@ -530,6 +547,8 @@ export default function CarryOnReportPage({
                   <Th>Seat</Th>
                   <Th>Gate Check</Th>
                   <Th>Source</Th>
+                  <Th>Counter Weight</Th>
+                  <Th>Gate Weight</Th>
                   <Th>Status</Th>
                   <Th>Counter Time</Th>
                   <Th>Counter By</Th>
@@ -540,6 +559,10 @@ export default function CarryOnReportPage({
                   <Th>Loaded Time</Th>
                   <Th>Loaded By</Th>
                   <Th>Compartment</Th>
+                  <Th>Gate Notes</Th>
+                  <Th>Offload Reason</Th>
+                  <Th>Offloaded At</Th>
+                  <Th>Offloaded By</Th>
                 </tr>
               </thead>
 
@@ -547,7 +570,7 @@ export default function CarryOnReportPage({
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan="14"
+                      colSpan="20"
                       style={{
                         padding: 14,
                         textAlign: "center",
@@ -574,6 +597,18 @@ export default function CarryOnReportPage({
 
                       <Td>
                         {item.passengerSource || "-"}
+                      </Td>
+
+                      <Td>
+                        {item.counterRecordedWeightLbs
+                          ? `${item.counterRecordedWeightLbs} lb`
+                          : "-"}
+                      </Td>
+
+                      <Td>
+                        {item.gateVerifiedWeightLbs
+                          ? `${item.gateVerifiedWeightLbs} lb`
+                          : "-"}
                       </Td>
 
                       <Td>
@@ -631,6 +666,26 @@ export default function CarryOnReportPage({
                       <Td strong>
                         {item.compartment || "-"}
                       </Td>
+
+                      <Td>
+                        {item.gateCollectionNoteCombined || "-"}
+                      </Td>
+
+                      <Td>
+                        {item.offloadReason || "-"}
+                      </Td>
+
+                      <Td>
+                        {formatTimestamp(
+                          item.offloadedAt
+                        )}
+                      </Td>
+
+                      <Td>
+                        {actorName(
+                          item.offloadedBy
+                        )}
+                      </Td>
                     </tr>
                   ))
                 )}
@@ -664,8 +719,10 @@ export default function CarryOnReportPage({
             {assignedCount === 0
               ? "No Carry-On assignments have been created."
               : remainingToLoad === 0
-                ? "All assigned Carry-On items are loaded on the aircraft."
-                : `${remainingToLoad} assigned Carry-On item(s) are not yet marked AIRCRAFT_LOADED.`}
+                ? offloadedCount > 0
+                  ? `Operation complete: ${loadedCount} loaded and ${offloadedCount} offloaded.`
+                  : "All assigned Carry-On items are loaded on the aircraft."
+                : `${remainingToLoad} active Carry-On item(s) are still pending final disposition.`}
           </div>
 
           {error && (
