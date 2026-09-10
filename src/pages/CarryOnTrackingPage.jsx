@@ -13,6 +13,8 @@ import {
 
 import { db } from "../firebase";
 
+const BLCS_LOGO_SRC = "/blcs-logo.png";
+
 function cleanUpper(value) {
   return String(value || "").trim().toUpperCase();
 }
@@ -450,49 +452,16 @@ export default function CarryOnTrackingPage({
             gap: 14,
           }}
         >
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border:
-                "1px solid #c4b5fd",
-              background: "#f5f3ff",
-            }}
-          >
-            <div
-              style={{
-                color: "#64748b",
-                fontSize: "0.7rem",
-                fontWeight: 800,
-              }}
-            >
-              BLCS OPERATIONS - CARRY-ON TRACKING
-            </div>
-
-            <strong>
-              {selectedFlight.flightNumber}
-              {" - "}
-              {selectedFlight.flightDate}
-            </strong>
-
-            <div
-              style={{
-                marginTop: 4,
-                color: "#64748b",
-                fontSize: "0.8rem",
-              }}
-            >
-              {selectedFlight.origin}
-              {" -> "}
-              {selectedFlight.destination}
-              {selectedFlight.gate
-                ? ` - Gate ${selectedFlight.gate}`
-                : ""}
-              {selectedFlight.tailNumber
-                ? ` - Tail ${selectedFlight.tailNumber}`
-                : ""}
-            </div>
-          </div>
+          <DocumentHeader
+            title="Carry-On Tracking"
+            subtitle="BLCS OPERATIONS"
+            flightNumber={selectedFlight.flightNumber}
+            flightDate={selectedFlight.flightDate}
+            origin={selectedFlight.origin}
+            destination={selectedFlight.destination}
+            gate={selectedFlight.gate}
+            tailNumber={selectedFlight.tailNumber}
+          />
 
           <div
             className="tracking-print-full-only"
@@ -1002,33 +971,16 @@ function PassengerFullDetail({
         gap: 14,
       }}
     >
-      <div
-        style={{
-          padding: 14,
-          borderRadius: 12,
-          border:
-            "1px solid #cbd5e1",
-          background: "white",
-        }}
+      <DocumentHeader
+        title="Carry-On Passenger Full Detail"
+        subtitle="BLCS OPERATIONS"
+        flightNumber={selectedFlight?.flightNumber}
+        flightDate={selectedFlight?.flightDate}
+        origin={selectedFlight?.origin}
+        destination={selectedFlight?.destination}
+        gate={selectedFlight?.gate}
+        tailNumber={selectedFlight?.tailNumber}
       >
-        <div
-          style={{
-            color: "#64748b",
-            fontSize: "0.72rem",
-            fontWeight: 800,
-          }}
-        >
-          BLCS OPERATIONS
-        </div>
-
-        <h2
-          style={{
-            margin: "4px 0 0",
-          }}
-        >
-          Carry-On Passenger Full Detail
-        </h2>
-
         <div
           style={{
             marginTop: 10,
@@ -1093,7 +1045,7 @@ function PassengerFullDetail({
             value={selectedFlight?.tailNumber || "-"}
           />
         </div>
-      </div>
+      </DocumentHeader>
 
       <DetailStep
         title="1. Counter Assigned"
@@ -1123,6 +1075,113 @@ function PassengerFullDetail({
             : null
         }
       />
+    </div>
+  );
+}
+
+function DocumentHeader({
+  title,
+  subtitle = "BLCS OPERATIONS",
+  flightNumber,
+  flightDate,
+  origin,
+  destination,
+  gate,
+  tailNumber,
+  children,
+}) {
+  const routeText =
+    origin || destination
+      ? `${origin || "-"} -> ${destination || "-"}`
+      : null;
+
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 12,
+        border:
+          "1px solid #cbd5e1",
+        background: "white",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent:
+            "space-between",
+          alignItems: "flex-start",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div
+            style={{
+              color: "#64748b",
+              fontSize: "0.72rem",
+              fontWeight: 800,
+            }}
+          >
+            {subtitle}
+          </div>
+
+          <h2
+            style={{
+              margin: "4px 0 0",
+            }}
+          >
+            {title}
+          </h2>
+
+          <div
+            style={{
+              marginTop: 8,
+              color: "#0f172a",
+              fontWeight: 800,
+              fontSize: "0.92rem",
+            }}
+          >
+            {(flightNumber || "-") +
+              " - " +
+              (flightDate || "-")}
+          </div>
+
+          {(routeText || gate || tailNumber) && (
+            <div
+              style={{
+                marginTop: 4,
+                color: "#64748b",
+                fontSize: "0.8rem",
+              }}
+            >
+              {routeText || ""}
+              {gate
+                ? `${routeText ? " - " : ""}Gate ${gate}`
+                : ""}
+              {tailNumber
+                ? `${routeText || gate ? " - " : ""}Tail ${tailNumber}`
+                : ""}
+            </div>
+          )}
+        </div>
+
+        <img
+          src={BLCS_LOGO_SRC}
+          alt="BLCSYSTEM logo"
+          style={{
+            width: 84,
+            maxWidth: "100%",
+            height: "auto",
+            objectFit: "contain",
+          }}
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      </div>
+
+      {children}
     </div>
   );
 }
