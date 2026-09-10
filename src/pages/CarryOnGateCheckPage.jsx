@@ -136,7 +136,7 @@ function getActor(
    PDF TEXT
 ========================= */
 
-async function readPdfText(
+async function readPdfDocumentData(
   file
 ) {
   const arrayBuffer =
@@ -153,6 +153,9 @@ async function readPdfText(
   let fullText =
     "";
 
+  const lines =
+    [];
+
   for (
     let pageNumber = 1;
     pageNumber <=
@@ -167,8 +170,15 @@ async function readPdfText(
     const content =
       await page.getTextContent();
 
-    let pageText =
-      "";
+    /*
+     * PDF text items are not guaranteed to arrive in the same
+     * order that they appear visually on the page.
+     *
+     * For manifests we rebuild visual rows using the Y coordinate,
+     * then sort each row from left to right.
+     */
+    const rowMap =
+      new Map();
 
     for (
       const item of
@@ -178,28 +188,120 @@ async function readPdfText(
         String(
           item?.str ||
           ""
-        );
+        ).trim();
 
       if (!value) {
         continue;
       }
 
-      pageText +=
-        `${value} `;
+      const transform =
+        Array.isArray(
+          item?.transform
+        )
+          ? item.transform
+          : [];
+
+      const x =
+        Number(
+          transform?.[4] ||
+          0
+        );
+
+      const y =
+        Number(
+          transform?.[5] ||
+          0
+        );
+
+      /*
+       * Rounding Y to the nearest 2 points gives enough tolerance
+       * for text items that belong to the same printed table row.
+       */
+      const yKey =
+        Math.round(
+          y / 2
+        ) * 2;
 
       if (
-        item?.hasEOL
+        !rowMap.has(
+          yKey
+        )
       ) {
-        pageText +=
-          "\n";
+        rowMap.set(
+          yKey,
+          []
+        );
       }
+
+      rowMap
+        .get(
+          yKey
+        )
+        .push({
+          x,
+          value,
+        });
     }
 
+    const pageRows =
+      Array.from(
+        rowMap.entries()
+      )
+        .sort(
+          (
+            a,
+            b
+          ) =>
+            b[0] -
+            a[0]
+        )
+        .map(
+          (
+            [
+              ,
+              items,
+            ]
+          ) =>
+            items
+              .sort(
+                (
+                  a,
+                  b
+                ) =>
+                  a.x -
+                  b.x
+              )
+              .map(
+                (
+                  item
+                ) =>
+                  item.value
+              )
+              .join(
+                " "
+              )
+              .replace(
+                /\s+/g,
+                " "
+              )
+              .trim()
+        )
+        .filter(
+          Boolean
+        );
+
+    lines.push(
+      ...pageRows
+    );
+
     fullText +=
-      `${pageText}\n`;
+      `${pageRows.join("\n")}\n`;
   }
 
-  return fullText;
+  return {
+    fullText,
+    lines,
+  };
 }
 
 /* =========================
@@ -341,13 +443,30 @@ function parseFlightMeta(
 ========================= */
 
 function parsePassengerManifest(
-  text
+  documentData
 ) {
-  const source =
-    String(text || "")
-      .replace(/\r/g, " ")
-      .replace(/\n+/g, " ")
-      .replace(/\s+/g, " ");
+  const lines =
+    Array.isArray(
+      documentData?.lines
+    )
+      ? documentData.lines
+      : String(
+          documentData?.fullText ||
+          documentData ||
+          ""
+        )
+          .split(
+            /\n+/
+          )
+          .map(
+            (
+              line
+            ) =>
+              line.trim()
+          )
+          .filter(
+            Boolean
+          );
 
   const passengers =
     [];
@@ -356,21 +475,94 @@ function parsePassengerManifest(
     new Set();
 
   /*
-   * Expected manifest row shape:
-   * Seq SEC PNR [name...] DOB Gender Dest Seat ...
+   * We detect rows by their stable manifest structure:
    *
-   * We intentionally keep only passenger name
-   * and original seat.
+   * Seq + SEC + PNR + passenger name + DOB + Gender + Dest + Seat
+   *
+   * Example:
+   * 34 C QZL81I ALFONSO VALDES ELIAN 03-Dec-1999 M HAV 11B 7
+   *
+   * This does not depend on bag count, bag tags, PNR remarks or
+   * other columns after Seat.
    */
-  const regex =
-    /\b(\d{1,3})\s+[A-Z]\s+[A-Z0-9]{4,8}\s+(.+?)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+[MF]\s+[A-Z]{3}\s+(\d{1,2}[A-F])\b/g;
+  const rowRegex =
+    /^(\d{1,3})\s+[A-Z]\s+[A-Z0-9]{4,10}\s+(.+?)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+[MF]\s+[A-Z]{3}\s+(\d{1,2}[A-F])(?:\s|$)/i;
 
-  let match =
-    regex.exec(
-      source
-    );
+  for (
+    let index = 0;
+    index <
+    lines.length;
+    index += 1
+  ) {
+    let line =
+      String(
+        lines[index] ||
+        ""
+      )
+        .replace(
+          /\s+/g,
+          " "
+        )
+        .trim();
 
-  while (match) {
+    if (!line) {
+      continue;
+    }
+
+    let match =
+      line.match(
+        rowRegex
+      );
+
+    /*
+     * Some passenger names wrap to a second visual line in the PDF.
+     * If the first row starts with Seq/SEC/PNR but does not yet contain
+     * the DOB/seat fields, join the next visual row and try again.
+     */
+    if (
+      !match &&
+      /^\d{1,3}\s+[A-Z]\s+[A-Z0-9]{4,10}\s+/i.test(
+        line
+      ) &&
+      index + 1 <
+        lines.length
+    ) {
+      const combined =
+        `${line} ${String(
+          lines[
+            index + 1
+          ] ||
+          ""
+        )
+          .replace(
+            /\s+/g,
+            " "
+          )
+          .trim()}`;
+
+      const combinedMatch =
+        combined.match(
+          rowRegex
+        );
+
+      if (
+        combinedMatch
+      ) {
+        line =
+          combined;
+
+        match =
+          combinedMatch;
+
+        index +=
+          1;
+      }
+    }
+
+    if (!match) {
+      continue;
+    }
+
     const sequence =
       String(
         match[1]
@@ -382,7 +574,10 @@ function parsePassengerManifest(
         ""
       )
         .trim()
-        .replace(/\s+/g, " ");
+        .replace(
+          /\s+/g,
+          " "
+        );
 
     const originalSeat =
       normalizeSeat(
@@ -390,13 +585,111 @@ function parsePassengerManifest(
       );
 
     if (
-      rawName &&
-      originalSeat
+      !rawName ||
+      !originalSeat
     ) {
+      continue;
+    }
+
+    const key =
+      `${sequence}_${rawName}_${originalSeat}`;
+
+    if (
+      seen.has(
+        key
+      )
+    ) {
+      continue;
+    }
+
+    seen.add(
+      key
+    );
+
+    passengers.push({
+      id:
+        safeDocId(
+          `PAX_${sequence}`
+        ),
+
+      sequence,
+
+      passengerName:
+        rawName,
+
+      originalSeat,
+
+      source:
+        "MANIFEST",
+    });
+  }
+
+  /*
+   * Fallback:
+   * If visual row reconstruction still yields nothing, try the
+   * complete text as one stream. This keeps the parser resilient
+   * across slightly different PDF generators.
+   */
+  if (
+    passengers.length ===
+    0
+  ) {
+    const source =
+      String(
+        documentData?.fullText ||
+        ""
+      )
+        .replace(
+          /\r/g,
+          " "
+        )
+        .replace(
+          /\n+/g,
+          " "
+        )
+        .replace(
+          /\s+/g,
+          " "
+        );
+
+    const fallbackRegex =
+      /\b(\d{1,3})\s+[A-Z]\s+[A-Z0-9]{4,10}\s+(.+?)\s+(\d{2}-[A-Za-z]{3}-\d{4})\s+[MF]\s+[A-Z]{3}\s+(\d{1,2}[A-F])\b/gi;
+
+    let match =
+      fallbackRegex.exec(
+        source
+      );
+
+    while (
+      match
+    ) {
+      const sequence =
+        String(
+          match[1]
+        );
+
+      const rawName =
+        String(
+          match[2] ||
+          ""
+        )
+          .trim()
+          .replace(
+            /\s+/g,
+            " "
+          );
+
+      const originalSeat =
+        normalizeSeat(
+          match[4]
+        );
+
       const key =
         `${sequence}_${rawName}_${originalSeat}`;
 
       if (
+        rawName &&
+        originalSeat &&
         !seen.has(
           key
         )
@@ -422,12 +715,12 @@ function parsePassengerManifest(
             "MANIFEST",
         });
       }
-    }
 
-    match =
-      regex.exec(
-        source
-      );
+      match =
+        fallbackRegex.exec(
+          source
+        );
+    }
   }
 
   return passengers;
@@ -953,19 +1246,19 @@ export default function CarryOnGateCheckPage({
           true
         );
 
-        const text =
-          await readPdfText(
+        const documentData =
+          await readPdfDocumentData(
             file
           );
 
         const meta =
           parseFlightMeta(
-            text
+            documentData.fullText
           );
 
         const parsedPassengers =
           parsePassengerManifest(
-            text
+            documentData
           );
 
         if (
@@ -1053,19 +1346,19 @@ export default function CarryOnGateCheckPage({
           true
         );
 
-        const text =
-          await readPdfText(
+        const documentData =
+          await readPdfDocumentData(
             file
           );
 
         const meta =
           parseFlightMeta(
-            text
+            documentData.fullText
           );
 
         const parsedSeats =
           parseEmptySeats(
-            text
+            documentData.fullText
           );
 
         if (
