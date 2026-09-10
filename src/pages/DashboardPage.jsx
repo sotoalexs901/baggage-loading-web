@@ -416,6 +416,7 @@ export default function DashboardPage({
   user,
   operationalContext,
   onOpenFlight,
+  onOpenCarryOnFlight,
   gateControllerOnDuty,
 }) {
   const role =
@@ -487,6 +488,18 @@ export default function DashboardPage({
     flightStats,
     setFlightStats,
   ] = useState({});
+
+  const [
+    carryOnFlights,
+    setCarryOnFlights,
+  ] = useState([]);
+
+  const [
+    loadingCarryOnFlights,
+    setLoadingCarryOnFlights,
+  ] = useState(
+    true
+  );
 
   const dashboardLoadTimerRef =
     useRef(null);
@@ -703,6 +716,210 @@ export default function DashboardPage({
   }, [
     selectedDate,
   ]);
+
+  /* =========================
+     CARRY-ON FLIGHTS SUBSCRIPTION
+
+     IMPORTANT:
+     This is isolated from the existing
+     baggage flights collection.
+  ========================= */
+
+  useEffect(() => {
+    setLoadingCarryOnFlights(
+      true
+    );
+
+    const q =
+      query(
+        collection(
+          db,
+          "carryOnFlights"
+        ),
+
+        where(
+          "flightDate",
+          "==",
+          selectedDate
+        )
+      );
+
+    const unsub =
+      onSnapshot(
+        q,
+
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                d
+              ) => ({
+                id:
+                  d.id,
+
+                ...d.data(),
+              })
+            );
+
+          rows.sort(
+            (
+              a,
+              b
+            ) =>
+              String(
+                a.flightNumber ||
+                ""
+              ).localeCompare(
+                String(
+                  b.flightNumber ||
+                  ""
+                )
+              )
+          );
+
+          setCarryOnFlights(
+            rows
+          );
+
+          setLoadingCarryOnFlights(
+            false
+          );
+        },
+
+        (
+          error
+        ) => {
+          console.error(
+            "Dashboard Carry-On flights error:",
+            error
+          );
+
+          setCarryOnFlights(
+            []
+          );
+
+          setLoadingCarryOnFlights(
+            false
+          );
+
+          logDashboardIncident({
+            action:
+              "LOAD_CARRY_ON_FLIGHTS",
+
+            severity:
+              "MEDIUM",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              getErrorCode(
+                error
+              ),
+
+            message:
+              getErrorMessage(
+                error,
+                "Unable to load Carry-On flights."
+              ),
+
+            metadata: {
+              selectedDate,
+            },
+          });
+        }
+      );
+
+    return () =>
+      unsub();
+  }, [
+    selectedDate,
+  ]);
+
+  const openCarryOnFlight =
+    (
+      flight
+    ) => {
+      const timer =
+        startSystemTimer();
+
+      try {
+        if (
+          typeof onOpenCarryOnFlight !==
+          "function"
+        ) {
+          throw new Error(
+            "Dashboard onOpenCarryOnFlight callback is not available."
+          );
+        }
+
+        onOpenCarryOnFlight(
+          flight.id
+        );
+
+        logSystemSuccess({
+          module:
+            "DASHBOARD",
+
+          action:
+            "OPEN_CARRY_ON",
+
+          durationMs:
+            timer.elapsed(),
+        }).catch(
+          (
+            error
+          ) => {
+            console.warn(
+              "Dashboard Carry-On open metric failed:",
+              error
+            );
+          }
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Dashboard Carry-On open error:",
+          error
+        );
+
+        logDashboardIncident({
+          action:
+            "OPEN_CARRY_ON",
+
+          severity:
+            "MEDIUM",
+
+          errorType:
+            "NAVIGATION",
+
+          errorCode:
+            getErrorCode(
+              error
+            ),
+
+          message:
+            getErrorMessage(
+              error,
+              "Unable to open Carry-On Gate Check Control."
+            ),
+
+          flightId:
+            flight?.id ||
+            null,
+
+          flightNumber:
+            flight?.flightNumber ||
+            null,
+
+          durationMs:
+            timer.elapsed(),
+        });
+      }
+    };
 
   /* =========================
      PER-FLIGHT STATS
@@ -1552,7 +1769,7 @@ export default function DashboardPage({
                       "#22c55e",
                   }}
                 >
-                  ●
+                  â
                 </span>
 
                 Gate Controller on duty:{" "}
@@ -1634,7 +1851,7 @@ export default function DashboardPage({
             }}
           >
             {loading
-              ? "…"
+              ? "â¦"
               : flights.length}
           </p>
 
@@ -1681,7 +1898,7 @@ export default function DashboardPage({
           label="Gate Total"
           value={
             loading
-              ? "…"
+              ? "â¦"
               : summaryTotals.gate
           }
           tone="blue"
@@ -1691,7 +1908,7 @@ export default function DashboardPage({
           label="Bagroom"
           value={
             loading
-              ? "…"
+              ? "â¦"
               : summaryTotals.bagroom
           }
         />
@@ -1700,7 +1917,7 @@ export default function DashboardPage({
           label="Aircraft"
           value={
             loading
-              ? "…"
+              ? "â¦"
               : summaryTotals.aircraft
           }
         />
@@ -1709,7 +1926,7 @@ export default function DashboardPage({
           label="Missing"
           value={
             loading
-              ? "…"
+              ? "â¦"
               : summaryTotals.missing
           }
           tone={
@@ -1724,7 +1941,7 @@ export default function DashboardPage({
           label="Loaded Flights"
           value={
             loading
-              ? "…"
+              ? "â¦"
               : summaryTotals.loadedFlights
           }
           tone="good"
@@ -1941,7 +2158,7 @@ export default function DashboardPage({
                             }}
                           >
                             {" "}
-                            ·{" "}
+                            Â·{" "}
                             {flight.gate ||
                               "No Gate"}
                           </span>
@@ -1966,7 +2183,7 @@ export default function DashboardPage({
                               "-"}
                           </strong>
 
-                          {" · "}
+                          {" Â· "}
 
                           Aircraft:{" "}
                           <strong>
@@ -1996,7 +2213,7 @@ export default function DashboardPage({
                               "-"}
                           </strong>
 
-                          {" · "}
+                          {" Â· "}
 
                           Ramp Supervisor:{" "}
                           <strong>
@@ -2079,7 +2296,7 @@ export default function DashboardPage({
                         value={
                           stats.gateTotal ===
                           null
-                            ? "—"
+                            ? "â"
                             : stats.gateTotal
                         }
 
@@ -2116,7 +2333,7 @@ export default function DashboardPage({
                         value={
                           stats.missing ===
                           null
-                            ? "—"
+                            ? "â"
                             : stats.missing
                         }
 
@@ -2338,6 +2555,599 @@ export default function DashboardPage({
           </div>
         )}
       </section>
+
+      {/* =========================
+          CARRY-ON GATE CHECK CONTROL
+          ISOLATED FROM BAGGAGE FLOW
+      ========================= */}
+
+      <section
+        className="dash-section"
+        style={{
+          marginTop:
+            18,
+
+          border:
+            "1px solid #ddd6fe",
+
+          borderRadius:
+            16,
+
+          background:
+            "white",
+
+          padding:
+            16,
+
+          boxShadow:
+            "0 8px 22px rgba(15,23,42,0.05)",
+        }}
+      >
+        <div
+          style={{
+            display:
+              "flex",
+
+            justifyContent:
+              "space-between",
+
+            gap:
+              12,
+
+            flexWrap:
+              "wrap",
+
+            alignItems:
+              "center",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                color:
+                  "#7c3aed",
+
+                fontSize:
+                  "0.72rem",
+
+                fontWeight:
+                  900,
+
+                letterSpacing:
+                  "0.06em",
+              }}
+            >
+              CARRY-ON GATE CHECK CONTROL
+            </div>
+
+            <h3
+              style={{
+                margin:
+                  "5px 0 3px",
+
+                color:
+                  "#0f172a",
+              }}
+            >
+              Carry-On Flights
+            </h3>
+
+            <p
+              style={{
+                margin:
+                  0,
+
+                color:
+                  "#64748b",
+
+                fontSize:
+                  "0.84rem",
+              }}
+            >
+              Live Carry-On setup and operational status for {selectedDate}.
+            </p>
+          </div>
+
+          <div
+            style={{
+              minWidth:
+                118,
+
+              padding:
+                "10px 14px",
+
+              borderRadius:
+                12,
+
+              background:
+                "#f5f3ff",
+
+              border:
+                "1px solid #c4b5fd",
+
+              textAlign:
+                "center",
+            }}
+          >
+            <div
+              style={{
+                color:
+                  "#6d28d9",
+
+                fontSize:
+                  "0.72rem",
+
+                fontWeight:
+                  800,
+              }}
+            >
+              Flights
+            </div>
+
+            <div
+              style={{
+                marginTop:
+                  2,
+
+                color:
+                  "#4c1d95",
+
+                fontSize:
+                  "1.5rem",
+
+                fontWeight:
+                  900,
+              }}
+            >
+              {loadingCarryOnFlights
+                ? "\u2026"
+                : carryOnFlights.length}
+            </div>
+          </div>
+        </div>
+
+        {loadingCarryOnFlights ? (
+          <p
+            style={{
+              color:
+                "#64748b",
+
+              padding:
+                "12px 2px 0",
+            }}
+          >
+            Loading Carry-On flights...
+          </p>
+        ) : carryOnFlights.length ===
+          0 ? (
+          <div
+            style={{
+              marginTop:
+                12,
+
+              padding:
+                14,
+
+              borderRadius:
+                12,
+
+              border:
+                "1px dashed #cbd5e1",
+
+              background:
+                "#f8fafc",
+
+              color:
+                "#64748b",
+
+              fontSize:
+                "0.84rem",
+            }}
+          >
+            No Carry-On flights found for {selectedDate}.
+          </div>
+        ) : (
+          <div
+            style={{
+              display:
+                "grid",
+
+              gap:
+                10,
+
+              marginTop:
+                14,
+            }}
+          >
+            {carryOnFlights.map(
+              (
+                flight
+              ) => {
+                const status =
+                  String(
+                    flight?.status ||
+                    "SETUP"
+                  )
+                    .trim()
+                    .toUpperCase();
+
+                const required =
+                  Number(
+                    flight
+                      ?.requiredCarryOns ||
+                    0
+                  );
+
+                const gateChecks =
+                  Number(
+                    flight
+                      ?.gateCheckNumberCount ||
+                    0
+                  );
+
+                const passengerCount =
+                  Number(
+                    flight
+                      ?.passengerCount ||
+                    0
+                  );
+
+                const availableSeats =
+                  Number(
+                    flight
+                      ?.availableSeatCount ||
+                    0
+                  );
+
+                const statusColors =
+                  status ===
+                  "READY"
+                    ? {
+                        bg:
+                          "#dcfce7",
+
+                        border:
+                          "#86efac",
+
+                        text:
+                          "#166534",
+                      }
+                    : status ===
+                        "COMPLETE"
+                      ? {
+                          bg:
+                            "#dbeafe",
+
+                          border:
+                            "#93c5fd",
+
+                          text:
+                            "#1d4ed8",
+                        }
+                      : status ===
+                          "IN_PROGRESS"
+                        ? {
+                            bg:
+                              "#ffedd5",
+
+                            border:
+                              "#fdba74",
+
+                            text:
+                              "#9a3412",
+                          }
+                        : {
+                            bg:
+                              "#f5f3ff",
+
+                            border:
+                              "#c4b5fd",
+
+                            text:
+                              "#6d28d9",
+                          };
+
+                return (
+                  <div
+                    key={
+                      flight.id
+                    }
+                    style={{
+                      border:
+                        "1px solid #e5e7eb",
+
+                      borderRadius:
+                        13,
+
+                      padding:
+                        13,
+
+                      background:
+                        "#ffffff",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display:
+                          "flex",
+
+                        justifyContent:
+                          "space-between",
+
+                        alignItems:
+                          "flex-start",
+
+                        gap:
+                          12,
+
+                        flexWrap:
+                          "wrap",
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            display:
+                              "flex",
+
+                            alignItems:
+                              "center",
+
+                            gap:
+                              8,
+
+                            flexWrap:
+                              "wrap",
+                          }}
+                        >
+                          <strong
+                            style={{
+                              color:
+                                "#0f172a",
+
+                              fontSize:
+                                "1rem",
+                            }}
+                          >
+                            {flight.flightNumber ||
+                              "-"}
+                          </strong>
+
+                          <span
+                            style={{
+                              padding:
+                                "4px 8px",
+
+                              borderRadius:
+                                999,
+
+                              background:
+                                statusColors.bg,
+
+                              border:
+                                `1px solid ${statusColors.border}`,
+
+                              color:
+                                statusColors.text,
+
+                              fontSize:
+                                "0.68rem",
+
+                              fontWeight:
+                                900,
+                            }}
+                          >
+                            {status.replace(
+                              "_",
+                              " "
+                            )}
+                          </span>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop:
+                              5,
+
+                            color:
+                              "#64748b",
+
+                            fontSize:
+                              "0.8rem",
+                          }}
+                        >
+                          {flight.origin ||
+                            "-"}
+                          {" \u2192 "}
+                          {flight.destination ||
+                            "-"}
+
+                          {flight.gate
+                            ? ` \u00B7 Gate ${flight.gate}`
+                            : ""}
+
+                          {flight.tailNumber
+                            ? ` \u00B7 Tail ${flight.tailNumber}`
+                            : ""}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+
+                        onClick={() =>
+                          openCarryOnFlight(
+                            flight
+                          )
+                        }
+
+                        style={{
+                          padding:
+                            "8px 11px",
+
+                          borderRadius:
+                            9,
+
+                          border:
+                            "1px solid #7c3aed",
+
+                          background:
+                            "#7c3aed",
+
+                          color:
+                            "white",
+
+                          fontWeight:
+                            900,
+
+                          cursor:
+                            "pointer",
+                        }}
+                      >
+                        Open Carry-On
+                      </button>
+                    </div>
+
+                    <div
+                      style={{
+                        display:
+                          "grid",
+
+                        gridTemplateColumns:
+                          "repeat(auto-fit, minmax(120px, 1fr))",
+
+                        gap:
+                          8,
+
+                        marginTop:
+                          11,
+                      }}
+                    >
+                      <CarryOnMetric
+                        label="Passengers"
+                        value={
+                          passengerCount
+                        }
+                      />
+
+                      <CarryOnMetric
+                        label="Available Seats"
+                        value={
+                          availableSeats
+                        }
+                      />
+
+                      <CarryOnMetric
+                        label="Required"
+                        value={
+                          required
+                        }
+                      />
+
+                      <CarryOnMetric
+                        label="Gate Checks"
+                        value={
+                          gateChecks
+                        }
+                      />
+                    </div>
+
+                    {required >
+                      gateChecks && (
+                      <div
+                        style={{
+                          marginTop:
+                            9,
+
+                          padding:
+                            "7px 9px",
+
+                          borderRadius:
+                            9,
+
+                          border:
+                            "1px solid #fde68a",
+
+                          background:
+                            "#fffbeb",
+
+                          color:
+                            "#92400e",
+
+                          fontSize:
+                            "0.75rem",
+
+                          fontWeight:
+                            800,
+                        }}
+                      >
+                        {required -
+                          gateChecks} additional Gate Check number(s) needed to meet the current target.
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function CarryOnMetric({
+  label,
+  value,
+}) {
+  return (
+    <div
+      style={{
+        padding:
+          9,
+
+        borderRadius:
+          10,
+
+        background:
+          "#f8fafc",
+
+        border:
+          "1px solid #e2e8f0",
+      }}
+    >
+      <div
+        style={{
+          color:
+            "#64748b",
+
+          fontSize:
+            "0.68rem",
+
+          fontWeight:
+            700,
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          marginTop:
+            2,
+
+          color:
+            "#0f172a",
+
+          fontSize:
+            "1.08rem",
+
+          fontWeight:
+            900,
+        }}
+      >
+        {value}
+      </div>
     </div>
   );
 }
