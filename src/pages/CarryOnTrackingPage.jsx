@@ -13,7 +13,7 @@ import {
 
 import { db } from "../firebase";
 
-const BLCS_LOGO_SRC = "/blcs-logo.png";
+const BLCS_LOGO_SRC = "/blcs-icon-512.png";
 
 function cleanUpper(value) {
   return String(value || "").trim().toUpperCase();
