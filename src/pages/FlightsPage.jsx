@@ -9,12 +9,15 @@ import React, {
 import {
   addDoc,
   collection,
+  doc,
+  getDoc,
   getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   where,
 } from "firebase/firestore";
 
@@ -358,6 +361,7 @@ export default function FlightsPage({
   user,
   operationalContext,
   onFlightSelected,
+  onCarryOnFlightSelected,
 }) {
   const today =
     useMemo(
@@ -414,6 +418,9 @@ export default function FlightsPage({
     form,
     setForm,
   ] = useState({
+    operationType:
+      "REGULAR",
+
     flightNumber:
       "",
 
@@ -424,6 +431,15 @@ export default function FlightsPage({
       "",
 
     aircraftType:
+      "",
+
+    origin:
+      "TPA",
+
+    destination:
+      "",
+
+    tailNumber:
       "",
   });
 
@@ -664,6 +680,9 @@ export default function FlightsPage({
       );
 
       setForm({
+        operationType:
+          "REGULAR",
+
         flightNumber:
           "",
 
@@ -674,6 +693,15 @@ export default function FlightsPage({
           "",
 
         aircraftType:
+          "",
+
+        origin:
+          "TPA",
+
+        destination:
+          "",
+
+        tailNumber:
           "",
       });
 
@@ -722,6 +750,14 @@ export default function FlightsPage({
       const timer =
         startSystemTimer();
 
+      const operationType =
+        String(
+          form.operationType ||
+          "REGULAR"
+        )
+          .trim()
+          .toUpperCase();
+
       const flightNumber =
         form.flightNumber
           .trim()
@@ -738,6 +774,21 @@ export default function FlightsPage({
 
       const aircraftType =
         form.aircraftType
+          .trim()
+          .toUpperCase();
+
+      const origin =
+        form.origin
+          .trim()
+          .toUpperCase();
+
+      const destination =
+        form.destination
+          .trim()
+          .toUpperCase();
+
+      const tailNumber =
+        form.tailNumber
           .trim()
           .toUpperCase();
 
@@ -789,6 +840,187 @@ export default function FlightsPage({
           true
         );
 
+        /*
+         * CARRY-ON ONLY
+         *
+         * This is completely isolated from the
+         * existing baggage "flights" collection.
+         */
+        if (
+          operationType ===
+          "CARRY_ON_ONLY"
+        ) {
+          if (
+            !origin ||
+            !destination
+          ) {
+            throw new Error(
+              "Origin and Destination are required for Carry-On-only flights."
+            );
+          }
+
+          const airlineMatch =
+            flightNumber.match(
+              /^([A-Z0-9]{2,3})([0-9]{1,4})$/
+            );
+
+          if (
+            !airlineMatch
+          ) {
+            throw new Error(
+              "Use a complete flight number such as WL294."
+            );
+          }
+
+          const airline =
+            airlineMatch[1];
+
+          const flightNumberOnly =
+            airlineMatch[2];
+
+          const carryOnFlightId =
+            `${flightNumber}_${flightDate}`
+              .replace(
+                /[^A-Za-z0-9_-]/g,
+                "_"
+              );
+
+          const carryOnRef =
+            doc(
+              db,
+              "carryOnFlights",
+              carryOnFlightId
+            );
+
+          const existingCarryOn =
+            await getDoc(
+              carryOnRef
+            );
+
+          if (
+            existingCarryOn.exists()
+          ) {
+            setShowCreate(
+              false
+            );
+
+            setActionMsg(
+              `Carry-On flight already exists: ${flightNumber}`
+            );
+
+            onCarryOnFlightSelected?.(
+              carryOnFlightId,
+              flightNumber
+            );
+
+            return;
+          }
+
+          await setDoc(
+            carryOnRef,
+            {
+              operationType:
+                "CARRY_ON_ONLY",
+
+              flightNumber,
+
+              airline,
+
+              flightNumberOnly,
+
+              flightDate,
+
+              origin,
+
+              destination,
+
+              gate:
+                gate ||
+                null,
+
+              aircraft:
+                aircraftType ||
+                null,
+
+              aircraftType:
+                aircraftType ||
+                null,
+
+              tailNumber:
+                tailNumber ||
+                null,
+
+              status:
+                "SETUP",
+
+              requiredCarryOns:
+                0,
+
+              passengerCount:
+                0,
+
+              availableSeatCount:
+                0,
+
+              gateCheckNumberCount:
+                0,
+
+              createdAt:
+                serverTimestamp(),
+
+              createdBy:
+                operationalActor,
+
+              createdByUsername:
+                user?.username ||
+                null,
+
+              createdByFullName:
+                operationalActor
+                  .employeeFullName,
+
+              createdByOperationalPosition:
+                operationalActor
+                  .operationalPosition,
+
+              createdByOperationalPositionLabel:
+                operationalActor
+                  .operationalPositionLabel,
+            }
+          );
+
+          await logSystemSuccess({
+            module:
+              "FLIGHTS",
+
+            action:
+              "CREATE_CARRY_ON_FLIGHT",
+
+            durationMs:
+              timer.elapsed(),
+          });
+
+          setShowCreate(
+            false
+          );
+
+          setActionMsg(
+            `Carry-On flight created: ${flightNumber}`
+          );
+
+          onCarryOnFlightSelected?.(
+            carryOnFlightId,
+            flightNumber
+          );
+
+          return;
+        }
+
+        /*
+         * REGULAR BAGGAGE FLIGHT
+         *
+         * Existing production logic remains unchanged.
+         */
         const dupQ =
           query(
             collection(
@@ -966,7 +1198,10 @@ export default function FlightsPage({
             "FLIGHTS",
 
           action:
-            "CREATE_FLIGHT",
+            operationType ===
+            "CARRY_ON_ONLY"
+              ? "CREATE_CARRY_ON_FLIGHT"
+              : "CREATE_FLIGHT",
 
           status:
             "ERROR",
@@ -995,10 +1230,14 @@ export default function FlightsPage({
             timer.elapsed(),
 
           metadata: {
+            operationType,
             flightNumber,
             flightDate,
             gate,
             aircraftType,
+            origin,
+            destination,
+            tailNumber,
           },
         });
       } finally {
@@ -2454,6 +2693,79 @@ export default function FlightsPage({
                   12,
               }}
             >
+              <div
+                style={{
+                  gridColumn:
+                    isMobile
+                      ? "auto"
+                      : "1 / -1",
+                }}
+              >
+                <label
+                  style={
+                    label
+                  }
+                >
+                  Flight Operation
+                </label>
+
+                <select
+                  value={
+                    form.operationType
+                  }
+
+                  onChange={(
+                    event
+                  ) =>
+                    setForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        operationType:
+                          event
+                            .target
+                            .value,
+                      })
+                    )
+                  }
+
+                  style={
+                    input
+                  }
+                >
+                  <option value="REGULAR">
+                    Regular Flight - Full Baggage Flow
+                  </option>
+
+                  <option value="CARRY_ON_ONLY">
+                    Carry-On Check Only
+                  </option>
+                </select>
+
+                <div
+                  style={{
+                    marginTop:
+                      5,
+
+                    color:
+                      "#64748b",
+
+                    fontSize:
+                      "0.74rem",
+
+                    lineHeight:
+                      1.4,
+                  }}
+                >
+                  {form.operationType ===
+                  "CARRY_ON_ONLY"
+                    ? "Creates the flight in Carry-On Gate Check Control and opens SETUP for documents."
+                    : "Uses the existing Counter / Gate / Bagroom / Aircraft baggage workflow."}
+                </div>
+              </div>
+
               <div>
                 <label
                   style={
@@ -2615,6 +2927,134 @@ export default function FlightsPage({
                   }
                 />
               </div>
+
+              {form.operationType ===
+                "CARRY_ON_ONLY" && (
+                <>
+                  <div>
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      Origin
+                    </label>
+
+                    <input
+                      value={
+                        form.origin
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            origin:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      placeholder="e.g. TPA"
+
+                      autoCapitalize="characters"
+
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      Destination
+                    </label>
+
+                    <input
+                      value={
+                        form.destination
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            destination:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      placeholder="e.g. SNU"
+
+                      autoCapitalize="characters"
+
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      Tail Number
+                    </label>
+
+                    <input
+                      value={
+                        form.tailNumber
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            tailNumber:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      placeholder="e.g. N802WA"
+
+                      autoCapitalize="characters"
+
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             {formError && (
