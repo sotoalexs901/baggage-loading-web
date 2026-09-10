@@ -46,6 +46,37 @@ function actorName(value) {
   );
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function openPrintDocument(html, onBlocked) {
+  const printWindow = window.open(
+    "",
+    "_blank",
+    "width=1200,height=900"
+  );
+
+  if (!printWindow) {
+    onBlocked?.();
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+
+  window.setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+  }, 400);
+}
+
 function statusLabel(status) {
   switch (cleanUpper(status)) {
     case "COUNTER_ASSIGNED":
@@ -78,6 +109,108 @@ function statusRank(status) {
     default:
       return 0;
   }
+}
+
+
+function trackingStepHtml(label, time, actor, extra = "") {
+  return `
+    <div class="step">
+      <div class="step-title">${escapeHtml(label)}</div>
+      <div class="step-line"><strong>Time:</strong> ${escapeHtml(formatTimestamp(time))}</div>
+      <div class="step-line"><strong>By:</strong> ${escapeHtml(actorName(actor))}</div>
+      ${extra ? `<div class="step-extra">${escapeHtml(extra)}</div>` : ""}
+    </div>
+  `;
+}
+
+function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
+  const logoUrl = `${window.location.origin}/blcs-icon-512.png`;
+  const route = `${flight?.origin || "-"} -> ${flight?.destination || "-"}`;
+
+  const passengerBlocks = rows.map((item) => {
+    const offloaded = cleanUpper(item.status) === "OFFLOADED";
+    return `
+      <section class="passenger-card">
+        <div class="passenger-head">
+          <div>
+            <div class="passenger-name">${escapeHtml(item.passengerName || "-")}</div>
+            <div class="passenger-meta">Seat ${escapeHtml(item.assignedSeat || "-")} &middot; Gate Check ${escapeHtml(item.gateCheckNumber || "-")}</div>
+          </div>
+          <div class="status ${offloaded ? "offloaded" : ""}">${escapeHtml(statusLabel(item.status))}</div>
+        </div>
+
+        <div class="facts">
+          <div><span>Counter Weight</span><strong>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</strong></div>
+          <div><span>Gate Verified Weight</span><strong>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</strong></div>
+          <div><span>Compartment</span><strong>${escapeHtml(item.compartment || "-")}</strong></div>
+          <div><span>Source</span><strong>${escapeHtml(item.passengerSource || "-")}</strong></div>
+        </div>
+
+        ${item.gateCollectionNoteCombined ? `<div class="note"><strong>Gate Note:</strong> ${escapeHtml(item.gateCollectionNoteCombined)}</div>` : ""}
+        ${item.offloadReason ? `<div class="offload-note"><strong>Offload:</strong> ${escapeHtml(item.offloadReason)} &middot; ${escapeHtml(formatTimestamp(item.offloadedAt))} &middot; ${escapeHtml(actorName(item.offloadedBy))}</div>` : ""}
+
+        <div class="steps">
+          ${trackingStepHtml("Counter Assigned", item.counterAssignedAt, item.counterAssignedBy)}
+          ${trackingStepHtml("Gate Collected", item.gateCollectedAt, item.gateCollectedBy)}
+          ${trackingStepHtml("Ramp Received", item.rampReceivedAt, item.rampReceivedBy)}
+          ${trackingStepHtml("Aircraft Loaded", item.aircraftLoadedAt, item.aircraftLoadedBy, item.compartment ? `Compartment: ${item.compartment}` : "")}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  return `<!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>BLCS - ${passengerOnly ? "Passenger Detail" : "Carry-On Tracking"}</title>
+      <style>
+        * { box-sizing:border-box; }
+        body { font-family:Arial,Helvetica,sans-serif; margin:24px; color:#111827; background:#fff; }
+        .brand { display:flex; align-items:center; justify-content:space-between; gap:18px; padding-bottom:15px; margin-bottom:18px; border-bottom:2px solid #dbeafe; }
+        .brand-left { display:flex; align-items:center; gap:12px; }
+        .logo { width:58px; height:58px; object-fit:contain; border-radius:12px; }
+        .brand-name { font-size:13px; font-weight:900; letter-spacing:.12em; color:#0f4c81; }
+        .brand-sub { margin-top:3px; font-size:11px; color:#64748b; font-weight:700; }
+        .doc-label { text-align:right; font-size:11px; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.08em; }
+        h1 { margin:0; font-size:27px; }
+        .subtitle { margin:6px 0 18px; color:#475569; font-weight:700; }
+        .passenger-card { border:1px solid #dbeafe; border-radius:14px; padding:14px; margin-bottom:14px; page-break-inside:avoid; }
+        .passenger-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+        .passenger-name { font-size:18px; font-weight:900; }
+        .passenger-meta { margin-top:4px; color:#64748b; font-size:12px; font-weight:700; }
+        .status { padding:6px 9px; border-radius:999px; background:#ecfdf5; color:#166534; border:1px solid #86efac; font-size:10px; font-weight:900; }
+        .status.offloaded { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
+        .facts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:12px; }
+        .facts div { background:#f8fbff; border:1px solid #dbeafe; border-radius:10px; padding:9px; }
+        .facts span { display:block; font-size:8px; color:#64748b; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
+        .facts strong { display:block; margin-top:4px; font-size:12px; }
+        .steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:12px; }
+        .step { border:1px solid #e2e8f0; background:#f8fafc; border-radius:10px; padding:9px; }
+        .step-title { font-weight:900; font-size:11px; margin-bottom:6px; }
+        .step-line { font-size:9px; line-height:1.5; color:#475569; }
+        .step-extra { margin-top:4px; font-size:9px; font-weight:800; color:#166534; }
+        .note { margin-top:10px; padding:9px; border-radius:9px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:10px; }
+        .offload-note { margin-top:10px; padding:9px; border-radius:9px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:10px; }
+        .footer { margin-top:24px; padding-top:10px; border-top:1px solid #e2e8f0; color:#94a3b8; text-align:center; font-size:9px; }
+        @page { size: landscape; margin:10mm; }
+        @media print { body { margin:0; } }
+      </style>
+    </head>
+    <body>
+      <div class="brand">
+        <div class="brand-left">
+          <img class="logo" src="${logoUrl}" alt="BLCS" />
+          <div><div class="brand-name">BLCS</div><div class="brand-sub">Baggage Loading Control System</div></div>
+        </div>
+        <div class="doc-label">${passengerOnly ? "Carry-On Passenger Detail" : "Carry-On Tracking Report"}</div>
+      </div>
+      <h1>${passengerOnly ? "Carry-On Passenger Full Detail" : "Carry-On Tracking"}</h1>
+      <div class="subtitle">${escapeHtml(flight?.flightNumber || "-")} &middot; ${escapeHtml(flight?.flightDate || "-")} &middot; ${escapeHtml(route)}${flight?.gate ? ` &middot; Gate ${escapeHtml(flight.gate)}` : ""}</div>
+      ${passengerBlocks || "<p>No Carry-On assignments.</p>"}
+      <div class="footer">BLCS &middot; Baggage Loading Control System</div>
+    </body>
+  </html>`;
 }
 
 export default function CarryOnTrackingPage({
@@ -295,21 +428,31 @@ export default function CarryOnTrackingPage({
   );
 
   const printFullTracking = () => {
-    setPrintMode("FULL");
+    if (!selectedFlight) return;
 
-    window.setTimeout(() => {
-      window.print();
-    }, 50);
+    const html = buildTrackingDocument({
+      flight: selectedFlight,
+      rows: filteredAssignments,
+      passengerOnly: false,
+    });
+
+    openPrintDocument(html, () => {
+      setError("Pop-up blocked. Please allow pop-ups to print Tracking.");
+    });
   };
 
   const printPassengerDetail = () => {
-    if (!selectedAssignment) return;
+    if (!selectedAssignment || !selectedFlight) return;
 
-    setPrintMode("PASSENGER");
+    const html = buildTrackingDocument({
+      flight: selectedFlight,
+      rows: [selectedAssignment],
+      passengerOnly: true,
+    });
 
-    window.setTimeout(() => {
-      window.print();
-    }, 50);
+    openPrintDocument(html, () => {
+      setError("Pop-up blocked. Please allow pop-ups to print Passenger Detail.");
+    });
   };
 
   return (
