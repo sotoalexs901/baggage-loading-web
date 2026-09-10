@@ -1131,6 +1131,41 @@ export default function CarryOnGateCheckPage({
   );
 
   const [
+    setupGateChecks,
+    setSetupGateChecks,
+  ] = useState(
+    []
+  );
+
+  const [
+    gateCheckManagerText,
+    setGateCheckManagerText,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editingGateCheckId,
+    setEditingGateCheckId,
+  ] = useState(
+    ""
+  );
+
+  const [
+    editingGateCheckValue,
+    setEditingGateCheckValue,
+  ] = useState(
+    ""
+  );
+
+  const [
+    savingGateCheckManager,
+    setSavingGateCheckManager,
+  ] = useState(
+    false
+  );
+
+  const [
     parsingLoadManifest,
     setParsingLoadManifest,
   ] = useState(
@@ -1389,6 +1424,44 @@ export default function CarryOnGateCheckPage({
     return () =>
       unsub();
   }, []);
+
+  useEffect(() => {
+    if (!selectedCarryOnFlightId) {
+      setSetupGateChecks([]);
+      return undefined;
+    }
+
+    const unsub = onSnapshot(
+      collection(
+        db,
+        "carryOnFlights",
+        selectedCarryOnFlightId,
+        "gateCheckNumbers"
+      ),
+      (snap) => {
+        const rows = snap.docs.map((item) => ({
+          id: item.id,
+          ...item.data(),
+        }));
+
+        rows.sort((a, b) =>
+          String(a.gateCheckNumber || "").localeCompare(
+            String(b.gateCheckNumber || "")
+          )
+        );
+
+        setSetupGateChecks(rows);
+      },
+      (snapshotError) => {
+        console.error(
+          "Carry-On setup Gate Check snapshot error:",
+          snapshotError
+        );
+      }
+    );
+
+    return () => unsub();
+  }, [selectedCarryOnFlightId]);
 
   /* =========================
      LOAD SELECTED SETUP
@@ -2087,6 +2160,213 @@ export default function CarryOnGateCheckPage({
         );
       }
     };
+
+  const addManagedGateChecks = async () => {
+    setError("");
+    setMessage("");
+
+    if (!selectedFlight || !canManageGateChecks) {
+      setError("You do not have permission to manage Gate Check numbers.");
+      return;
+    }
+
+    const seen = new Set();
+    const requested = String(gateCheckManagerText || "")
+      .split(/[\s,;\n]+/)
+      .map((value) => normalizeGateCheckNumber(value))
+      .filter((value) => {
+        if (!value || seen.has(value)) return false;
+        seen.add(value);
+        return true;
+      });
+
+    if (!requested.length) {
+      setError("Enter at least one valid Gate Check number.");
+      return;
+    }
+
+    const existing = new Set(
+      setupGateChecks.map((item) => normalizeGateCheckNumber(item.gateCheckNumber))
+    );
+    const additions = requested.filter((value) => !existing.has(value));
+
+    if (!additions.length) {
+      setMessage("All entered Gate Check numbers already exist for this flight.");
+      return;
+    }
+
+    try {
+      setSavingGateCheckManager(true);
+      const operations = additions.map((gateCheckNumber) => ({
+        ref: doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "gateCheckNumbers",
+          safeDocId(gateCheckNumber)
+        ),
+        data: {
+          gateCheckNumber,
+          status: "AVAILABLE",
+          source: "SETUP_MANUAL",
+          addedAt: serverTimestamp(),
+          addedBy: actor,
+        },
+        options: { merge: true },
+      }));
+
+      operations.push({
+        ref: doc(db, "carryOnFlights", selectedFlight.id),
+        data: {
+          gateCheckNumberCount: setupGateChecks.length + additions.length,
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+        },
+        options: { merge: true },
+      });
+
+      await commitWrites(operations);
+      setGateCheckManagerText("");
+      setMessage(`${additions.length} Gate Check number(s) added.`);
+    } catch (manageError) {
+      console.error("Add Gate Check numbers error:", manageError);
+      setError(manageError?.message || "Unable to add Gate Check numbers.");
+    } finally {
+      setSavingGateCheckManager(false);
+    }
+  };
+
+  const removeManagedGateCheck = async (item) => {
+    setError("");
+    setMessage("");
+
+    if (!selectedFlight || !canManageGateChecks || !item) return;
+
+    if (cleanUpper(item.status) !== "AVAILABLE") {
+      setError("Only AVAILABLE Gate Check numbers can be removed from Setup.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Remove Gate Check ${item.gateCheckNumber || item.id}?`
+    );
+    if (!ok) return;
+
+    try {
+      setSavingGateCheckManager(true);
+      const batch = writeBatch(db);
+      batch.delete(
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "gateCheckNumbers",
+          item.id
+        )
+      );
+      batch.set(
+        doc(db, "carryOnFlights", selectedFlight.id),
+        {
+          gateCheckNumberCount: Math.max(0, setupGateChecks.length - 1),
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+        },
+        { merge: true }
+      );
+      await batch.commit();
+      setMessage(`Gate Check ${item.gateCheckNumber || item.id} removed.`);
+    } catch (manageError) {
+      console.error("Remove Gate Check error:", manageError);
+      setError(manageError?.message || "Unable to remove Gate Check number.");
+    } finally {
+      setSavingGateCheckManager(false);
+    }
+  };
+
+  const saveManagedGateCheckEdit = async (item) => {
+    setError("");
+    setMessage("");
+
+    if (!selectedFlight || !canManageGateChecks || !item) return;
+
+    if (cleanUpper(item.status) !== "AVAILABLE") {
+      setError("Only AVAILABLE Gate Check numbers can be edited from Setup.");
+      return;
+    }
+
+    const nextNumber = normalizeGateCheckNumber(editingGateCheckValue);
+    const currentNumber = normalizeGateCheckNumber(item.gateCheckNumber);
+
+    if (!nextNumber) {
+      setError("Enter a valid Gate Check number.");
+      return;
+    }
+
+    if (nextNumber === currentNumber) {
+      setEditingGateCheckId("");
+      setEditingGateCheckValue("");
+      return;
+    }
+
+    const duplicate = setupGateChecks.some(
+      (row) => row.id !== item.id && normalizeGateCheckNumber(row.gateCheckNumber) === nextNumber
+    );
+    if (duplicate) {
+      setError("That Gate Check number already exists for this flight.");
+      return;
+    }
+
+    try {
+      setSavingGateCheckManager(true);
+      const batch = writeBatch(db);
+      const nextRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        safeDocId(nextNumber)
+      );
+      const oldRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        item.id
+      );
+
+      batch.set(
+        nextRef,
+        {
+          ...item,
+          gateCheckNumber: nextNumber,
+          status: "AVAILABLE",
+          editedAt: serverTimestamp(),
+          editedBy: actor,
+        },
+        { merge: true }
+      );
+      batch.delete(oldRef);
+      batch.set(
+        doc(db, "carryOnFlights", selectedFlight.id),
+        {
+          gateCheckNumberCount: setupGateChecks.length,
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+        },
+        { merge: true }
+      );
+
+      await batch.commit();
+      setEditingGateCheckId("");
+      setEditingGateCheckValue("");
+      setMessage(`Gate Check ${currentNumber} changed to ${nextNumber}.`);
+    } catch (manageError) {
+      console.error("Edit Gate Check error:", manageError);
+      setError(manageError?.message || "Unable to edit Gate Check number.");
+    } finally {
+      setSavingGateCheckManager(false);
+    }
+  };
 
   /* =========================
      SAVE SETUP
@@ -3374,6 +3654,162 @@ export default function CarryOnGateCheckPage({
                   </div>
                 </div>
 
+                <div style={panelStyle}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div>
+                      <h4 style={{ margin: 0 }}>
+                        Manage Gate Check Numbers
+                      </h4>
+                      <p style={smallText}>
+                        Add, edit or remove Gate Check numbers directly from Setup. Assigned numbers are protected from deletion or renaming.
+                      </p>
+                    </div>
+
+                    <strong style={{ color: "#6d28d9" }}>
+                      Total: {setupGateChecks.length}
+                    </strong>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(220px, 1fr) auto",
+                      gap: 8,
+                      marginTop: 10,
+                    }}
+                  >
+                    <textarea
+                      rows={3}
+                      value={gateCheckManagerText}
+                      onChange={(event) => setGateCheckManagerText(event.target.value)}
+                      disabled={!canManageGateChecks || savingGateCheckManager}
+                      placeholder={"Add numbers:\nGC823010\nGC823011"}
+                      style={{ ...inputStyle, resize: "vertical" }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={addManagedGateChecks}
+                      disabled={!canManageGateChecks || savingGateCheckManager}
+                      style={{
+                        ...primaryButton,
+                        opacity: !canManageGateChecks || savingGateCheckManager ? 0.55 : 1,
+                        alignSelf: "stretch",
+                      }}
+                    >
+                      {savingGateCheckManager ? "Saving..." : "Add Numbers"}
+                    </button>
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 7,
+                      marginTop: 12,
+                      maxHeight: 360,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {setupGateChecks.length === 0 ? (
+                      <div style={smallText}>No Gate Check numbers saved yet.</div>
+                    ) : (
+                      setupGateChecks.map((item) => {
+                        const available = cleanUpper(item.status) === "AVAILABLE";
+                        const editing = editingGateCheckId === item.id;
+
+                        return (
+                          <div
+                            key={item.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              gap: 8,
+                              flexWrap: "wrap",
+                              alignItems: "center",
+                              padding: 9,
+                              borderRadius: 10,
+                              border: "1px solid #e2e8f0",
+                              background: "white",
+                            }}
+                          >
+                            <div style={{ minWidth: 140 }}>
+                              {editing ? (
+                                <input
+                                  value={editingGateCheckValue}
+                                  onChange={(event) => setEditingGateCheckValue(event.target.value)}
+                                  style={{ ...inputStyle, padding: "8px 10px" }}
+                                />
+                              ) : (
+                                <strong>{item.gateCheckNumber || item.id}</strong>
+                              )}
+                              <div style={{ ...smallText, marginTop: 2 }}>
+                                {item.status || "AVAILABLE"}
+                                {item.passengerName ? ` - ${item.passengerName}` : ""}
+                                {item.assignedSeat ? ` - Seat ${item.assignedSeat}` : ""}
+                              </div>
+                            </div>
+
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              {editing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => saveManagedGateCheckEdit(item)}
+                                    disabled={savingGateCheckManager}
+                                    style={smallActionButton}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingGateCheckId("");
+                                      setEditingGateCheckValue("");
+                                    }}
+                                    style={smallSecondaryButton}
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingGateCheckId(item.id);
+                                      setEditingGateCheckValue(item.gateCheckNumber || "");
+                                    }}
+                                    disabled={!available || !canManageGateChecks || savingGateCheckManager}
+                                    style={{ ...smallActionButton, opacity: available ? 1 : 0.45 }}
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeManagedGateCheck(item)}
+                                    disabled={!available || !canManageGateChecks || savingGateCheckManager}
+                                    style={{ ...smallDangerButton, opacity: available ? 1 : 0.45 }}
+                                  >
+                                    Remove
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
                 <button
                   type="button"
 
@@ -3924,6 +4360,36 @@ const inputStyle = {
 
   fontSize:
     "0.9rem",
+};
+
+const smallActionButton = {
+  padding: "7px 10px",
+  borderRadius: 9,
+  border: "1px solid #2563eb",
+  background: "#2563eb",
+  color: "white",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const smallSecondaryButton = {
+  padding: "7px 10px",
+  borderRadius: 9,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  color: "#334155",
+  fontWeight: 800,
+  cursor: "pointer",
+};
+
+const smallDangerButton = {
+  padding: "7px 10px",
+  borderRadius: 9,
+  border: "1px solid #dc2626",
+  background: "#dc2626",
+  color: "white",
+  fontWeight: 800,
+  cursor: "pointer",
 };
 
 const primaryButton = {
