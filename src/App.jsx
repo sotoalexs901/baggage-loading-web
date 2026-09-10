@@ -902,6 +902,38 @@ export default function App() {
     };
 
   /* =========================
+     OPEN CARRY-ON FROM DASHBOARD
+  ========================= */
+
+  const handleOpenCarryOnFromDashboard =
+    (
+      carryOnFlightId
+    ) => {
+      if (
+        carryOnFlightId
+      ) {
+        sessionStorage.setItem(
+          "selectedCarryOnFlightId",
+          carryOnFlightId
+        );
+      }
+
+      sessionStorage.setItem(
+        "carryOnActiveTab",
+        "SETUP"
+      );
+
+      setCurrentView(
+        "carryOnGateChecks"
+      );
+
+      sessionStorage.setItem(
+        "currentView",
+        "carryOnGateChecks"
+      );
+    };
+
+  /* =========================
      PAGE ROUTER
   ========================= */
 
@@ -921,6 +953,9 @@ export default function App() {
             }
             onOpenFlight={
               handleOpenFlightFromDashboard
+            }
+            onOpenCarryOnFlight={
+              handleOpenCarryOnFromDashboard
             }
             gateControllerOnDuty={
               gateControllerOnDuty
