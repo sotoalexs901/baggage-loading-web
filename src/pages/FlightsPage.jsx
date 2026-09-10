@@ -4281,53 +4281,14 @@ export default function FlightsPage({
           </div>
 
           {allowCreate ? (
-            <button
-              type="button"
-
-              onClick={
-                openCreate
-              }
-
-              style={{
-                minHeight:
-                  42,
-
-                padding:
-                  "8px 12px",
-
-                borderRadius:
-                  10,
-
-                border:
-                  "1px solid #111827",
-
-                background:
-                  "#111827",
-
-                color:
-                  "white",
-
-                fontWeight:
-                  800,
-
-                cursor:
-                  "pointer",
-
-                gridColumn:
-                  isMobile
-                    ? "1 / -1"
-                    : "auto",
-              }}
-            >
-              + Create Flight
-            </button>
-
-            {allowManage && (
+            <>
               <button
                 type="button"
+
                 onClick={
-                  openRestoreFromReport
+                  openCreate
                 }
+
                 style={{
                   minHeight:
                     42,
@@ -4339,10 +4300,10 @@ export default function FlightsPage({
                     10,
 
                   border:
-                    "1px solid #7c3aed",
+                    "1px solid #111827",
 
                   background:
-                    "#7c3aed",
+                    "#111827",
 
                   color:
                     "white",
@@ -4359,9 +4320,50 @@ export default function FlightsPage({
                       : "auto",
                 }}
               >
-                Restore Carry-On Report
+                + Create Flight
               </button>
-            )}
+
+              {allowManage && (
+                <button
+                  type="button"
+                  onClick={
+                    openRestoreFromReport
+                  }
+                  style={{
+                    minHeight:
+                      42,
+
+                    padding:
+                      "8px 12px",
+
+                    borderRadius:
+                      10,
+
+                    border:
+                      "1px solid #7c3aed",
+
+                    background:
+                      "#7c3aed",
+
+                    color:
+                      "white",
+
+                    fontWeight:
+                      800,
+
+                    cursor:
+                      "pointer",
+
+                    gridColumn:
+                      isMobile
+                        ? "1 / -1"
+                        : "auto",
+                  }}
+                >
+                  Restore Carry-On Report
+                </button>
+              )}
+            </>
           ) : (
             <div
               style={{
