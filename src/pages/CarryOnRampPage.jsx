@@ -1,6 +1,11 @@
 // src/pages/CarryOnRampPage.jsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   collection,
   doc,
@@ -37,23 +42,6 @@ function getActor(user, operationalContext) {
   };
 }
 
-function formatTimestamp(value) {
-  if (!value) return "-";
-
-  try {
-    const date =
-      typeof value?.toDate === "function"
-        ? value.toDate()
-        : new Date(value);
-
-    return Number.isNaN(date.getTime())
-      ? "-"
-      : date.toLocaleString();
-  } catch {
-    return "-";
-  }
-}
-
 export default function CarryOnRampPage({
   user,
   operationalContext,
@@ -83,6 +71,8 @@ export default function CarryOnRampPage({
   const [assignments, setAssignments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [receivingId, setReceivingId] = useState("");
+  const [receivedExpanded, setReceivedExpanded] =
+    useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -156,13 +146,16 @@ export default function CarryOnRampPage({
     [flights, selectedCarryOnFlightId]
   );
 
-  const waitingForRamp = useMemo(
+  const readyForRamp = useMemo(
     () =>
       assignments
-        .filter(
-          (item) =>
-            cleanUpper(item?.status) === "GATE_COLLECTED"
-        )
+        .filter((item) => {
+          const status = cleanUpper(item?.status);
+          return (
+            status === "COUNTER_ASSIGNED" ||
+            status === "GATE_COLLECTED"
+          );
+        })
         .sort((a, b) =>
           String(a.gateCheckNumber || "").localeCompare(
             String(b.gateCheckNumber || "")
@@ -195,18 +188,33 @@ export default function CarryOnRampPage({
     [assignments]
   );
 
-  const matchesSearch = (item) => {
-    const query = String(searchTerm || "").trim().toLowerCase();
-    if (!query) return true;
-    return [item?.assignedSeat, item?.gateCheckNumber]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  };
+  const filteredReady = useMemo(() => {
+    const query = String(searchTerm || "")
+      .trim()
+      .toLowerCase();
 
-  const filteredWaitingForRamp = waitingForRamp.filter(matchesSearch);
-  const filteredReceivedAtRamp = receivedAtRamp.filter(matchesSearch);
+    if (!query) return readyForRamp;
+
+    return readyForRamp.filter((item) =>
+      String(item?.gateCheckNumber || "")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [readyForRamp, searchTerm]);
+
+  const filteredReceived = useMemo(() => {
+    const query = String(searchTerm || "")
+      .trim()
+      .toLowerCase();
+
+    if (!query) return receivedAtRamp;
+
+    return receivedAtRamp.filter((item) =>
+      String(item?.gateCheckNumber || "")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [receivedAtRamp, searchTerm]);
 
   const markReceivedAtRamp = async (assignment) => {
     setMessage("");
@@ -221,11 +229,14 @@ export default function CarryOnRampPage({
 
     if (!selectedFlight || !assignment) return;
 
+    const sourceStatus = cleanUpper(assignment.status);
+    const bypassedGate =
+      sourceStatus === "COUNTER_ASSIGNED";
+
     const ok = window.confirm(
-      `Confirm Received at Ramp?\n\n` +
-        `Passenger: ${assignment.passengerName || "-"}\n` +
-        `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
-        `Seat: ${assignment.assignedSeat || "-"}`
+      bypassedGate
+        ? `Receive ${assignment.gateCheckNumber || "-"} directly at Ramp?\n\nGate has not marked this item as collected. A Gate bypass alert will be created.`
+        : `Confirm ${assignment.gateCheckNumber || "-"} received at Ramp?`
     );
 
     if (!ok) return;
@@ -263,31 +274,44 @@ export default function CarryOnRampPage({
           assignmentSnap.data()?.status
         );
 
-        if (currentStatus !== "GATE_COLLECTED") {
+        if (
+          currentStatus !== "GATE_COLLECTED" &&
+          currentStatus !== "COUNTER_ASSIGNED"
+        ) {
           throw new Error(
             `This Carry-On cannot be received at Ramp from status ${currentStatus || "UNKNOWN"}.`
           );
         }
 
+        const directFromCounter =
+          currentStatus === "COUNTER_ASSIGNED";
+
+        const receiptData = {
+          status: "RAMP_RECEIVED",
+          rampReceivedAt: serverTimestamp(),
+          rampReceivedBy: actor,
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+          ...(directFromCounter
+            ? {
+                rampBypassedGate: true,
+                gateBypassDetectedAt:
+                  serverTimestamp(),
+                gateBypassAcknowledgedAt: null,
+                gateBypassAcknowledgedBy: null,
+              }
+            : {}),
+        };
+
         transaction.set(
           assignmentRef,
-          {
-            status: "RAMP_RECEIVED",
-            rampReceivedAt: serverTimestamp(),
-            rampReceivedBy: actor,
-            updatedAt: serverTimestamp(),
-            updatedBy: actor,
-          },
+          receiptData,
           { merge: true }
         );
 
         transaction.set(
           gateCheckRef,
-          {
-            status: "RAMP_RECEIVED",
-            rampReceivedAt: serverTimestamp(),
-            rampReceivedBy: actor,
-          },
+          receiptData,
           { merge: true }
         );
       });
@@ -302,16 +326,24 @@ export default function CarryOnRampPage({
             `ramp_received_${assignment.id}_${Date.now()}`
           ),
           {
-            type: "RAMP_RECEIVED",
+            type: bypassedGate
+              ? "RAMP_RECEIVED_GATE_BYPASS"
+              : "RAMP_RECEIVED",
             status: "RAMP_RECEIVED",
             assignmentId: assignment.id,
-            passengerId: assignment.passengerId || null,
-            passengerName: assignment.passengerName || null,
-            assignedSeat: assignment.assignedSeat || null,
+            passengerId:
+              assignment.passengerId || null,
+            passengerName:
+              assignment.passengerName || null,
+            assignedSeat:
+              assignment.assignedSeat || null,
             gateCheckNumber:
               assignment.gateCheckNumber || null,
-            message:
-              `Carry-On ${assignment.gateCheckNumber || assignment.id} received at Ramp.`,
+            rampBypassedGate:
+              bypassedGate,
+            message: bypassedGate
+              ? `Carry-On ${assignment.gateCheckNumber || assignment.id} received at Ramp without Gate collection.`
+              : `Carry-On ${assignment.gateCheckNumber || assignment.id} received at Ramp.`,
             createdAt: serverTimestamp(),
             createdBy: actor,
           }
@@ -324,7 +356,9 @@ export default function CarryOnRampPage({
       }
 
       setMessage(
-        `${assignment.gateCheckNumber} received at Ramp.`
+        bypassedGate
+          ? `${assignment.gateCheckNumber} received at Ramp. Gate bypass alert created.`
+          : `${assignment.gateCheckNumber} received at Ramp.`
       );
     } catch (rampError) {
       console.error(
@@ -353,7 +387,10 @@ export default function CarryOnRampPage({
         }}
       >
         <div>
-          <h3 style={{ margin: 0 }}>Ramp Receipt</h3>
+          <h3 style={{ margin: 0 }}>
+            Ramp Receipt
+          </h3>
+
           <p
             style={{
               margin: "6px 0 0",
@@ -361,7 +398,7 @@ export default function CarryOnRampPage({
               fontSize: "0.82rem",
             }}
           >
-            Confirm each Carry-On when Ramp physically receives it from Gate.
+            Select the Gate Check number physically received at Ramp.
           </p>
         </div>
 
@@ -369,16 +406,10 @@ export default function CarryOnRampPage({
           style={{
             display: "grid",
             gap: 5,
-            minWidth: 240,
+            minWidth: 220,
           }}
         >
-          <span
-            style={{
-              color: "#475569",
-              fontSize: "0.75rem",
-              fontWeight: 800,
-            }}
-          >
+          <span style={fieldLabel}>
             Carry-On Flight
           </span>
 
@@ -391,10 +422,15 @@ export default function CarryOnRampPage({
             }
             style={inputStyle}
           >
-            <option value="">Select flight</option>
+            <option value="">
+              Select flight
+            </option>
 
             {flights.map((flight) => (
-              <option key={flight.id} value={flight.id}>
+              <option
+                key={flight.id}
+                value={flight.id}
+              >
                 {flight.flightNumber} - {flight.flightDate}
               </option>
             ))}
@@ -404,65 +440,45 @@ export default function CarryOnRampPage({
 
       {selectedFlight ? (
         <>
-          <div
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid #c4b5fd",
-              background: "#f5f3ff",
-            }}
-          >
-            <strong>
-              {selectedFlight.flightNumber}
-              {" - "}
-              {selectedFlight.flightDate}
-            </strong>
+          <FlightBar flight={selectedFlight} />
 
-            <div
-              style={{
-                marginTop: 4,
-                color: "#64748b",
-                fontSize: "0.8rem",
-              }}
-            >
-              {selectedFlight.origin}
-              {" -> "}
-              {selectedFlight.destination}
-              {selectedFlight.gate
-                ? ` - Gate ${selectedFlight.gate}`
-                : ""}
-              {selectedFlight.tailNumber
-                ? ` - Tail ${selectedFlight.tailNumber}`
-                : ""}
+          <div style={quickFindWrap}>
+            <div style={quickFindLabel}>
+              QUICK FIND
             </div>
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) =>
+                setSearchTerm(event.target.value)
+              }
+              placeholder="Gate Check number"
+              style={{
+                ...inputStyle,
+                border: "none",
+                padding: "9px 10px",
+              }}
+            />
           </div>
-
-          <input
-            type="search"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search by Seat or Gate Check"
-            style={inputStyle}
-          />
 
           <div
             style={{
               display: "grid",
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(150px, 1fr))",
+                "repeat(auto-fit, minmax(130px, 1fr))",
               gap: 8,
             }}
           >
             <Metric
-              label="Waiting for Ramp"
-              value={waitingForRamp.length}
+              label="Ready for Ramp"
+              value={readyForRamp.length}
             />
             <Metric
-              label="Received at Ramp"
+              label="At Ramp"
               value={receivedAtRamp.length}
             />
             <Metric
-              label="Already Loaded"
+              label="Loaded"
               value={loadedCount}
             />
           </div>
@@ -470,172 +486,174 @@ export default function CarryOnRampPage({
           {!canOperateRamp && (
             <Notice
               tone="warning"
-              text="You can view Ramp status, but your current role/operational position cannot confirm receipt."
+              text="You can view Ramp status, but cannot confirm receipt."
             />
           )}
 
           <div style={panelStyle}>
             <h4 style={{ margin: 0 }}>
-              Waiting for Ramp Receipt
+              Ready for Ramp
             </h4>
 
-            {waitingForRamp.length === 0 ? (
-              <p
-                style={{
-                  color: "#64748b",
-                  fontSize: "0.82rem",
-                }}
-              >
-                No Carry-On items are currently waiting for Ramp receipt.
+            <p style={helperText}>
+              Includes items collected by Gate and, when necessary, items still showing Counter Assigned.
+            </p>
+
+            {filteredReady.length === 0 ? (
+              <p style={emptyText}>
+                No Gate Check numbers ready for Ramp receipt.
               </p>
             ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  marginTop: 10,
-                }}
-              >
-                {filteredWaitingForRamp.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      flexWrap: "wrap",
-                      alignItems: "center",
-                      padding: 11,
-                      borderRadius: 11,
-                      border: "1px solid #e2e8f0",
-                      background: "white",
-                    }}
-                  >
-                    <div>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 8,
-                          flexWrap: "wrap",
-                          alignItems: "center",
-                        }}
-                      >
-                        <strong>{item.passengerName}</strong>
-                        <span
+              <div style={gateCheckGrid}>
+                {filteredReady.map((item) => {
+                  const bypass =
+                    cleanUpper(item.status) ===
+                    "COUNTER_ASSIGNED";
+
+                  return (
+                    <div
+                      key={item.id}
+                      style={{
+                        ...gateCheckCard,
+                        border: bypass
+                          ? "1px solid #fde68a"
+                          : "1px solid #bfdbfe",
+                        background: bypass
+                          ? "#fffbeb"
+                          : "white",
+                      }}
+                    >
+                      <div style={gateCheckNumberStyle}>
+                        {item.gateCheckNumber || "-"}
+                      </div>
+
+                      {bypass && (
+                        <div
                           style={{
-                            color: "#6d28d9",
+                            marginTop: 5,
+                            color: "#92400e",
+                            fontSize: "0.65rem",
                             fontWeight: 900,
                           }}
                         >
-                          {item.gateCheckNumber}
-                        </span>
-                      </div>
+                          DIRECT FROM COUNTER
+                        </div>
+                      )}
 
-                      <div
-                        style={{
-                          marginTop: 4,
-                          color: "#64748b",
-                          fontSize: "0.78rem",
-                        }}
-                      >
-                        Seat: {item.assignedSeat || "-"}
-                        {" - "}
-                        Status: GATE COLLECTED
-                      </div>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        markReceivedAtRamp(item)
-                      }
-                      disabled={
-                        receivingId === item.id ||
-                        !canOperateRamp
-                      }
-                      style={{
-                        ...primaryButton,
-                        opacity:
+                      <button
+                        type="button"
+                        onClick={() =>
+                          markReceivedAtRamp(item)
+                        }
+                        disabled={
                           receivingId === item.id ||
                           !canOperateRamp
-                            ? 0.55
-                            : 1,
-                      }}
-                    >
-                      {receivingId === item.id
-                        ? "Saving..."
-                        : "Received at Ramp"}
-                    </button>
-                  </div>
-                ))}
+                        }
+                        style={{
+                          ...primaryButton,
+                          width: "100%",
+                          marginTop: 9,
+                          opacity:
+                            receivingId === item.id ||
+                            !canOperateRamp
+                              ? 0.55
+                              : 1,
+                        }}
+                      >
+                        {receivingId === item.id
+                          ? "Receiving..."
+                          : "Receive"}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
-          <div style={panelStyle}>
-            <h4 style={{ margin: 0 }}>
-              Received at Ramp
-            </h4>
+          <div
+            style={{
+              ...panelStyle,
+              padding: 0,
+              overflow: "hidden",
+              background: "white",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() =>
+                setReceivedExpanded(
+                  (current) => !current
+                )
+              }
+              style={sectionToggle}
+            >
+              <div>
+                <strong>
+                  Received Gate Checks
+                </strong>
+                <div style={toggleSubtext}>
+                  {receivedAtRamp.length} at Ramp
+                  {" - "}
+                  Tap to {receivedExpanded ? "hide" : "view"}
+                </div>
+              </div>
 
-            {receivedAtRamp.length === 0 ? (
-              <p
-                style={{
-                  color: "#64748b",
-                  fontSize: "0.82rem",
-                }}
-              >
-                No Carry-On items have been received by Ramp yet.
-              </p>
-            ) : (
+              <span style={countBadge}>
+                {receivedAtRamp.length}
+              </span>
+            </button>
+
+            {receivedExpanded && (
               <div
                 style={{
-                  display: "grid",
-                  gap: 7,
-                  marginTop: 9,
+                  padding: "0 12px 12px",
+                  borderTop:
+                    "1px solid #f1f5f9",
                 }}
               >
-                {filteredReceivedAtRamp.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      padding: 10,
-                      borderRadius: 10,
-                      border: "1px solid #bfdbfe",
-                      background: "#eff6ff",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <strong>{item.passengerName}</strong>
-                      <span
+                {filteredReceived.length === 0 ? (
+                  <p style={emptyText}>
+                    No matching Gate Check numbers.
+                  </p>
+                ) : (
+                  <div style={gateCheckGrid}>
+                    {filteredReceived.map((item) => (
+                      <div
+                        key={item.id}
                         style={{
-                          color: "#1d4ed8",
-                          fontWeight: 900,
+                          ...gateCheckCard,
+                          border:
+                            "1px solid #bfdbfe",
+                          background:
+                            "#eff6ff",
                         }}
                       >
-                        {item.gateCheckNumber}
-                      </span>
-                    </div>
+                        <div
+                          style={{
+                            ...gateCheckNumberStyle,
+                            color: "#1d4ed8",
+                          }}
+                        >
+                          {item.gateCheckNumber || "-"}
+                        </div>
 
-                    <div
-                      style={{
-                        marginTop: 4,
-                        color: "#64748b",
-                        fontSize: "0.78rem",
-                      }}
-                    >
-                      Seat: {item.assignedSeat || "-"}
-                      {" - "}
-                      Received: {formatTimestamp(item.rampReceivedAt)}
-                    </div>
+                        {item.rampBypassedGate === true && (
+                          <div
+                            style={{
+                              marginTop: 5,
+                              color: "#92400e",
+                              fontSize: "0.64rem",
+                              fontWeight: 900,
+                            }}
+                          >
+                            GATE BYPASS
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
@@ -654,6 +672,34 @@ export default function CarryOnRampPage({
           text="Select a Carry-On flight to begin Ramp operations."
         />
       )}
+    </div>
+  );
+}
+
+function FlightBar({ flight }) {
+  return (
+    <div
+      style={{
+        padding: 12,
+        borderRadius: 12,
+        border: "1px solid #c4b5fd",
+        background: "#f5f3ff",
+      }}
+    >
+      <strong>
+        {flight.flightNumber} - {flight.flightDate}
+      </strong>
+
+      <div
+        style={{
+          marginTop: 4,
+          color: "#64748b",
+          fontSize: "0.8rem",
+        }}
+      >
+        {flight.origin} {" -> "} {flight.destination}
+        {flight.gate ? ` - Gate ${flight.gate}` : ""}
+      </div>
     </div>
   );
 }
@@ -677,7 +723,6 @@ function Metric({ label, value }) {
       >
         {label}
       </div>
-
       <div
         style={{
           marginTop: 2,
@@ -718,7 +763,6 @@ function Notice({ tone, text }) {
             : "#991b1b",
         fontSize: "0.82rem",
         fontWeight: 800,
-        whiteSpace: "pre-wrap",
       }}
     >
       {text}
@@ -726,11 +770,28 @@ function Notice({ tone, text }) {
   );
 }
 
+const fieldLabel = {
+  color: "#475569",
+  fontSize: "0.75rem",
+  fontWeight: 800,
+};
+
 const panelStyle = {
   padding: 13,
   border: "1px solid #e2e8f0",
   borderRadius: 12,
   background: "#f8fafc",
+};
+
+const helperText = {
+  margin: "5px 0 0",
+  color: "#64748b",
+  fontSize: "0.74rem",
+};
+
+const emptyText = {
+  color: "#64748b",
+  fontSize: "0.82rem",
 };
 
 const inputStyle = {
@@ -743,12 +804,82 @@ const inputStyle = {
   fontSize: "0.9rem",
 };
 
+const quickFindWrap = {
+  padding: 8,
+  borderRadius: 12,
+  border: "1px solid #e2e8f0",
+  background: "#f8fafc",
+};
+
+const quickFindLabel = {
+  color: "#64748b",
+  fontSize: "0.66rem",
+  fontWeight: 800,
+  marginBottom: 4,
+};
+
+const gateCheckGrid = {
+  display: "grid",
+  gridTemplateColumns:
+    "repeat(auto-fit, minmax(135px, 1fr))",
+  gap: 8,
+  marginTop: 10,
+};
+
+const gateCheckCard = {
+  padding: 11,
+  borderRadius: 12,
+  textAlign: "center",
+};
+
+const gateCheckNumberStyle = {
+  color: "#0f172a",
+  fontSize: "1rem",
+  fontWeight: 900,
+  letterSpacing: "0.02em",
+  overflowWrap: "anywhere",
+};
+
 const primaryButton = {
-  padding: "9px 13px",
+  padding: "9px 11px",
   borderRadius: 10,
   border: "1px solid #2563eb",
   background: "#2563eb",
   color: "white",
   fontWeight: 900,
   cursor: "pointer",
+};
+
+const sectionToggle = {
+  width: "100%",
+  border: "none",
+  background: "white",
+  padding: 14,
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 10,
+  cursor: "pointer",
+  textAlign: "left",
+  font: "inherit",
+};
+
+const toggleSubtext = {
+  marginTop: 3,
+  color: "#64748b",
+  fontSize: "0.74rem",
+};
+
+const countBadge = {
+  minWidth: 34,
+  height: 34,
+  padding: "0 8px",
+  borderRadius: 999,
+  background: "#dbeafe",
+  color: "#1d4ed8",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontWeight: 900,
+  fontSize: "0.8rem",
 };
