@@ -81,6 +81,7 @@ export default function CarryOnRampPage({
 
   const [flights, setFlights] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [searchTerm, setSearchTerm] = useState("");
   const [receivingId, setReceivingId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -193,6 +194,19 @@ export default function CarryOnRampPage({
       ).length,
     [assignments]
   );
+
+  const matchesSearch = (item) => {
+    const query = String(searchTerm || "").trim().toLowerCase();
+    if (!query) return true;
+    return [item?.assignedSeat, item?.gateCheckNumber]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  };
+
+  const filteredWaitingForRamp = waitingForRamp.filter(matchesSearch);
+  const filteredReceivedAtRamp = receivedAtRamp.filter(matchesSearch);
 
   const markReceivedAtRamp = async (assignment) => {
     setMessage("");
@@ -423,6 +437,14 @@ export default function CarryOnRampPage({
             </div>
           </div>
 
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search by Seat or Gate Check"
+            style={inputStyle}
+          />
+
           <div
             style={{
               display: "grid",
@@ -474,7 +496,7 @@ export default function CarryOnRampPage({
                   marginTop: 10,
                 }}
               >
-                {waitingForRamp.map((item) => (
+                {filteredWaitingForRamp.map((item) => (
                   <div
                     key={item.id}
                     style={{
@@ -572,7 +594,7 @@ export default function CarryOnRampPage({
                   marginTop: 9,
                 }}
               >
-                {receivedAtRamp.map((item) => (
+                {filteredReceivedAtRamp.map((item) => (
                   <div
                     key={item.id}
                     style={{
