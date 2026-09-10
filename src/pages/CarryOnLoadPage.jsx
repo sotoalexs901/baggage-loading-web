@@ -1242,3 +1242,14 @@ const primaryButton = {
   fontWeight: 900,
   cursor: "pointer",
 };
+
+
+const dangerButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #dc2626",
+  background: "#dc2626",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
