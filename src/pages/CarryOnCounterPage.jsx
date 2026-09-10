@@ -102,6 +102,47 @@ function normalizeSeat(
   );
 }
 
+
+const CARRY_ON_COLORS = [
+  { name: "Black", code: "BLK", swatch: "#111827" },
+  { name: "Blue", code: "BLU", swatch: "#2563eb" },
+  { name: "Silver", code: "SLV", swatch: "#cbd5e1" },
+  { name: "Gray", code: "GRY", swatch: "#6b7280" },
+  { name: "Red", code: "RED", swatch: "#dc2626" },
+  { name: "Green", code: "GRN", swatch: "#16a34a" },
+  { name: "Purple", code: "PUR", swatch: "#7e22ce" },
+  { name: "Rose Gold", code: "RGD", swatch: "#e8a49b" },
+  { name: "White", code: "WHT", swatch: "#f8fafc" },
+  { name: "Tan", code: "TAN", swatch: "#c9a77c" },
+  { name: "Orange", code: "ORG", swatch: "#f97316" },
+  { name: "Yellow", code: "YLW", swatch: "#eab308" },
+  { name: "Multi Color", code: "MUL", swatch: "linear-gradient(135deg,#ef4444 0 20%,#f59e0b 20% 40%,#22c55e 40% 60%,#3b82f6 60% 80%,#a855f7 80%)" },
+];
+
+const CARRY_ON_GROUPS = [
+  { size: "22", type: "Hard Case", typeCode: "HC" },
+  { size: "24", type: "Hard Case", typeCode: "HC" },
+  { size: "22", type: "Soft Case", typeCode: "SC" },
+  { size: "24", type: "Soft Case", typeCode: "SC" },
+];
+
+const SPECIAL_CARRY_ON_ITEMS = [
+  { description: "Walker", code: "WALKER", type: "Walker", icon: "WALKER" },
+  { description: "Stroller", code: "STROLLER", type: "Stroller", icon: "STROLLER" },
+  { description: "WCHR", code: "WCHR", type: "WCHR", icon: "WCHR" },
+];
+
+function makeCarryOnSelection({ color, size, type, typeCode }) {
+  return {
+    color: color.name,
+    colorCode: color.code,
+    size,
+    type,
+    code: `${color.code}-${size}-${typeCode}`,
+    description: `${color.name} ${size} ${type}`,
+  };
+}
+
 function getActor(
   user,
   operationalContext
@@ -250,6 +291,20 @@ export default function CarryOnCounterPage({
   );
 
   const [
+    carryOnSelection,
+    setCarryOnSelection,
+  ] = useState(
+    null
+  );
+
+  const [
+    visualSelectorTarget,
+    setVisualSelectorTarget,
+  ] = useState(
+    ""
+  );
+
+  const [
     lastMinuteName,
     setLastMinuteName,
   ] = useState(
@@ -275,6 +330,13 @@ export default function CarryOnCounterPage({
     setLastMinuteWeight,
   ] = useState(
     ""
+  );
+
+  const [
+    lastMinuteCarryOnSelection,
+    setLastMinuteCarryOnSelection,
+  ] = useState(
+    null
   );
 
   const [
@@ -324,6 +386,13 @@ export default function CarryOnCounterPage({
     setEditWeight,
   ] = useState(
     ""
+  );
+
+  const [
+    editCarryOnSelection,
+    setEditCarryOnSelection,
+  ] = useState(
+    null
   );
 
   const [
@@ -793,6 +862,12 @@ export default function CarryOnCounterPage({
       gateCheckNumber,
       gateCheckSource,
       counterWeightLbs,
+      carryOnDescription,
+      carryOnColor,
+      carryOnColorCode,
+      carryOnSize,
+      carryOnType,
+      carryOnCode,
       createPassenger = false,
       createSeat = false,
       createGateCheck = false,
@@ -1054,6 +1129,30 @@ export default function CarryOnCounterPage({
               counterRecordedWeightLbs:
                 counterWeightLbs,
 
+              carryOnDescription:
+                carryOnDescription ||
+                null,
+
+              carryOnColor:
+                carryOnColor ||
+                null,
+
+              carryOnColorCode:
+                carryOnColorCode ||
+                null,
+
+              carryOnSize:
+                carryOnSize ||
+                null,
+
+              carryOnType:
+                carryOnType ||
+                null,
+
+              carryOnCode:
+                carryOnCode ||
+                null,
+
               assignedAt:
                 serverTimestamp(),
 
@@ -1098,6 +1197,30 @@ export default function CarryOnCounterPage({
 
               counterRecordedWeightLbs:
                 counterWeightLbs,
+
+              carryOnDescription:
+                carryOnDescription ||
+                null,
+
+              carryOnColor:
+                carryOnColor ||
+                null,
+
+              carryOnColorCode:
+                carryOnColorCode ||
+                null,
+
+              carryOnSize:
+                carryOnSize ||
+                null,
+
+              carryOnType:
+                carryOnType ||
+                null,
+
+              carryOnCode:
+                carryOnCode ||
+                null,
 
               counterWeightRecordedAt:
                 serverTimestamp(),
@@ -1187,6 +1310,26 @@ export default function CarryOnCounterPage({
           counterRecordedWeightLbs:
             counterWeightLbs,
 
+          carryOnDescription:
+            carryOnDescription ||
+            null,
+
+          carryOnColor:
+            carryOnColor ||
+            null,
+
+          carryOnSize:
+            carryOnSize ||
+            null,
+
+          carryOnType:
+            carryOnType ||
+            null,
+
+          carryOnCode:
+            carryOnCode ||
+            null,
+
           message:
             `Carry-On ${gateCheckNumber} assigned at Counter.`,
 
@@ -1210,6 +1353,18 @@ export default function CarryOnCounterPage({
     setEditSeatId(item.assignedSeat ? safeDocId(item.assignedSeat) : "");
     setEditGateCheckId(item.id || "");
     setEditWeight(String(item.counterRecordedWeightLbs || ""));
+    setEditCarryOnSelection(
+      item.carryOnCode
+        ? {
+            description: item.carryOnDescription || "",
+            color: item.carryOnColor || null,
+            colorCode: item.carryOnColorCode || null,
+            size: item.carryOnSize || null,
+            type: item.carryOnType || null,
+            code: item.carryOnCode || null,
+          }
+        : null
+    );
     setMessage("");
     setError("");
   };
@@ -1220,6 +1375,7 @@ export default function CarryOnCounterPage({
     setEditSeatId("");
     setEditGateCheckId("");
     setEditWeight("");
+    setEditCarryOnSelection(null);
   };
 
   const saveAssignmentEdit = async (assignment) => {
@@ -1249,6 +1405,11 @@ export default function CarryOnCounterPage({
 
     if (!newSeat || !newGateCheck) {
       setError("Select a valid Seat and Gate Check number.");
+      return;
+    }
+
+    if (!editCarryOnSelection?.code) {
+      setError("Select the Carry-On description before saving changes.");
       return;
     }
 
@@ -1331,6 +1492,12 @@ export default function CarryOnCounterPage({
           gateCheckNumber: newGateCheck.gateCheckNumber,
           gateCheckSource: newGateCheck.source || currentData.gateCheckSource || "PRELOADED",
           counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
+          carryOnDescription: editCarryOnSelection.description,
+          carryOnColor: editCarryOnSelection.color || null,
+          carryOnColorCode: editCarryOnSelection.colorCode || null,
+          carryOnSize: editCarryOnSelection.size || null,
+          carryOnType: editCarryOnSelection.type || null,
+          carryOnCode: editCarryOnSelection.code,
           editedAt: serverTimestamp(),
           editedBy: actor,
           updatedAt: serverTimestamp(),
@@ -1379,6 +1546,12 @@ export default function CarryOnCounterPage({
           passengerName,
           assignedSeat: newSeat.seatNumber,
           counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
+          carryOnDescription: editCarryOnSelection.description,
+          carryOnColor: editCarryOnSelection.color || null,
+          carryOnColorCode: editCarryOnSelection.colorCode || null,
+          carryOnSize: editCarryOnSelection.size || null,
+          carryOnType: editCarryOnSelection.type || null,
+          carryOnCode: editCarryOnSelection.code,
           assignedAt: currentData.counterAssignedAt || serverTimestamp(),
           assignedBy: currentData.counterAssignedBy || actor,
         }, { merge: true });
@@ -1420,6 +1593,11 @@ export default function CarryOnCounterPage({
             gateCheckNumber: newGateCheck.gateCheckNumber,
             previousGateCheckNumber: assignment.gateCheckNumber || null,
             counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
+            carryOnDescription: editCarryOnSelection.description,
+            carryOnColor: editCarryOnSelection.color || null,
+            carryOnSize: editCarryOnSelection.size || null,
+            carryOnType: editCarryOnSelection.type || null,
+            carryOnCode: editCarryOnSelection.code,
             createdAt: serverTimestamp(),
             createdBy: actor,
           }
@@ -1490,6 +1668,16 @@ export default function CarryOnCounterPage({
         return;
       }
 
+      if (
+        !carryOnSelection?.code
+      ) {
+        setError(
+          "Select the Carry-On description."
+        );
+
+        return;
+      }
+
       try {
         setAssigning(
           true
@@ -1538,6 +1726,28 @@ export default function CarryOnCounterPage({
                 10
             ) /
             10,
+
+          carryOnDescription:
+            carryOnSelection.description,
+
+          carryOnColor:
+            carryOnSelection.color ||
+            null,
+
+          carryOnColorCode:
+            carryOnSelection.colorCode ||
+            null,
+
+          carryOnSize:
+            carryOnSelection.size ||
+            null,
+
+          carryOnType:
+            carryOnSelection.type ||
+            null,
+
+          carryOnCode:
+            carryOnSelection.code,
         });
 
         setMessage(
@@ -1558,6 +1768,10 @@ export default function CarryOnCounterPage({
 
         setCarryOnWeight(
           ""
+        );
+
+        setCarryOnSelection(
+          null
         );
       } catch (
         assignmentError
@@ -1646,6 +1860,16 @@ export default function CarryOnCounterPage({
       ) {
         setError(
           "Passenger Name, Assigned Seat, Gate Check Number and valid Carry-On Weight are required."
+        );
+
+        return;
+      }
+
+      if (
+        !lastMinuteCarryOnSelection?.code
+      ) {
+        setError(
+          "Select the Carry-On description."
         );
 
         return;
@@ -1741,6 +1965,28 @@ export default function CarryOnCounterPage({
                 10
             ) /
             10,
+
+          carryOnDescription:
+            lastMinuteCarryOnSelection.description,
+
+          carryOnColor:
+            lastMinuteCarryOnSelection.color ||
+            null,
+
+          carryOnColorCode:
+            lastMinuteCarryOnSelection.colorCode ||
+            null,
+
+          carryOnSize:
+            lastMinuteCarryOnSelection.size ||
+            null,
+
+          carryOnType:
+            lastMinuteCarryOnSelection.type ||
+            null,
+
+          carryOnCode:
+            lastMinuteCarryOnSelection.code,
         });
 
         setMessage(
@@ -1761,6 +2007,10 @@ export default function CarryOnCounterPage({
 
         setLastMinuteWeight(
           ""
+        );
+
+        setLastMinuteCarryOnSelection(
+          null
         );
       } catch (
         lastMinuteError
@@ -2166,6 +2416,16 @@ export default function CarryOnCounterPage({
                 type="number"
                 inputMode="decimal"
               />
+
+              <CarryOnDescriptionField
+                label="Carry-On Description"
+                selection={carryOnSelection}
+                onClick={() =>
+                  setVisualSelectorTarget(
+                    "NORMAL"
+                  )
+                }
+              />
             </div>
 
             <button
@@ -2304,6 +2564,16 @@ export default function CarryOnCounterPage({
                 placeholder="Example: 22.5"
                 type="number"
                 inputMode="decimal"
+              />
+
+              <CarryOnDescriptionField
+                label="Carry-On Description"
+                selection={lastMinuteCarryOnSelection}
+                onClick={() =>
+                  setVisualSelectorTarget(
+                    "LAST_MINUTE"
+                  )
+                }
               />
             </div>
 
@@ -2588,6 +2858,13 @@ export default function CarryOnCounterPage({
                                   value={`${item.counterRecordedWeightLbs || "-"} lb`}
                                 />
                                 <MiniPill
+                                  label="Carry-On"
+                                  value={
+                                    item.carryOnDescription ||
+                                    "Not classified"
+                                  }
+                                />
+                                <MiniPill
                                   label="Status"
                                   value={
                                     item.status ||
@@ -2740,6 +3017,16 @@ export default function CarryOnCounterPage({
                                     inputMode="decimal"
                                   />
 
+                                  <CarryOnDescriptionField
+                                    label="Carry-On Description"
+                                    selection={editCarryOnSelection}
+                                    onClick={() =>
+                                      setVisualSelectorTarget(
+                                        "EDIT"
+                                      )
+                                    }
+                                  />
+
                                   <div
                                     style={{
                                       display: "flex",
@@ -2800,6 +3087,48 @@ export default function CarryOnCounterPage({
             )}
           </div>
 
+          {visualSelectorTarget && (
+            <CarryOnVisualSelector
+              currentSelection={
+                visualSelectorTarget === "NORMAL"
+                  ? carryOnSelection
+                  : visualSelectorTarget === "LAST_MINUTE"
+                    ? lastMinuteCarryOnSelection
+                    : editCarryOnSelection
+              }
+              onClose={() =>
+                setVisualSelectorTarget(
+                  ""
+                )
+              }
+              onSelect={(selection) => {
+                if (
+                  visualSelectorTarget ===
+                  "NORMAL"
+                ) {
+                  setCarryOnSelection(
+                    selection
+                  );
+                } else if (
+                  visualSelectorTarget ===
+                  "LAST_MINUTE"
+                ) {
+                  setLastMinuteCarryOnSelection(
+                    selection
+                  );
+                } else {
+                  setEditCarryOnSelection(
+                    selection
+                  );
+                }
+
+                setVisualSelectorTarget(
+                  ""
+                );
+              }}
+            />
+          )}
+
           {message && (
             <Notice
               tone="success"
@@ -2825,6 +3154,552 @@ export default function CarryOnCounterPage({
         />
       )}
     </div>
+  );
+}
+
+
+function CarryOnDescriptionField({
+  label,
+  selection,
+  onClick,
+}) {
+  return (
+    <label
+      style={{
+        display: "grid",
+        gap: 5,
+      }}
+    >
+      <span
+        style={{
+          color: "#475569",
+          fontSize: "0.75rem",
+          fontWeight: 800,
+        }}
+      >
+        {label}
+      </span>
+
+      <button
+        type="button"
+        onClick={onClick}
+        style={{
+          minHeight: 44,
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "9px 11px",
+          borderRadius: 10,
+          border: selection
+            ? "1px solid #7c3aed"
+            : "1px dashed #94a3b8",
+          background: selection
+            ? "#faf5ff"
+            : "white",
+          color: selection
+            ? "#5b21b6"
+            : "#64748b",
+          fontWeight: 900,
+          textAlign: "left",
+          cursor: "pointer",
+        }}
+      >
+        {selection?.description ||
+          "Tap to select carry-on"}
+        {selection?.code
+          ? ` (${selection.code})`
+          : ""}
+      </button>
+    </label>
+  );
+}
+
+function CarryOnVisualSelector({
+  currentSelection,
+  onClose,
+  onSelect,
+}) {
+  const [pending, setPending] = useState(
+    currentSelection || null
+  );
+
+  const selectBag = (group, color) => {
+    setPending(
+      makeCarryOnSelection({
+        color,
+        size: group.size,
+        type: group.type,
+        typeCode: group.typeCode,
+      })
+    );
+  };
+
+  const selectSpecial = (item) => {
+    setPending({
+      description: item.description,
+      color: null,
+      colorCode: null,
+      size: null,
+      type: item.type,
+      code: item.code,
+    });
+  };
+
+  return (
+    <div
+      style={carryOnModalOverlay}
+      onMouseDown={(event) => {
+        if (
+          event.target ===
+          event.currentTarget
+        ) {
+          onClose();
+        }
+      }}
+    >
+      <div style={carryOnModalCard}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            alignItems: "flex-start",
+          }}
+        >
+          <div>
+            <h3
+              style={{
+                margin: 0,
+                color: "#0f172a",
+              }}
+            >
+              Select Carry-On Item
+            </h3>
+            <div
+              style={{
+                marginTop: 4,
+                color: "#64748b",
+                fontSize: "0.78rem",
+              }}
+            >
+              Tap the item that best matches the passenger's carry-on.
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            style={carryOnModalClose}
+          >
+            X
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            marginTop: 12,
+          }}
+        >
+          {CARRY_ON_GROUPS.map((group) => (
+            <div
+              key={`${group.size}-${group.typeCode}`}
+              style={carryOnGroupCard}
+            >
+              <div
+                style={{
+                  color: "#1e3a8a",
+                  fontWeight: 900,
+                  fontSize: "0.82rem",
+                  marginBottom: 8,
+                }}
+              >
+                {group.size}&quot; {group.type}
+              </div>
+
+              <div style={carryOnChoiceGrid}>
+                {CARRY_ON_COLORS.filter((color) => {
+                  if (
+                    group.typeCode === "HC" &&
+                    color.name === "Gray"
+                  ) {
+                    return false;
+                  }
+
+                  if (
+                    group.typeCode === "SC" &&
+                    color.name === "Silver"
+                  ) {
+                    return false;
+                  }
+
+                  return true;
+                }).map((color) => {
+                  const candidate =
+                    makeCarryOnSelection({
+                      color,
+                      size: group.size,
+                      type: group.type,
+                      typeCode: group.typeCode,
+                    });
+
+                  const active =
+                    pending?.code ===
+                    candidate.code;
+
+                  return (
+                    <button
+                      key={candidate.code}
+                      type="button"
+                      onClick={() =>
+                        selectBag(group, color)
+                      }
+                      style={{
+                        ...carryOnChoiceButton,
+                        border: active
+                          ? "2px solid #2563eb"
+                          : "1px solid #dbeafe",
+                        background: active
+                          ? "#eff6ff"
+                          : "white",
+                      }}
+                    >
+                      <CarryOnSuitcaseIcon
+                        swatch={color.swatch}
+                        soft={
+                          group.typeCode ===
+                          "SC"
+                        }
+                      />
+
+                      <span
+                        style={{
+                          marginTop: 5,
+                          color: "#0f172a",
+                          fontSize: "0.68rem",
+                          fontWeight: 900,
+                          lineHeight: 1.15,
+                        }}
+                      >
+                        {color.name}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div style={carryOnGroupCard}>
+            <div
+              style={{
+                color: "#1e3a8a",
+                fontWeight: 900,
+                fontSize: "0.82rem",
+                marginBottom: 8,
+              }}
+            >
+              Special Items
+            </div>
+
+            <div style={carryOnSpecialGrid}>
+              {SPECIAL_CARRY_ON_ITEMS.map((item) => {
+                const active =
+                  pending?.code ===
+                  item.code;
+
+                return (
+                  <button
+                    key={item.code}
+                    type="button"
+                    onClick={() =>
+                      selectSpecial(item)
+                    }
+                    style={{
+                      ...carryOnSpecialButton,
+                      border: active
+                        ? "2px solid #2563eb"
+                        : "1px solid #dbeafe",
+                      background: active
+                        ? "#eff6ff"
+                        : "white",
+                    }}
+                  >
+                    <SpecialCarryOnIcon
+                      kind={item.icon}
+                    />
+                    <span
+                      style={{
+                        marginTop: 6,
+                        fontWeight: 900,
+                        color: "#0f172a",
+                      }}
+                    >
+                      {item.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            borderRadius: 12,
+            border: "1px solid #bfdbfe",
+            background: "#eff6ff",
+          }}
+        >
+          <div
+            style={{
+              color: "#1e3a8a",
+              fontSize: "0.68rem",
+              fontWeight: 900,
+            }}
+          >
+            SELECTED ITEM
+          </div>
+
+          <div
+            style={{
+              marginTop: 4,
+              color: "#0f172a",
+              fontWeight: 900,
+            }}
+          >
+            {pending?.description ||
+              "No item selected"}
+          </div>
+
+          {pending?.code && (
+            <div
+              style={{
+                marginTop: 3,
+                color: "#64748b",
+                fontSize: "0.72rem",
+              }}
+            >
+              Code: {pending.code}
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
+          <button
+            type="button"
+            onClick={onClose}
+            style={secondaryButton}
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            disabled={!pending?.code}
+            onClick={() =>
+              pending && onSelect(pending)
+            }
+            style={{
+              ...primaryButton,
+              opacity: pending?.code
+                ? 1
+                : 0.5,
+            }}
+          >
+            Confirm Selection
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CarryOnSuitcaseIcon({
+  swatch,
+  soft,
+}) {
+  const isGradient =
+    String(swatch).includes(
+      "gradient"
+    );
+
+  return (
+    <div
+      style={{
+        width: 42,
+        height: 54,
+        position: "relative",
+        margin: "0 auto",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 14,
+          width: 14,
+          height: 10,
+          border: "3px solid #334155",
+          borderBottom: "none",
+          borderRadius: "5px 5px 0 0",
+          boxSizing: "border-box",
+        }}
+      />
+
+      <div
+        style={{
+          position: "absolute",
+          top: 8,
+          left: 3,
+          right: 3,
+          bottom: 4,
+          borderRadius: soft
+            ? 9
+            : 6,
+          border: "2px solid #334155",
+          background: isGradient
+            ? swatch
+            : swatch,
+          boxShadow:
+            "inset 0 0 0 2px rgba(255,255,255,0.25)",
+        }}
+      >
+        {[12, 20, 28].map((top) => (
+          <div
+            key={top}
+            style={{
+              position: "absolute",
+              left: 5,
+              right: 5,
+              top,
+              borderTop:
+                "1px solid rgba(15,23,42,0.35)",
+            }}
+          />
+        ))}
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          left: 5,
+          bottom: 0,
+          width: 5,
+          height: 5,
+          borderRadius: 999,
+          background: "#0f172a",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          right: 5,
+          bottom: 0,
+          width: 5,
+          height: 5,
+          borderRadius: 999,
+          background: "#0f172a",
+        }}
+      />
+    </div>
+  );
+}
+
+function SpecialCarryOnIcon({ kind }) {
+  if (kind === "WALKER") {
+    return (
+      <svg
+        viewBox="0 0 80 70"
+        width="64"
+        height="58"
+        aria-hidden="true"
+      >
+        <path
+          d="M22 10 L15 55 M58 10 L65 55 M22 10 L58 10 M20 28 L60 28 M15 55 L30 55 M65 55 L50 55"
+          fill="none"
+          stroke="#334155"
+          strokeWidth="5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="15" cy="59" r="5" fill="#0f172a" />
+        <circle cx="65" cy="59" r="5" fill="#0f172a" />
+      </svg>
+    );
+  }
+
+  if (kind === "STROLLER") {
+    return (
+      <svg
+        viewBox="0 0 90 70"
+        width="68"
+        height="58"
+        aria-hidden="true"
+      >
+        <path
+          d="M28 17 C42 8 58 12 65 27 L58 43 L28 43 Z"
+          fill="#334155"
+        />
+        <path
+          d="M62 18 L72 8"
+          fill="none"
+          stroke="#334155"
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M28 43 L22 57 M58 43 L66 57"
+          fill="none"
+          stroke="#334155"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+        <circle cx="20" cy="59" r="7" fill="#0f172a" />
+        <circle cx="68" cy="59" r="7" fill="#0f172a" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      viewBox="0 0 90 75"
+      width="70"
+      height="60"
+      aria-hidden="true"
+    >
+      <circle
+        cx="53"
+        cy="45"
+        r="20"
+        fill="none"
+        stroke="#334155"
+        strokeWidth="5"
+      />
+      <circle
+        cx="36"
+        cy="13"
+        r="8"
+        fill="#334155"
+      />
+      <path
+        d="M38 23 L43 38 L61 38 M42 30 L27 30 M45 38 L32 55 L20 55 M61 38 L70 57"
+        fill="none"
+        stroke="#334155"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -3100,6 +3975,93 @@ function Notice({
     </div>
   );
 }
+
+
+const carryOnModalOverlay = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 9999,
+  background: "rgba(15,23,42,0.68)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 10,
+};
+
+const carryOnModalCard = {
+  width: "min(1050px, 100%)",
+  maxHeight: "94dvh",
+  overflowY: "auto",
+  background: "white",
+  borderRadius: 16,
+  border: "1px solid #cbd5e1",
+  padding: 14,
+  boxShadow: "0 24px 70px rgba(15,23,42,0.32)",
+};
+
+const carryOnModalClose = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  border: "1px solid #e2e8f0",
+  background: "white",
+  color: "#475569",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const carryOnGroupCard = {
+  padding: 10,
+  borderRadius: 12,
+  border: "1px solid #dbeafe",
+  background: "#f8fbff",
+};
+
+const carryOnChoiceGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
+  gap: 7,
+};
+
+const carryOnChoiceButton = {
+  minHeight: 92,
+  borderRadius: 10,
+  padding: "7px 5px",
+  cursor: "pointer",
+  display: "grid",
+  alignContent: "center",
+  justifyItems: "center",
+  font: "inherit",
+};
+
+const carryOnSpecialGrid = {
+  display: "grid",
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 8,
+};
+
+const carryOnSpecialButton = {
+  minHeight: 102,
+  borderRadius: 10,
+  padding: 8,
+  cursor: "pointer",
+  display: "grid",
+  alignContent: "center",
+  justifyItems: "center",
+  font: "inherit",
+};
+
+const specialIconBox = {
+  width: 58,
+  height: 58,
+  borderRadius: 12,
+  background: "#f1f5f9",
+  color: "#0f172a",
+  display: "grid",
+  alignContent: "center",
+  justifyItems: "center",
+  lineHeight: 1,
+};
 
 const panelStyle = {
   padding:
