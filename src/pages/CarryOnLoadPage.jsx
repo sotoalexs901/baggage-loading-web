@@ -1,4 +1,4 @@
-// src/pages/CarryOnLoadPage.jsx
+/ src/pages/CarryOnLoadPage.jsx
 
 import React, {
   useEffect,
@@ -94,6 +94,9 @@ export default function CarryOnLoadPage({
   const [compartmentByAssignment, setCompartmentByAssignment] =
     useState({});
   const [searchTerm, setSearchTerm] = useState("");
+  const [loadedExpanded, setLoadedExpanded] = useState(false);
+  const [offloadedExpanded, setOffloadedExpanded] = useState(false);
+  const [expandedLoadedId, setExpandedLoadedId] = useState("");
   const [loadingId, setLoadingId] = useState("");
   const [offloadingId, setOffloadingId] = useState("");
   const [unloadingId, setUnloadingId] = useState("");
@@ -259,9 +262,9 @@ export default function CarryOnLoadPage({
   const matchesSearch = (item) => {
     const query = String(searchTerm || "").trim().toLowerCase();
     if (!query) return true;
-    return [item?.assignedSeat, item?.gateCheckNumber]
-      .filter(Boolean)
-      .join(" ")
+    return String(
+      item?.gateCheckNumber || ""
+    )
       .toLowerCase()
       .includes(query);
   };
@@ -1074,13 +1077,39 @@ export default function CarryOnLoadPage({
             </div>
           </div>
 
-          <input
-            type="search"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search by Seat or Gate Check"
-            style={inputStyle}
-          />
+          <div
+            style={{
+              padding: 8,
+              borderRadius: 12,
+              border: "1px solid #e2e8f0",
+              background: "#f8fafc",
+            }}
+          >
+            <div
+              style={{
+                color: "#64748b",
+                fontSize: "0.66rem",
+                fontWeight: 800,
+                marginBottom: 4,
+              }}
+            >
+              QUICK FIND
+            </div>
+
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(event) =>
+                setSearchTerm(event.target.value)
+              }
+              placeholder="Gate Check number"
+              style={{
+                ...inputStyle,
+                border: "none",
+                padding: "9px 10px",
+              }}
+            />
+          </div>
 
           <div
             style={{
@@ -1133,19 +1162,31 @@ export default function CarryOnLoadPage({
               Ready to Load
             </h4>
 
-            {readyToLoad.length === 0 ? (
+            <p
+              style={{
+                margin: "5px 0 0",
+                color: "#64748b",
+                fontSize: "0.74rem",
+              }}
+            >
+              Select the Gate Check number and aircraft compartment.
+            </p>
+
+            {filteredReadyToLoad.length === 0 ? (
               <p
                 style={{
                   color: "#64748b",
                   fontSize: "0.82rem",
                 }}
               >
-                No Carry-On items are currently ready for aircraft loading.
+                No Gate Check numbers are currently ready to load.
               </p>
             ) : (
               <div
                 style={{
                   display: "grid",
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(145px, 1fr))",
                   gap: 8,
                   marginTop: 10,
                 }}
@@ -1155,458 +1196,131 @@ export default function CarryOnLoadPage({
                     key={item.id}
                     style={{
                       padding: 11,
-                      borderRadius: 11,
-                      border:
-                        "1px solid #bfdbfe",
-                      background: "#eff6ff",
+                      borderRadius: 12,
+                      border: "1px solid #bfdbfe",
+                      background: "white",
+                      textAlign: "center",
                     }}
                   >
                     <div
                       style={{
-                        display: "flex",
-                        justifyContent:
-                          "space-between",
-                        gap: 10,
-                        flexWrap: "wrap",
-                        alignItems: "center",
+                        color: "#1d4ed8",
+                        fontSize: "1rem",
+                        fontWeight: 900,
+                        overflowWrap: "anywhere",
                       }}
                     >
-                      <div>
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 8,
-                            flexWrap: "wrap",
-                            alignItems: "center",
-                          }}
-                        >
-                          <strong>
-                            {item.passengerName}
-                          </strong>
-
-                          <span
-                            style={{
-                              color: "#1d4ed8",
-                              fontWeight: 900,
-                            }}
-                          >
-                            {item.gateCheckNumber}
-                          </span>
-                        </div>
-
-                        <div
-                          style={{
-                            marginTop: 4,
-                            color: "#64748b",
-                            fontSize: "0.78rem",
-                          }}
-                        >
-                          Seat: {item.assignedSeat || "-"}
-                          {" - "}
-                          Status: RAMP RECEIVED
-                        </div>
-                      </div>
-
-                      <div
-                        style={{
-                          display: "grid",
-                          gap: 7,
-                          minWidth: 300,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 7,
-                            flexWrap: "wrap",
-                            alignItems: "center",
-                          }}
-                        >
-                          <select
-                            value={
-                              compartmentByAssignment[
-                                item.id
-                              ] || ""
-                            }
-                            onChange={(event) =>
-                              setCompartmentByAssignment(
-                                (previous) => ({
-                                  ...previous,
-                                  [item.id]:
-                                    event.target.value,
-                                })
-                              )
-                            }
-                            style={{
-                              ...inputStyle,
-                              minWidth: 145,
-                            }}
-                          >
-                            <option value="">
-                              Compartment
-                            </option>
-                            <option value="FORWARD">
-                              FORWARD
-                            </option>
-                            <option value="MIDDLE">
-                              MIDDLE
-                            </option>
-                            <option value="AFT">
-                              AFT
-                            </option>
-                          </select>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              markLoaded(item)
-                            }
-                            disabled={
-                              loadingId === item.id ||
-                              offloadingId === item.id ||
-                              !canOperateLoad
-                            }
-                            style={{
-                              ...primaryButton,
-                              opacity:
-                                loadingId === item.id ||
-                                offloadingId === item.id ||
-                                !canOperateLoad
-                                  ? 0.55
-                                  : 1,
-                            }}
-                          >
-                            {loadingId === item.id
-                              ? "Saving..."
-                              : "Loaded"}
-                          </button>
-                        </div>
-
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 7,
-                            flexWrap: "wrap",
-                            alignItems: "center",
-                          }}
-                        >
-                          <input
-                            type="text"
-                            value={
-                              offloadReasonById[
-                                item.id
-                              ] || ""
-                            }
-                            placeholder="Offload reason..."
-                            onChange={(event) =>
-                              setOffloadReasonById(
-                                (previous) => ({
-                                  ...previous,
-                                  [item.id]:
-                                    event.target.value,
-                                })
-                              )
-                            }
-                            style={{
-                              ...inputStyle,
-                              minWidth: 190,
-                            }}
-                          />
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              offloadCarryOn(item)
-                            }
-                            disabled={
-                              offloadingId === item.id ||
-                              loadingId === item.id ||
-                              !canOperateLoad
-                            }
-                            style={{
-                              ...dangerButton,
-                              opacity:
-                                offloadingId === item.id ||
-                                loadingId === item.id ||
-                                !canOperateLoad
-                                  ? 0.55
-                                  : 1,
-                            }}
-                          >
-                            {offloadingId === item.id
-                              ? "Offloading..."
-                              : "Offload"}
-                          </button>
-                        </div>
-                      </div>
+                      {item.gateCheckNumber || "-"}
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
 
-          <div style={panelStyle}>
-            <h4 style={{ margin: 0 }}>
-              Loaded on Aircraft
-            </h4>
-
-            {loaded.length === 0 ? (
-              <p
-                style={{
-                  color: "#64748b",
-                  fontSize: "0.82rem",
-                }}
-              >
-                No Carry-On items loaded yet.
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 7,
-                  marginTop: 9,
-                }}
-              >
-                {filteredLoaded.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      padding: 10,
-                      borderRadius: 10,
-                      border:
-                        "1px solid #bbf7d0",
-                      background: "#f0fdf4",
-                    }}
-                  >
-                    <div
+                    <select
+                      value={
+                        compartmentByAssignment[
+                          item.id
+                        ] || ""
+                      }
+                      onChange={(event) =>
+                        setCompartmentByAssignment(
+                          (previous) => ({
+                            ...previous,
+                            [item.id]:
+                              event.target.value,
+                          })
+                        )
+                      }
                       style={{
-                        display: "flex",
-                        justifyContent:
-                          "space-between",
-                        gap: 10,
-                        flexWrap: "wrap",
+                        ...inputStyle,
+                        marginTop: 9,
                       }}
                     >
-                      <strong>
-                        {item.passengerName}
-                      </strong>
+                      <option value="">
+                        Compartment
+                      </option>
+                      <option value="FORWARD">
+                        FORWARD
+                      </option>
+                      <option value="MIDDLE">
+                        MIDDLE
+                      </option>
+                      <option value="AFT">
+                        AFT
+                      </option>
+                    </select>
 
-                      <span
-                        style={{
-                          color: "#166534",
-                          fontWeight: 900,
-                        }}
-                      >
-                        {item.gateCheckNumber}
-                      </span>
-                    </div>
-
-                    <div
+                    <button
+                      type="button"
+                      onClick={() =>
+                        markLoaded(item)
+                      }
+                      disabled={
+                        loadingId === item.id ||
+                        offloadingId === item.id ||
+                        !canOperateLoad
+                      }
                       style={{
-                        marginTop: 4,
-                        color: "#64748b",
-                        fontSize: "0.78rem",
+                        ...primaryButton,
+                        width: "100%",
+                        marginTop: 8,
+                        opacity:
+                          loadingId === item.id ||
+                          offloadingId === item.id ||
+                          !canOperateLoad
+                            ? 0.55
+                            : 1,
                       }}
                     >
-                      Seat: {item.assignedSeat || "-"}
-                      {" - "}
-                      Compartment: {item.compartment || "-"}
-                      {" - "}
-                      Loaded: {formatTimestamp(item.aircraftLoadedAt)}
-                    </div>
+                      {loadingId === item.id
+                        ? "Loading..."
+                        : "Load"}
+                    </button>
 
-                    <div
+                    <input
+                      type="text"
+                      value={
+                        offloadReasonById[item.id] || ""
+                      }
+                      placeholder="Offload reason"
+                      onChange={(event) =>
+                        setOffloadReasonById(
+                          (previous) => ({
+                            ...previous,
+                            [item.id]:
+                              event.target.value,
+                          })
+                        )
+                      }
                       style={{
-                        marginTop: 10,
-                        display: "grid",
-                        gap: 8,
+                        ...inputStyle,
+                        marginTop: 8,
+                      }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        offloadCarryOn(item)
+                      }
+                      disabled={
+                        offloadingId === item.id ||
+                        loadingId === item.id ||
+                        !canOperateLoad
+                      }
+                      style={{
+                        ...dangerButton,
+                        width: "100%",
+                        marginTop: 7,
+                        opacity:
+                          offloadingId === item.id ||
+                          loadingId === item.id ||
+                          !canOperateLoad
+                            ? 0.55
+                            : 1,
                       }}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 7,
-                          flexWrap: "wrap",
-                          alignItems: "center",
-                        }}
-                      >
-                        <select
-                          value={
-                            editCompartmentById[item.id] ||
-                            item.compartment ||
-                            ""
-                          }
-                          onChange={(event) =>
-                            setEditCompartmentById(
-                              (previous) => ({
-                                ...previous,
-                                [item.id]:
-                                  event.target.value,
-                              })
-                            )
-                          }
-                          style={{
-                            ...inputStyle,
-                            minWidth: 145,
-                            maxWidth: 180,
-                          }}
-                        >
-                          <option value="FORWARD">
-                            FORWARD
-                          </option>
-                          <option value="MIDDLE">
-                            MIDDLE
-                          </option>
-                          <option value="AFT">
-                            AFT
-                          </option>
-                        </select>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateLoadedCompartment(item)
-                          }
-                          disabled={
-                            editingId === item.id ||
-                            unloadingId === item.id ||
-                            offloadingId === item.id ||
-                            !canOperateLoad
-                          }
-                          style={{
-                            ...secondaryButton,
-                            opacity:
-                              editingId === item.id ||
-                              unloadingId === item.id ||
-                              offloadingId === item.id ||
-                              !canOperateLoad
-                                ? 0.55
-                                : 1,
-                          }}
-                        >
-                          {editingId === item.id
-                            ? "Updating..."
-                            : "Update Compartment"}
-                        </button>
-                      </div>
-
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 7,
-                          flexWrap: "wrap",
-                          alignItems: "center",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={
-                            unloadReasonById[item.id] || ""
-                          }
-                          placeholder="Unload reason..."
-                          onChange={(event) =>
-                            setUnloadReasonById(
-                              (previous) => ({
-                                ...previous,
-                                [item.id]:
-                                  event.target.value,
-                              })
-                            )
-                          }
-                          style={{
-                            ...inputStyle,
-                            minWidth: 190,
-                            flex: "1 1 190px",
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            unloadCarryOn(item)
-                          }
-                          disabled={
-                            unloadingId === item.id ||
-                            editingId === item.id ||
-                            offloadingId === item.id ||
-                            !canOperateLoad
-                          }
-                          style={{
-                            ...warningButton,
-                            opacity:
-                              unloadingId === item.id ||
-                              editingId === item.id ||
-                              offloadingId === item.id ||
-                              !canOperateLoad
-                                ? 0.55
-                                : 1,
-                          }}
-                        >
-                          {unloadingId === item.id
-                            ? "Unloading..."
-                            : "Unload to Ramp"}
-                        </button>
-                      </div>
-
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 7,
-                          flexWrap: "wrap",
-                          alignItems: "center",
-                        }}
-                      >
-                        <input
-                          type="text"
-                          value={
-                            offloadReasonById[item.id] || ""
-                          }
-                          placeholder="Offload reason..."
-                          onChange={(event) =>
-                            setOffloadReasonById(
-                              (previous) => ({
-                                ...previous,
-                                [item.id]:
-                                  event.target.value,
-                              })
-                            )
-                          }
-                          style={{
-                            ...inputStyle,
-                            minWidth: 190,
-                            flex: "1 1 190px",
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            offloadCarryOn(item)
-                          }
-                          disabled={
-                            offloadingId === item.id ||
-                            unloadingId === item.id ||
-                            editingId === item.id ||
-                            !canOperateLoad
-                          }
-                          style={{
-                            ...dangerButton,
-                            opacity:
-                              offloadingId === item.id ||
-                              unloadingId === item.id ||
-                              editingId === item.id ||
-                              !canOperateLoad
-                                ? 0.55
-                                : 1,
-                          }}
-                        >
-                          {offloadingId === item.id
-                            ? "Offloading..."
-                            : "Offload"}
-                        </button>
-                      </div>
-                    </div>
+                      {offloadingId === item.id
+                        ? "Offloading..."
+                        : "Offload"}
+                    </button>
                   </div>
                 ))}
               </div>
@@ -1616,81 +1330,399 @@ export default function CarryOnLoadPage({
           <div
             style={{
               ...panelStyle,
-              border: "1px solid #fecaca",
-              background: "#fff7f7",
+              padding: 0,
+              overflow: "hidden",
+              background: "white",
             }}
           >
-            <h4
+            <button
+              type="button"
+              onClick={() =>
+                setLoadedExpanded(
+                  (current) => !current
+                )
+              }
               style={{
-                margin: 0,
-                color: "#991b1b",
+                width: "100%",
+                border: "none",
+                background: "white",
+                padding: 14,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                cursor: "pointer",
+                textAlign: "left",
+                font: "inherit",
               }}
             >
-              Offloaded
-            </h4>
+              <div>
+                <strong>
+                  Loaded Gate Checks
+                </strong>
 
-            {offloaded.length === 0 ? (
-              <p
+                <div
+                  style={{
+                    marginTop: 3,
+                    color: "#64748b",
+                    fontSize: "0.74rem",
+                  }}
+                >
+                  {loaded.length} loaded
+                  {" - "}
+                  Tap to {loadedExpanded ? "hide" : "view"}
+                </div>
+              </div>
+
+              <span
                 style={{
-                  color: "#64748b",
-                  fontSize: "0.82rem",
+                  minWidth: 34,
+                  height: 34,
+                  padding: "0 8px",
+                  borderRadius: 999,
+                  background: "#dcfce7",
+                  color: "#166534",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 900,
+                  fontSize: "0.8rem",
                 }}
               >
-                No Carry-On items have been Offloaded.
-              </p>
-            ) : (
+                {loaded.length}
+              </span>
+            </button>
+
+            {loadedExpanded && (
               <div
                 style={{
-                  display: "grid",
-                  gap: 7,
-                  marginTop: 9,
+                  padding: "0 12px 12px",
+                  borderTop: "1px solid #f1f5f9",
                 }}
               >
-                {filteredOffloaded.map((item) => (
-                  <div
-                    key={item.id}
+                {filteredLoaded.length === 0 ? (
+                  <p
                     style={{
-                      padding: 10,
-                      borderRadius: 10,
-                      border: "1px solid #fecaca",
-                      background: "white",
+                      color: "#64748b",
+                      fontSize: "0.82rem",
                     }}
                   >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: 10,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <strong>
-                        {item.passengerName}
-                      </strong>
+                    No matching loaded Gate Check numbers.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(145px, 1fr))",
+                      gap: 8,
+                      marginTop: 10,
+                    }}
+                  >
+                    {filteredLoaded.map((item) => {
+                      const expanded =
+                        expandedLoadedId === item.id;
 
-                      <span
+                      return (
+                        <div
+                          key={item.id}
+                          style={{
+                            padding: 10,
+                            borderRadius: 12,
+                            border: "1px solid #bbf7d0",
+                            background: "#f0fdf4",
+                            textAlign: "center",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedLoadedId(
+                                expanded ? "" : item.id
+                              )
+                            }
+                            style={{
+                              width: "100%",
+                              border: "none",
+                              background: "transparent",
+                              color: "#166534",
+                              fontSize: "1rem",
+                              fontWeight: 900,
+                              cursor: "pointer",
+                              padding: 0,
+                            }}
+                          >
+                            {item.gateCheckNumber || "-"}
+                          </button>
+
+                          <div
+                            style={{
+                              marginTop: 4,
+                              color: "#64748b",
+                              fontSize: "0.67rem",
+                            }}
+                          >
+                            {item.compartment || "-"}
+                            {" - "}
+                            Tap for controls
+                          </div>
+
+                          {expanded && (
+                            <div
+                              style={{
+                                display: "grid",
+                                gap: 7,
+                                marginTop: 9,
+                                textAlign: "left",
+                              }}
+                            >
+                              <select
+                                value={
+                                  editCompartmentById[item.id] ||
+                                  item.compartment ||
+                                  ""
+                                }
+                                onChange={(event) =>
+                                  setEditCompartmentById(
+                                    (previous) => ({
+                                      ...previous,
+                                      [item.id]:
+                                        event.target.value,
+                                    })
+                                  )
+                                }
+                                style={inputStyle}
+                              >
+                                <option value="FORWARD">
+                                  FORWARD
+                                </option>
+                                <option value="MIDDLE">
+                                  MIDDLE
+                                </option>
+                                <option value="AFT">
+                                  AFT
+                                </option>
+                              </select>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateLoadedCompartment(
+                                    item
+                                  )
+                                }
+                                disabled={
+                                  editingId === item.id ||
+                                  !canOperateLoad
+                                }
+                                style={secondaryButton}
+                              >
+                                {editingId === item.id
+                                  ? "Updating..."
+                                  : "Update Compartment"}
+                              </button>
+
+                              <input
+                                type="text"
+                                value={
+                                  unloadReasonById[item.id] ||
+                                  ""
+                                }
+                                placeholder="Unload reason"
+                                onChange={(event) =>
+                                  setUnloadReasonById(
+                                    (previous) => ({
+                                      ...previous,
+                                      [item.id]:
+                                        event.target.value,
+                                    })
+                                  )
+                                }
+                                style={inputStyle}
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  unloadCarryOn(item)
+                                }
+                                disabled={
+                                  unloadingId === item.id ||
+                                  !canOperateLoad
+                                }
+                                style={warningButton}
+                              >
+                                {unloadingId === item.id
+                                  ? "Unloading..."
+                                  : "Unload to Ramp"}
+                              </button>
+
+                              <input
+                                type="text"
+                                value={
+                                  offloadReasonById[item.id] ||
+                                  ""
+                                }
+                                placeholder="Offload reason"
+                                onChange={(event) =>
+                                  setOffloadReasonById(
+                                    (previous) => ({
+                                      ...previous,
+                                      [item.id]:
+                                        event.target.value,
+                                    })
+                                  )
+                                }
+                                style={inputStyle}
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  offloadCarryOn(item)
+                                }
+                                disabled={
+                                  offloadingId === item.id ||
+                                  !canOperateLoad
+                                }
+                                style={dangerButton}
+                              >
+                                {offloadingId === item.id
+                                  ? "Offloading..."
+                                  : "Offload"}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div
+            style={{
+              ...panelStyle,
+              padding: 0,
+              overflow: "hidden",
+              background: "white",
+              border: "1px solid #fecaca",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() =>
+                setOffloadedExpanded(
+                  (current) => !current
+                )
+              }
+              style={{
+                width: "100%",
+                border: "none",
+                background: "white",
+                padding: 14,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                cursor: "pointer",
+                textAlign: "left",
+                font: "inherit",
+              }}
+            >
+              <div>
+                <strong
+                  style={{
+                    color: "#991b1b",
+                  }}
+                >
+                  Offloaded Gate Checks
+                </strong>
+
+                <div
+                  style={{
+                    marginTop: 3,
+                    color: "#64748b",
+                    fontSize: "0.74rem",
+                  }}
+                >
+                  {offloaded.length} offloaded
+                  {" - "}
+                  Tap to {offloadedExpanded ? "hide" : "view"}
+                </div>
+              </div>
+
+              <span
+                style={{
+                  minWidth: 34,
+                  height: 34,
+                  padding: "0 8px",
+                  borderRadius: 999,
+                  background: "#fee2e2",
+                  color: "#991b1b",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 900,
+                  fontSize: "0.8rem",
+                }}
+              >
+                {offloaded.length}
+              </span>
+            </button>
+
+            {offloadedExpanded && (
+              <div
+                style={{
+                  padding: "0 12px 12px",
+                  borderTop: "1px solid #fee2e2",
+                }}
+              >
+                {filteredOffloaded.length === 0 ? (
+                  <p
+                    style={{
+                      color: "#64748b",
+                      fontSize: "0.82rem",
+                    }}
+                  >
+                    No matching Offloaded Gate Check numbers.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "repeat(auto-fit, minmax(145px, 1fr))",
+                      gap: 8,
+                      marginTop: 10,
+                    }}
+                  >
+                    {filteredOffloaded.map((item) => (
+                      <div
+                        key={item.id}
                         style={{
-                          color: "#991b1b",
-                          fontWeight: 900,
+                          padding: 10,
+                          borderRadius: 12,
+                          border: "1px solid #fecaca",
+                          background: "#fef2f2",
+                          textAlign: "center",
                         }}
                       >
-                        {item.gateCheckNumber}
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: 4,
-                        color: "#64748b",
-                        fontSize: "0.78rem",
-                      }}
-                    >
-                      Reason: {item.offloadReason || "-"}
-                      {" - "}
-                      Stage: {item.offloadStage || "-"}
-                    </div>
+                        <div
+                          style={{
+                            color: "#991b1b",
+                            fontSize: "1rem",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {item.gateCheckNumber || "-"}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
