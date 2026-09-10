@@ -408,6 +408,18 @@ export default function FlightsPage({
   ] = useState([]);
 
   const [
+    deletedCarryOnFlights,
+    setDeletedCarryOnFlights,
+  ] = useState([]);
+
+  const [
+    showDeletedCarryOn,
+    setShowDeletedCarryOn,
+  ] = useState(
+    false
+  );
+
+  const [
     loadingCarryOn,
     setLoadingCarryOn,
   ] = useState(
@@ -532,6 +544,13 @@ export default function FlightsPage({
   const [
     deletingCarryOnId,
     setDeletingCarryOnId,
+  ] = useState(
+    ""
+  );
+
+  const [
+    restoringCarryOnId,
+    setRestoringCarryOnId,
   ] = useState(
     ""
   );
@@ -788,8 +807,30 @@ export default function FlightsPage({
               )
           );
 
+          const activeRows =
+            rows.filter(
+              (
+                flight
+              ) =>
+                flight?.isDeleted !==
+                true
+            );
+
+          const deletedRows =
+            rows.filter(
+              (
+                flight
+              ) =>
+                flight?.isDeleted ===
+                true
+            );
+
           setCarryOnFlights(
-            rows
+            activeRows
+          );
+
+          setDeletedCarryOnFlights(
+            deletedRows
           );
 
           setLoadingCarryOn(
@@ -1959,22 +2000,13 @@ export default function FlightsPage({
 
       const ok =
         window.confirm(
-          `DELETE CARRY-ON FLIGHT?\n\n` +
+          `MOVE CARRY-ON FLIGHT TO DELETED?\n\n` +
             `${flight.flightNumber || flight.id} ` +
             `(${flight.flightDate || "-"})\n\n` +
-            `This will permanently remove:\n` +
-            `- Passenger setup\n` +
-            `- Available seats\n` +
-            `- Gate Check numbers\n` +
-            `- Assignments\n` +
-            `- Tracking events\n` +
-            `- Reports\n\n` +
-            `This cannot be undone.`
+            `The flight and all Carry-On operational data will be kept so it can be restored if this was a mistake.`
         );
 
-      if (
-        !ok
-      ) {
+      if (!ok) {
         return;
       }
 
@@ -1983,39 +2015,29 @@ export default function FlightsPage({
           flight.id
         );
 
-        const subcollections = [
-          "passengers",
-          "availableSeats",
-          "gateCheckNumbers",
-          "assignments",
-          "events",
-          "reports",
-        ];
-
-        for (
-          const name of
-            subcollections
-        ) {
-          await deleteCarryOnSubcollection(
-            flight.id,
-            name
-          );
-        }
-
-        const batch =
-          writeBatch(
-            db
-          );
-
-        batch.delete(
+        await updateDoc(
           doc(
             db,
             "carryOnFlights",
             flight.id
-          )
-        );
+          ),
+          {
+            isDeleted:
+              true,
 
-        await batch.commit();
+            deletedAt:
+              serverTimestamp(),
+
+            deletedBy:
+              operationalActor,
+
+            updatedAt:
+              serverTimestamp(),
+
+            updatedBy:
+              operationalActor,
+          }
+        );
 
         if (
           sessionStorage.getItem(
@@ -2029,22 +2051,102 @@ export default function FlightsPage({
         }
 
         setActionMsg(
-          `Carry-On flight deleted: ${flight.flightNumber || flight.id}`
+          `Carry-On flight moved to Deleted: ${flight.flightNumber || flight.id}`
         );
       } catch (
         error
       ) {
         console.error(
-          "Carry-On delete failed:",
+          "Carry-On soft delete failed:",
           error
         );
 
         setActionErr(
           error?.message ||
-          "Could not delete Carry-On flight."
+          "Could not move Carry-On flight to Deleted."
         );
       } finally {
         setDeletingCarryOnId(
+          ""
+        );
+      }
+    };
+
+  const handleRestoreCarryOn =
+    async (
+      flight
+    ) => {
+      if (
+        !allowManage ||
+        restoringCarryOnId
+      ) {
+        return;
+      }
+
+      const ok =
+        window.confirm(
+          `RESTORE CARRY-ON FLIGHT?\n\n` +
+            `${flight.flightNumber || flight.id} ` +
+            `(${flight.flightDate || "-"})\n\n` +
+            `The flight and its existing Carry-On data will return to the active list.`
+        );
+
+      if (!ok) {
+        return;
+      }
+
+      try {
+        setRestoringCarryOnId(
+          flight.id
+        );
+
+        await updateDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            flight.id
+          ),
+          {
+            isDeleted:
+              false,
+
+            restoredAt:
+              serverTimestamp(),
+
+            restoredBy:
+              operationalActor,
+
+            deletedAt:
+              null,
+
+            deletedBy:
+              null,
+
+            updatedAt:
+              serverTimestamp(),
+
+            updatedBy:
+              operationalActor,
+          }
+        );
+
+        setActionMsg(
+          `Carry-On flight restored: ${flight.flightNumber || flight.id}`
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Carry-On restore failed:",
+          error
+        );
+
+        setActionErr(
+          error?.message ||
+          "Could not restore Carry-On flight."
+        );
+      } finally {
+        setRestoringCarryOnId(
           ""
         );
       }
@@ -3214,6 +3316,228 @@ export default function FlightsPage({
           </div>
         )}
       </div>
+
+      {allowManage && (
+        <div
+          style={{
+            marginTop:
+              12,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() =>
+              setShowDeletedCarryOn(
+                (
+                  current
+                ) =>
+                  !current
+              )
+            }
+            style={{
+              width:
+                "100%",
+              padding:
+                "10px 12px",
+              borderRadius:
+                12,
+              border:
+                "1px solid #e2e8f0",
+              background:
+                "white",
+              color:
+                "#475569",
+              fontWeight:
+                900,
+              cursor:
+                "pointer",
+              display:
+                "flex",
+              justifyContent:
+                "space-between",
+              alignItems:
+                "center",
+              gap:
+                10,
+              textAlign:
+                "left",
+            }}
+          >
+            <span>
+              Recently Deleted Carry-On Flights
+            </span>
+
+            <span
+              style={{
+                minWidth:
+                  30,
+                height:
+                  30,
+                padding:
+                  "0 7px",
+                borderRadius:
+                  999,
+                background:
+                  deletedCarryOnFlights.length > 0
+                    ? "#fee2e2"
+                    : "#f1f5f9",
+                color:
+                  deletedCarryOnFlights.length > 0
+                    ? "#991b1b"
+                    : "#64748b",
+                display:
+                  "inline-flex",
+                alignItems:
+                  "center",
+                justifyContent:
+                  "center",
+                fontSize:
+                  "0.76rem",
+                fontWeight:
+                  900,
+              }}
+            >
+              {deletedCarryOnFlights.length}
+            </span>
+          </button>
+
+          {showDeletedCarryOn && (
+            <div
+              style={{
+                marginTop:
+                  8,
+                display:
+                  "grid",
+                gap:
+                  8,
+              }}
+            >
+              {deletedCarryOnFlights.length === 0 ? (
+                <div
+                  style={{
+                    padding:
+                      11,
+                    borderRadius:
+                      10,
+                    background:
+                      "#f8fafc",
+                    border:
+                      "1px solid #e2e8f0",
+                    color:
+                      "#64748b",
+                    fontSize:
+                      "0.8rem",
+                  }}
+                >
+                  No deleted Carry-On flights for {selectedDate}.
+                </div>
+              ) : (
+                deletedCarryOnFlights.map(
+                  (
+                    flight
+                  ) => (
+                    <div
+                      key={
+                        flight.id
+                      }
+                      style={{
+                        padding:
+                          11,
+                        borderRadius:
+                          12,
+                        border:
+                          "1px solid #fecaca",
+                        background:
+                          "#fff7f7",
+                        display:
+                          "flex",
+                        justifyContent:
+                          "space-between",
+                        alignItems:
+                          "center",
+                        gap:
+                          10,
+                        flexWrap:
+                          "wrap",
+                      }}
+                    >
+                      <div>
+                        <strong
+                          style={{
+                            color:
+                              "#991b1b",
+                          }}
+                        >
+                          {flight.flightNumber || flight.id}
+                        </strong>
+
+                        <div
+                          style={{
+                            marginTop:
+                              3,
+                            color:
+                              "#64748b",
+                            fontSize:
+                              "0.75rem",
+                          }}
+                        >
+                          {flight.flightDate || "-"}
+                          {" - "}
+                          {flight.origin || "-"}
+                          {" -> "}
+                          {flight.destination || "-"}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRestoreCarryOn(
+                            flight
+                          )
+                        }
+                        disabled={
+                          restoringCarryOnId ===
+                          flight.id
+                        }
+                        style={{
+                          padding:
+                            "8px 12px",
+                          borderRadius:
+                            999,
+                          border:
+                            "1px solid #16a34a",
+                          background:
+                            "#16a34a",
+                          color:
+                            "white",
+                          fontWeight:
+                            900,
+                          cursor:
+                            restoringCarryOnId ===
+                            flight.id
+                              ? "not-allowed"
+                              : "pointer",
+                          opacity:
+                            restoringCarryOnId ===
+                            flight.id
+                              ? 0.6
+                              : 1,
+                        }}
+                      >
+                        {restoringCarryOnId ===
+                        flight.id
+                          ? "Restoring..."
+                          : "Restore"}
+                      </button>
+                    </div>
+                  )
+                )
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* =========================
           EDIT CARRY-ON MODAL
