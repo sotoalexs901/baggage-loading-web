@@ -256,6 +256,13 @@ export default function CarryOnCounterPage({
   );
 
   const [
+    assignmentsExpanded,
+    setAssignmentsExpanded,
+  ] = useState(
+    false
+  );
+
+  const [
     editingAssignmentId,
     setEditingAssignmentId,
   ] = useState(
@@ -2270,257 +2277,449 @@ export default function CarryOnCounterPage({
           </div>
 
           <div
-            style={
-              panelStyle
-            }
+            style={{
+              ...panelStyle,
+              padding: 0,
+              overflow: "hidden",
+              background: "white",
+            }}
           >
-            <h4
+            <button
+              type="button"
+              onClick={() =>
+                setAssignmentsExpanded(
+                  (current) => !current
+                )
+              }
               style={{
-                margin:
-                  0,
+                width: "100%",
+                border: "none",
+                background: "white",
+                padding: 14,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 12,
+                cursor: "pointer",
+                textAlign: "left",
+                font: "inherit",
               }}
             >
-              Current Assignments
-            </h4>
+              <div>
+                <div
+                  style={{
+                    color: "#0f172a",
+                    fontSize: "0.92rem",
+                    fontWeight: 900,
+                  }}
+                >
+                  Assigned Gate Checks
+                </div>
 
-            <div
-              style={{
-                marginTop: 10,
-              }}
-            >
-              <input
-                type="search"
-                value={assignmentSearch}
-                onChange={(event) => setAssignmentSearch(event.target.value)}
-                placeholder="Search by Seat or Gate Check"
-                style={inputStyle}
-              />
-            </div>
+                <div
+                  style={{
+                    marginTop: 3,
+                    color: "#64748b",
+                    fontSize: "0.75rem",
+                  }}
+                >
+                  {assignedCount} assigned
+                  {assignedCount === 1 ? " item" : " items"}
+                  {" - "}
+                  Tap to {assignmentsExpanded ? "hide" : "view"} details
+                </div>
+              </div>
 
-            {assignments.length ===
-            0 ? (
-              <p
-                style={{
-                  color:
-                    "#64748b",
-
-                  fontSize:
-                    "0.82rem",
-                }}
-              >
-                No Carry-On assignments yet.
-              </p>
-            ) : (
               <div
                 style={{
-                  display:
-                    "grid",
-
-                  gap:
-                    7,
-
-                  marginTop:
-                    9,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  flex: "0 0 auto",
                 }}
               >
-                {filteredAssignments
-                  .slice()
-                  .sort(
-                    (
-                      a,
-                      b
-                    ) =>
-                      String(
-                        a.passengerName ||
-                        ""
-                      ).localeCompare(
+                <span
+                  style={{
+                    minWidth: 34,
+                    height: 34,
+                    padding: "0 8px",
+                    borderRadius: 999,
+                    background: "#ede9fe",
+                    color: "#6d28d9",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontWeight: 900,
+                    fontSize: "0.8rem",
+                  }}
+                >
+                  {assignedCount}
+                </span>
+
+                <span
+                  aria-hidden="true"
+                  style={{
+                    color: "#64748b",
+                    fontSize: "1rem",
+                    fontWeight: 900,
+                    transform: assignmentsExpanded
+                      ? "rotate(180deg)"
+                      : "rotate(0deg)",
+                    transition: "transform 160ms ease",
+                  }}
+                >
+                  v
+                </span>
+              </div>
+            </button>
+
+            {assignmentsExpanded && (
+              <div
+                style={{
+                  padding: "0 12px 12px",
+                  borderTop: "1px solid #f1f5f9",
+                }}
+              >
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: 8,
+                    borderRadius: 12,
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: "#64748b",
+                      fontSize: "0.68rem",
+                      fontWeight: 800,
+                      marginBottom: 5,
+                    }}
+                  >
+                    QUICK FIND
+                  </div>
+
+                  <input
+                    type="search"
+                    value={assignmentSearch}
+                    onChange={(event) =>
+                      setAssignmentSearch(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Seat or Gate Check number"
+                    style={{
+                      ...inputStyle,
+                      border: "none",
+                      boxShadow: "none",
+                      padding: "9px 10px",
+                    }}
+                  />
+                </div>
+
+                {assignments.length === 0 ? (
+                  <p
+                    style={{
+                      color: "#64748b",
+                      fontSize: "0.82rem",
+                      margin: "12px 2px 2px",
+                    }}
+                  >
+                    No Carry-On assignments yet.
+                  </p>
+                ) : filteredAssignments.length === 0 ? (
+                  <p
+                    style={{
+                      color: "#64748b",
+                      fontSize: "0.82rem",
+                      margin: "12px 2px 2px",
+                    }}
+                  >
+                    No assignments match this search.
+                  </p>
+                ) : (
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 8,
+                      marginTop: 10,
+                    }}
+                  >
+                    {filteredAssignments
+                      .slice()
+                      .sort((a, b) =>
                         String(
-                          b.passengerName ||
-                          ""
+                          a.passengerName || ""
+                        ).localeCompare(
+                          String(
+                            b.passengerName || ""
+                          )
                         )
                       )
-                  )
-                  .map(
-                    (
-                      item
-                    ) => (
-                      <div
-                        key={
-                          item.id
-                        }
-
-                        style={{
-                          padding:
-                            10,
-
-                          borderRadius:
-                            10,
-
-                          border:
-                            "1px solid #e2e8f0",
-
-                          background:
-                            "white",
-                        }}
-                      >
+                      .map((item) => (
                         <div
+                          key={item.id}
                           style={{
-                            display:
-                              "flex",
-
-                            justifyContent:
-                              "space-between",
-
-                            gap:
-                              10,
-
-                            flexWrap:
-                              "wrap",
+                            padding: 11,
+                            borderRadius: 12,
+                            border: "1px solid #e2e8f0",
+                            background: "#ffffff",
+                            boxShadow:
+                              "0 1px 2px rgba(15, 23, 42, 0.04)",
                           }}
                         >
-                          <strong>
-                            {item.passengerName}
-                          </strong>
-
-                          <span
+                          <div
                             style={{
-                              color:
-                                "#6d28d9",
-
-                              fontWeight:
-                                900,
+                              display: "flex",
+                              justifyContent: "space-between",
+                              gap: 10,
+                              flexWrap: "wrap",
+                              alignItems: "flex-start",
                             }}
                           >
-                            {item.gateCheckNumber}
-                          </span>
-                        </div>
-
-                        <div
-                          style={{
-                            marginTop:
-                              4,
-
-                            color:
-                              "#64748b",
-
-                            fontSize:
-                              "0.78rem",
-                          }}
-                        >
-                          Seat: {item.assignedSeat || "-"}
-                          {" - "}
-                          Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
-                          {" - "}
-                          Status: {item.status || "COUNTER_ASSIGNED"}
-                          {item.passengerSource ===
-                          "LAST_MINUTE"
-                            ? " - LAST MINUTE"
-                            : ""}
-                        </div>
-
-
-                        {cleanUpper(item.status) === "COUNTER_ASSIGNED" && (
-                          <div style={{ marginTop: 10 }}>
-                            {editingAssignmentId === item.id ? (
-                              <div
+                            <div
+                              style={{
+                                minWidth: 0,
+                                flex: "1 1 180px",
+                              }}
+                            >
+                              <strong
                                 style={{
-                                  display: "grid",
-                                  gap: 8,
-                                  padding: 10,
-                                  borderRadius: 10,
-                                  border: "1px solid #c4b5fd",
-                                  background: "#faf5ff",
+                                  display: "block",
+                                  color: "#0f172a",
+                                  fontSize: "0.9rem",
+                                  overflowWrap: "anywhere",
                                 }}
                               >
-                                <TextField
-                                  label="Passenger Name"
-                                  value={editPassengerName}
-                                  onChange={setEditPassengerName}
-                                  placeholder="Passenger Name"
-                                />
+                                {item.passengerName || "-"}
+                              </strong>
 
-                                <SelectField
-                                  label="Assigned Seat"
-                                  value={editSeatId}
-                                  onChange={setEditSeatId}
-                                >
-                                  {seats
-                                    .filter((seat) =>
-                                      seat.id === safeDocId(item.assignedSeat || "") ||
-                                      cleanUpper(seat.status) === "AVAILABLE"
-                                    )
-                                    .sort((a, b) =>
-                                      String(a.seatNumber || "").localeCompare(String(b.seatNumber || ""))
-                                    )
-                                    .map((seat) => (
-                                      <option key={seat.id} value={seat.id}>
-                                        {seat.seatNumber}
-                                      </option>
-                                    ))}
-                                </SelectField>
-
-                                <SelectField
-                                  label="Gate Check Number"
-                                  value={editGateCheckId}
-                                  onChange={setEditGateCheckId}
-                                >
-                                  {gateChecks
-                                    .filter((gateCheck) =>
-                                      gateCheck.id === item.id ||
-                                      cleanUpper(gateCheck.status) === "AVAILABLE"
-                                    )
-                                    .sort((a, b) =>
-                                      String(a.gateCheckNumber || "").localeCompare(String(b.gateCheckNumber || ""))
-                                    )
-                                    .map((gateCheck) => (
-                                      <option key={gateCheck.id} value={gateCheck.id}>
-                                        {gateCheck.gateCheckNumber}
-                                      </option>
-                                    ))}
-                                </SelectField>
-
-                                <TextField
-                                  label="Carry-On Weight (lb)"
-                                  value={editWeight}
-                                  onChange={setEditWeight}
-                                  placeholder="Example: 22.5"
-                                  type="number"
-                                  inputMode="decimal"
-                                />
-
-                                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => saveAssignmentEdit(item)}
-                                    disabled={savingAssignmentEdit}
-                                    style={{ ...primaryButton, opacity: savingAssignmentEdit ? 0.55 : 1 }}
-                                  >
-                                    {savingAssignmentEdit ? "Saving..." : "Save Changes"}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={cancelAssignmentEdit}
-                                    disabled={savingAssignmentEdit}
-                                    style={secondaryButton}
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => beginAssignmentEdit(item)}
-                                style={secondaryButton}
+                              <div
+                                style={{
+                                  display: "flex",
+                                  gap: 6,
+                                  flexWrap: "wrap",
+                                  marginTop: 7,
+                                }}
                               >
-                                Edit Assignment
-                              </button>
-                            )}
+                                <MiniPill
+                                  label="Seat"
+                                  value={item.assignedSeat || "-"}
+                                />
+                                <MiniPill
+                                  label="Weight"
+                                  value={`${item.counterRecordedWeightLbs || "-"} lb`}
+                                />
+                                <MiniPill
+                                  label="Status"
+                                  value={
+                                    item.status ||
+                                    "COUNTER_ASSIGNED"
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <div
+                              style={{
+                                flex: "0 0 auto",
+                                minWidth: 94,
+                                textAlign: "right",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  color: "#64748b",
+                                  fontSize: "0.64rem",
+                                  fontWeight: 800,
+                                }}
+                              >
+                                GATE CHECK
+                              </div>
+
+                              <div
+                                style={{
+                                  marginTop: 2,
+                                  color: "#6d28d9",
+                                  fontSize: "0.98rem",
+                                  fontWeight: 900,
+                                }}
+                              >
+                                {item.gateCheckNumber || "-"}
+                              </div>
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    )
-                  )}
+
+                          {item.passengerSource === "LAST_MINUTE" && (
+                            <div
+                              style={{
+                                marginTop: 8,
+                                display: "inline-flex",
+                                padding: "4px 7px",
+                                borderRadius: 999,
+                                background: "#fffbeb",
+                                border: "1px solid #fde68a",
+                                color: "#92400e",
+                                fontSize: "0.64rem",
+                                fontWeight: 900,
+                              }}
+                            >
+                              LAST MINUTE
+                            </div>
+                          )}
+
+                          {cleanUpper(item.status) ===
+                            "COUNTER_ASSIGNED" && (
+                            <div style={{ marginTop: 10 }}>
+                              {editingAssignmentId === item.id ? (
+                                <div
+                                  style={{
+                                    display: "grid",
+                                    gap: 8,
+                                    padding: 10,
+                                    borderRadius: 10,
+                                    border: "1px solid #c4b5fd",
+                                    background: "#faf5ff",
+                                  }}
+                                >
+                                  <TextField
+                                    label="Passenger Name"
+                                    value={editPassengerName}
+                                    onChange={setEditPassengerName}
+                                    placeholder="Passenger Name"
+                                  />
+
+                                  <SelectField
+                                    label="Assigned Seat"
+                                    value={editSeatId}
+                                    onChange={setEditSeatId}
+                                  >
+                                    {seats
+                                      .filter((seat) =>
+                                        seat.id ===
+                                          safeDocId(
+                                            item.assignedSeat || ""
+                                          ) ||
+                                        cleanUpper(
+                                          seat.status
+                                        ) === "AVAILABLE"
+                                      )
+                                      .sort((a, b) =>
+                                        String(
+                                          a.seatNumber || ""
+                                        ).localeCompare(
+                                          String(
+                                            b.seatNumber || ""
+                                          )
+                                        )
+                                      )
+                                      .map((seat) => (
+                                        <option
+                                          key={seat.id}
+                                          value={seat.id}
+                                        >
+                                          {seat.seatNumber}
+                                        </option>
+                                      ))}
+                                  </SelectField>
+
+                                  <SelectField
+                                    label="Gate Check Number"
+                                    value={editGateCheckId}
+                                    onChange={setEditGateCheckId}
+                                  >
+                                    {gateChecks
+                                      .filter((gateCheck) =>
+                                        gateCheck.id === item.id ||
+                                        cleanUpper(
+                                          gateCheck.status
+                                        ) === "AVAILABLE"
+                                      )
+                                      .sort((a, b) =>
+                                        String(
+                                          a.gateCheckNumber || ""
+                                        ).localeCompare(
+                                          String(
+                                            b.gateCheckNumber || ""
+                                          )
+                                        )
+                                      )
+                                      .map((gateCheck) => (
+                                        <option
+                                          key={gateCheck.id}
+                                          value={gateCheck.id}
+                                        >
+                                          {gateCheck.gateCheckNumber}
+                                        </option>
+                                      ))}
+                                  </SelectField>
+
+                                  <TextField
+                                    label="Carry-On Weight (lb)"
+                                    value={editWeight}
+                                    onChange={setEditWeight}
+                                    placeholder="Example: 22.5"
+                                    type="number"
+                                    inputMode="decimal"
+                                  />
+
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      gap: 7,
+                                      flexWrap: "wrap",
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        saveAssignmentEdit(item)
+                                      }
+                                      disabled={savingAssignmentEdit}
+                                      style={{
+                                        ...primaryButton,
+                                        opacity:
+                                          savingAssignmentEdit
+                                            ? 0.55
+                                            : 1,
+                                      }}
+                                    >
+                                      {savingAssignmentEdit
+                                        ? "Saving..."
+                                        : "Save Changes"}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={cancelAssignmentEdit}
+                                      disabled={savingAssignmentEdit}
+                                      style={secondaryButton}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    beginAssignmentEdit(item)
+                                  }
+                                  style={{
+                                    ...secondaryButton,
+                                    width: "100%",
+                                  }}
+                                >
+                                  Edit Assignment
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2550,6 +2749,44 @@ export default function CarryOnCounterPage({
         />
       )}
     </div>
+  );
+}
+
+function MiniPill({
+  label,
+  value,
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "4px 7px",
+        borderRadius: 999,
+        background: "#f8fafc",
+        border: "1px solid #e2e8f0",
+        color: "#475569",
+        fontSize: "0.67rem",
+        fontWeight: 800,
+        maxWidth: "100%",
+      }}
+    >
+      <span
+        style={{
+          color: "#94a3b8",
+        }}
+      >
+        {label}:
+      </span>
+      <span
+        style={{
+          overflowWrap: "anywhere",
+        }}
+      >
+        {value}
+      </span>
+    </span>
   );
 }
 
