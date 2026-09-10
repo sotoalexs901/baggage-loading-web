@@ -1,4 +1,4 @@
-// src/pages/CarryOnReportPage.jsx
+/ src/pages/CarryOnReportPage.jsx
 
 import React, {
   useEffect,
@@ -44,6 +44,146 @@ function actorName(value) {
     value?.username ||
     "-"
   );
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function openPrintDocument(html, onBlocked) {
+  const printWindow = window.open(
+    "",
+    "_blank",
+    "width=1200,height=900"
+  );
+
+  if (!printWindow) {
+    onBlocked?.();
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+
+  window.setTimeout(() => {
+    printWindow.focus();
+    printWindow.print();
+  }, 400);
+}
+
+
+function buildCarryOnReportHtml({
+  flight,
+  rows,
+  requiredCount,
+  loadedCount,
+  offloadedCount,
+  remainingToLoad,
+  additionalCount,
+  compartmentTotals,
+}) {
+  const logoUrl = `${window.location.origin}/blcs-icon-512.png`;
+  const route = `${flight?.origin || "-"} -> ${flight?.destination || "-"}`;
+
+  const bodyRows = rows.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.passengerName || "-")}</td>
+      <td>${escapeHtml(item.assignedSeat || "-")}</td>
+      <td><strong>${escapeHtml(item.gateCheckNumber || "-")}</strong></td>
+      <td>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</td>
+      <td>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</td>
+      <td>${escapeHtml(item.status || "-")}</td>
+      <td>${escapeHtml(formatTimestamp(item.counterAssignedAt))}</td>
+      <td>${escapeHtml(actorName(item.counterAssignedBy))}</td>
+      <td>${escapeHtml(formatTimestamp(item.gateCollectedAt))}</td>
+      <td>${escapeHtml(actorName(item.gateCollectedBy))}</td>
+      <td>${escapeHtml(formatTimestamp(item.rampReceivedAt))}</td>
+      <td>${escapeHtml(actorName(item.rampReceivedBy))}</td>
+      <td>${escapeHtml(formatTimestamp(item.aircraftLoadedAt))}</td>
+      <td>${escapeHtml(actorName(item.aircraftLoadedBy))}</td>
+      <td>${escapeHtml(item.compartment || "-")}</td>
+      <td>${escapeHtml(item.gateCollectionNoteCombined || "-")}</td>
+      <td>${escapeHtml(item.offloadReason || "-")}</td>
+      <td>${escapeHtml(formatTimestamp(item.offloadedAt))}</td>
+      <td>${escapeHtml(actorName(item.offloadedBy))}</td>
+    </tr>
+  `).join("");
+
+  return `<!DOCTYPE html>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <title>BLCS - Carry-On Gate Check Report</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #111827; background: #fff; }
+        .brand { display:flex; align-items:center; justify-content:space-between; gap:18px; padding-bottom:15px; margin-bottom:18px; border-bottom:2px solid #dbeafe; }
+        .brand-left { display:flex; align-items:center; gap:12px; }
+        .logo { width:58px; height:58px; object-fit:contain; border-radius:12px; }
+        .brand-name { font-size:13px; font-weight:900; letter-spacing:.12em; color:#0f4c81; }
+        .brand-sub { margin-top:3px; font-size:11px; color:#64748b; font-weight:700; }
+        .doc-label { text-align:right; font-size:11px; font-weight:800; color:#64748b; text-transform:uppercase; letter-spacing:.08em; }
+        h1 { margin:0; font-size:27px; letter-spacing:-.03em; }
+        .subtitle { margin-top:6px; color:#475569; font-weight:700; }
+        .grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:9px; margin:18px 0; }
+        .card { border:1px solid #dbeafe; background:#f8fbff; border-radius:11px; padding:10px 11px; }
+        .label { font-size:9px; color:#64748b; font-weight:800; text-transform:uppercase; letter-spacing:.07em; }
+        .value { margin-top:4px; font-size:14px; font-weight:900; }
+        table { width:100%; border-collapse:collapse; margin-top:14px; }
+        th, td { border:1px solid #dbeafe; padding:6px 7px; text-align:left; font-size:9px; vertical-align:top; }
+        th { background:#f8fbff; color:#475569; font-size:8px; text-transform:uppercase; letter-spacing:.04em; }
+        .footer { margin-top:24px; padding-top:10px; border-top:1px solid #e2e8f0; color:#94a3b8; text-align:center; font-size:9px; }
+        @page { size: landscape; margin: 10mm; }
+        @media print { body { margin:0; } }
+      </style>
+    </head>
+    <body>
+      <div class="brand">
+        <div class="brand-left">
+          <img class="logo" src="${logoUrl}" alt="BLCS" />
+          <div>
+            <div class="brand-name">BLCS</div>
+            <div class="brand-sub">Baggage Loading Control System</div>
+          </div>
+        </div>
+        <div class="doc-label">Carry-On Gate Check Operational Report</div>
+      </div>
+
+      <h1>Carry-On Gate Check Report</h1>
+      <div class="subtitle">${escapeHtml(flight?.flightNumber || "-")} &middot; ${escapeHtml(flight?.flightDate || "-")} &middot; ${escapeHtml(route)}</div>
+
+      <div class="grid">
+        <div class="card"><div class="label">Gate</div><div class="value">${escapeHtml(flight?.gate || "-")}</div></div>
+        <div class="card"><div class="label">Tail</div><div class="value">${escapeHtml(flight?.tailNumber || "-")}</div></div>
+        <div class="card"><div class="label">Required</div><div class="value">${requiredCount}</div></div>
+        <div class="card"><div class="label">Assigned</div><div class="value">${rows.length}</div></div>
+        <div class="card"><div class="label">Loaded</div><div class="value">${loadedCount}</div></div>
+        <div class="card"><div class="label">Offloaded</div><div class="value">${offloadedCount}</div></div>
+        <div class="card"><div class="label">Remaining</div><div class="value">${remainingToLoad}</div></div>
+        <div class="card"><div class="label">Additional</div><div class="value">${additionalCount}</div></div>
+        <div class="card"><div class="label">Forward</div><div class="value">${compartmentTotals.FORWARD}</div></div>
+        <div class="card"><div class="label">Middle</div><div class="value">${compartmentTotals.MIDDLE}</div></div>
+        <div class="card"><div class="label">Aft</div><div class="value">${compartmentTotals.AFT}</div></div>
+      </div>
+
+      <table>
+        <thead><tr>
+          <th>Passenger</th><th>Seat</th><th>Gate Check</th><th>Counter Wt</th><th>Gate Wt</th><th>Status</th>
+          <th>Counter Time</th><th>Counter By</th><th>Gate Time</th><th>Gate By</th><th>Ramp Time</th><th>Ramp By</th>
+          <th>Loaded Time</th><th>Loaded By</th><th>Compartment</th><th>Gate Notes</th><th>Offload Reason</th><th>Offloaded At</th><th>Offloaded By</th>
+        </tr></thead>
+        <tbody>${bodyRows || '<tr><td colspan="19">No Carry-On assignments.</td></tr>'}</tbody>
+      </table>
+
+      <div class="footer">BLCS &middot; Baggage Loading Control System</div>
+    </body>
+  </html>`;
 }
 
 export default function CarryOnReportPage({
@@ -217,7 +357,22 @@ export default function CarryOnReportPage({
     }, [loadedRows]);
 
   const printReport = () => {
-    window.print();
+    if (!selectedFlight) return;
+
+    const html = buildCarryOnReportHtml({
+      flight: selectedFlight,
+      rows,
+      requiredCount,
+      loadedCount,
+      offloadedCount,
+      remainingToLoad,
+      additionalCount,
+      compartmentTotals,
+    });
+
+    openPrintDocument(html, () => {
+      setError("Pop-up blocked. Please allow pop-ups to print the report.");
+    });
   };
 
   return (
