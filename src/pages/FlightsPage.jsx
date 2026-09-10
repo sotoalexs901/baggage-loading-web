@@ -18,6 +18,8 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
+  writeBatch,
   where,
 } from "firebase/firestore";
 
@@ -486,6 +488,53 @@ export default function FlightsPage({
     reopeningId,
     setReopeningId,
   ] = useState("");
+
+  const [
+    editingCarryOn,
+    setEditingCarryOn,
+  ] = useState(
+    null
+  );
+
+  const [
+    editCarryOnForm,
+    setEditCarryOnForm,
+  ] = useState({
+    flightNumber:
+      "",
+
+    flightDate:
+      "",
+
+    gate:
+      "",
+
+    aircraftType:
+      "",
+
+    origin:
+      "",
+
+    destination:
+      "",
+
+    tailNumber:
+      "",
+  });
+
+  const [
+    savingCarryOnEdit,
+    setSavingCarryOnEdit,
+  ] = useState(
+    false
+  );
+
+  const [
+    deletingCarryOnId,
+    setDeletingCarryOnId,
+  ] = useState(
+    ""
+  );
 
   const allowCreate =
     canCreateFlights(
@@ -1618,6 +1667,390 @@ export default function FlightsPage({
     };
 
   /* =========================
+     CARRY-ON EDIT / DELETE
+  ========================= */
+
+  const openCarryOnEdit =
+    (
+      flight
+    ) => {
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      setEditingCarryOn(
+        flight
+      );
+
+      setEditCarryOnForm({
+        flightNumber:
+          flight
+            ?.flightNumber ||
+          "",
+
+        flightDate:
+          flight
+            ?.flightDate ||
+          selectedDate,
+
+        gate:
+          flight
+            ?.gate ||
+          "",
+
+        aircraftType:
+          flight
+            ?.aircraftType ||
+          flight
+            ?.aircraft ||
+          "",
+
+        origin:
+          flight
+            ?.origin ||
+          "",
+
+        destination:
+          flight
+            ?.destination ||
+          "",
+
+        tailNumber:
+          flight
+            ?.tailNumber ||
+          "",
+      });
+    };
+
+  const saveCarryOnEdit =
+    async () => {
+      if (
+        !editingCarryOn ||
+        savingCarryOnEdit
+      ) {
+        return;
+      }
+
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      const flightNumber =
+        String(
+          editCarryOnForm
+            .flightNumber ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const flightDate =
+        String(
+          editCarryOnForm
+            .flightDate ||
+          ""
+        ).trim();
+
+      const gate =
+        String(
+          editCarryOnForm
+            .gate ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const aircraftType =
+        String(
+          editCarryOnForm
+            .aircraftType ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const origin =
+        String(
+          editCarryOnForm
+            .origin ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const destination =
+        String(
+          editCarryOnForm
+            .destination ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const tailNumber =
+        String(
+          editCarryOnForm
+            .tailNumber ||
+          ""
+        )
+          .trim()
+          .toUpperCase();
+
+      const match =
+        flightNumber.match(
+          /^([A-Z0-9]{2,3})([0-9]{1,4})$/
+        );
+
+      if (
+        !match ||
+        !flightDate ||
+        !origin ||
+        !destination
+      ) {
+        setActionErr(
+          "Flight Number, Date, Origin and Destination are required."
+        );
+
+        return;
+      }
+
+      try {
+        setSavingCarryOnEdit(
+          true
+        );
+
+        await updateDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            editingCarryOn.id
+          ),
+          {
+            flightNumber,
+
+            airline:
+              match[1],
+
+            flightNumberOnly:
+              match[2],
+
+            flightDate,
+
+            gate:
+              gate ||
+              null,
+
+            aircraft:
+              aircraftType ||
+              null,
+
+            aircraftType:
+              aircraftType ||
+              null,
+
+            origin,
+
+            destination,
+
+            tailNumber:
+              tailNumber ||
+              null,
+
+            updatedAt:
+              serverTimestamp(),
+
+            updatedBy:
+              operationalActor,
+          }
+        );
+
+        setEditingCarryOn(
+          null
+        );
+
+        setActionMsg(
+          `Carry-On flight updated: ${flightNumber}`
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Carry-On edit failed:",
+          error
+        );
+
+        setActionErr(
+          error?.message ||
+          "Could not update Carry-On flight."
+        );
+      } finally {
+        setSavingCarryOnEdit(
+          false
+        );
+      }
+    };
+
+  const deleteCarryOnSubcollection =
+    async (
+      flightId,
+      subcollectionName
+    ) => {
+      const snap =
+        await getDocs(
+          collection(
+            db,
+            "carryOnFlights",
+            flightId,
+            subcollectionName
+          )
+        );
+
+      const docs =
+        snap.docs;
+
+      for (
+        let index = 0;
+        index <
+        docs.length;
+        index += 400
+      ) {
+        const batch =
+          writeBatch(
+            db
+          );
+
+        docs
+          .slice(
+            index,
+            index + 400
+          )
+          .forEach(
+            (
+              item
+            ) => {
+              batch.delete(
+                item.ref
+              );
+            }
+          );
+
+        await batch.commit();
+      }
+    };
+
+  const handleDeleteCarryOn =
+    async (
+      flight
+    ) => {
+      if (
+        !allowManage ||
+        deletingCarryOnId
+      ) {
+        return;
+      }
+
+      const ok =
+        window.confirm(
+          `DELETE CARRY-ON FLIGHT?\n\n` +
+            `${flight.flightNumber || flight.id} ` +
+            `(${flight.flightDate || "-"})\n\n` +
+            `This will permanently remove:\n` +
+            `- Passenger setup\n` +
+            `- Available seats\n` +
+            `- Gate Check numbers\n` +
+            `- Assignments\n` +
+            `- Tracking events\n` +
+            `- Reports\n\n` +
+            `This cannot be undone.`
+        );
+
+      if (
+        !ok
+      ) {
+        return;
+      }
+
+      try {
+        setDeletingCarryOnId(
+          flight.id
+        );
+
+        const subcollections = [
+          "passengers",
+          "availableSeats",
+          "gateCheckNumbers",
+          "assignments",
+          "events",
+          "reports",
+        ];
+
+        for (
+          const name of
+            subcollections
+        ) {
+          await deleteCarryOnSubcollection(
+            flight.id,
+            name
+          );
+        }
+
+        const batch =
+          writeBatch(
+            db
+          );
+
+        batch.delete(
+          doc(
+            db,
+            "carryOnFlights",
+            flight.id
+          )
+        );
+
+        await batch.commit();
+
+        if (
+          sessionStorage.getItem(
+            "selectedCarryOnFlightId"
+          ) ===
+          flight.id
+        ) {
+          sessionStorage.removeItem(
+            "selectedCarryOnFlightId"
+          );
+        }
+
+        setActionMsg(
+          `Carry-On flight deleted: ${flight.flightNumber || flight.id}`
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Carry-On delete failed:",
+          error
+        );
+
+        setActionErr(
+          error?.message ||
+          "Could not delete Carry-On flight."
+        );
+      } finally {
+        setDeletingCarryOnId(
+          ""
+        );
+      }
+    };
+
+  /* =========================
      RENDER
   ========================= */
 
@@ -2637,46 +3070,404 @@ export default function FlightsPage({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-
-                    onClick={() =>
-                      onOpenCarryOnSetup?.(
-                        flight.id
-                      )
-                    }
-
+                  <div
                     style={{
-                      padding:
-                        "7px 12px",
+                      display:
+                        "flex",
 
-                      borderRadius:
-                        999,
+                      gap:
+                        7,
 
-                      border:
-                        "1px solid #7c3aed",
-
-                      background:
-                        "#7c3aed",
-
-                      color:
-                        "white",
-
-                      fontWeight:
-                        900,
-
-                      cursor:
-                        "pointer",
+                      flexWrap:
+                        "wrap",
                     }}
                   >
-                    Setup
-                  </button>
+                    <button
+                      type="button"
+
+                      onClick={() =>
+                        onOpenCarryOnSetup?.(
+                          flight.id
+                        )
+                      }
+
+                      style={{
+                        padding:
+                          "7px 12px",
+
+                        borderRadius:
+                          999,
+
+                        border:
+                          "1px solid #7c3aed",
+
+                        background:
+                          "#7c3aed",
+
+                        color:
+                          "white",
+
+                        fontWeight:
+                          900,
+
+                        cursor:
+                          "pointer",
+                      }}
+                    >
+                      Setup
+                    </button>
+
+                    {allowManage && (
+                      <button
+                        type="button"
+
+                        onClick={() =>
+                          openCarryOnEdit(
+                            flight
+                          )
+                        }
+
+                        style={{
+                          padding:
+                            "7px 12px",
+
+                          borderRadius:
+                            999,
+
+                          border:
+                            "1px solid #cbd5e1",
+
+                          background:
+                            "white",
+
+                          color:
+                            "#334155",
+
+                          fontWeight:
+                            900,
+
+                          cursor:
+                            "pointer",
+                        }}
+                      >
+                        Edit
+                      </button>
+                    )}
+
+                    {allowManage && (
+                      <button
+                        type="button"
+
+                        onClick={() =>
+                          handleDeleteCarryOn(
+                            flight
+                          )
+                        }
+
+                        disabled={
+                          deletingCarryOnId ===
+                          flight.id
+                        }
+
+                        style={{
+                          padding:
+                            "7px 12px",
+
+                          borderRadius:
+                            999,
+
+                          border:
+                            "1px solid #ef4444",
+
+                          background:
+                            "#ef4444",
+
+                          color:
+                            "white",
+
+                          fontWeight:
+                            900,
+
+                          cursor:
+                            deletingCarryOnId ===
+                            flight.id
+                              ? "not-allowed"
+                              : "pointer",
+
+                          opacity:
+                            deletingCarryOnId ===
+                            flight.id
+                              ? 0.6
+                              : 1,
+                        }}
+                      >
+                        {deletingCarryOnId ===
+                        flight.id
+                          ? "Deleting..."
+                          : "Delete"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               )
             )}
           </div>
         )}
       </div>
+
+      {/* =========================
+          EDIT CARRY-ON MODAL
+      ========================= */}
+
+      {editingCarryOn && (
+        <div
+          style={
+            overlay
+          }
+        >
+          <div
+            style={{
+              ...modal,
+
+              maxHeight:
+                "90dvh",
+
+              overflowY:
+                "auto",
+            }}
+          >
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                alignItems:
+                  "center",
+
+                gap:
+                  10,
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin:
+                      0,
+                  }}
+                >
+                  Edit Carry-On Flight
+                </h3>
+
+                <div
+                  style={{
+                    marginTop:
+                      3,
+
+                    color:
+                      "#64748b",
+
+                    fontSize:
+                      "0.76rem",
+                  }}
+                >
+                  Carry-On Check Only
+                </div>
+              </div>
+
+              <button
+                type="button"
+
+                onClick={() =>
+                  setEditingCarryOn(
+                    null
+                  )
+                }
+
+                disabled={
+                  savingCarryOnEdit
+                }
+
+                style={
+                  xBtn
+                }
+              >
+                {"\u2715"}
+              </button>
+            </div>
+
+            <div
+              style={{
+                display:
+                  "grid",
+
+                gridTemplateColumns:
+                  isMobile
+                    ? "1fr"
+                    : "1fr 1fr",
+
+                gap:
+                  10,
+
+                marginTop:
+                  12,
+              }}
+            >
+              {[
+                [
+                  "Flight Number",
+                  "flightNumber",
+                ],
+
+                [
+                  "Date",
+                  "flightDate",
+                ],
+
+                [
+                  "Gate",
+                  "gate",
+                ],
+
+                [
+                  "Aircraft Type",
+                  "aircraftType",
+                ],
+
+                [
+                  "Origin",
+                  "origin",
+                ],
+
+                [
+                  "Destination",
+                  "destination",
+                ],
+
+                [
+                  "Tail Number",
+                  "tailNumber",
+                ],
+              ].map(
+                (
+                  [
+                    fieldLabel,
+                    key,
+                  ]
+                ) => (
+                  <div
+                    key={
+                      key
+                    }
+                  >
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      {fieldLabel}
+                    </label>
+
+                    <input
+                      type={
+                        key ===
+                        "flightDate"
+                          ? "date"
+                          : "text"
+                      }
+
+                      value={
+                        editCarryOnForm[
+                          key
+                        ]
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setEditCarryOnForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            [key]:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+                )
+              )}
+            </div>
+
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "flex-end",
+
+                gap:
+                  8,
+
+                marginTop:
+                  14,
+              }}
+            >
+              <button
+                type="button"
+
+                onClick={() =>
+                  setEditingCarryOn(
+                    null
+                  )
+                }
+
+                disabled={
+                  savingCarryOnEdit
+                }
+
+                style={
+                  btnGhost
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+
+                onClick={
+                  saveCarryOnEdit
+                }
+
+                disabled={
+                  savingCarryOnEdit
+                }
+
+                style={
+                  btnPrimary
+                }
+              >
+                {savingCarryOnEdit
+                  ? "Saving..."
+                  : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* =========================
           CREATE FLIGHT MODAL
