@@ -1,4 +1,4 @@
-// src/pages/CarryOnGatePage.jsx
+/ src/pages/CarryOnGatePage.jsx
 
 import React, {
   useEffect,
@@ -106,6 +106,8 @@ export default function CarryOnGatePage({
   const [processingId, setProcessingId] = useState("");
   const [offloadingId, setOffloadingId] = useState("");
   const [restoringId, setRestoringId] = useState("");
+  const [acknowledgingBypassId, setAcknowledgingBypassId] =
+    useState("");
   const [closingFlight, setClosingFlight] = useState(false);
   const [noteTypeById, setNoteTypeById] = useState({});
   const [noteTextById, setNoteTextById] = useState({});
@@ -352,6 +354,23 @@ export default function CarryOnGatePage({
   const filteredWaitingAtGate = waitingAtGate.filter(matchesSearch);
   const filteredCollectedAtGate = collectedAtGate.filter(matchesSearch);
   const filteredOffloaded = offloaded.filter(matchesSearch);
+
+
+  const gateBypassAlerts = useMemo(
+    () =>
+      assignments
+        .filter(
+          (item) =>
+            item?.rampBypassedGate === true &&
+            !item?.gateBypassAcknowledgedAt
+        )
+        .sort((a, b) =>
+          String(a.gateCheckNumber || "").localeCompare(
+            String(b.gateCheckNumber || "")
+          )
+        ),
+    [assignments]
+  );
 
   const markCollectedAtGate = async (assignment) => {
     setMessage("");
@@ -718,6 +737,139 @@ export default function CarryOnGatePage({
       );
     } finally {
       setOffloadingId("");
+    }
+  };
+
+  const acknowledgeGateBypass = async (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateGate) {
+      setError(
+        "You do not have permission to acknowledge this Gate bypass."
+      );
+      return;
+    }
+
+    if (!selectedFlight || !assignment) return;
+
+    try {
+      setAcknowledgingBypassId(assignment.id);
+
+      const assignmentRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "assignments",
+        assignment.id
+      );
+
+      const gateCheckRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        assignment.id
+      );
+
+      await runTransaction(db, async (transaction) => {
+        const assignmentSnap =
+          await transaction.get(assignmentRef);
+
+        if (!assignmentSnap.exists()) {
+          throw new Error(
+            "Carry-On assignment no longer exists."
+          );
+        }
+
+        const data = assignmentSnap.data();
+
+        if (data?.rampBypassedGate !== true) {
+          throw new Error(
+            "This Carry-On does not have a Gate bypass alert."
+          );
+        }
+
+        transaction.set(
+          assignmentRef,
+          {
+            gateBypassAcknowledgedAt:
+              serverTimestamp(),
+            gateBypassAcknowledgedBy:
+              actor,
+            updatedAt:
+              serverTimestamp(),
+            updatedBy:
+              actor,
+          },
+          { merge: true }
+        );
+
+        transaction.set(
+          gateCheckRef,
+          {
+            gateBypassAcknowledgedAt:
+              serverTimestamp(),
+            gateBypassAcknowledgedBy:
+              actor,
+          },
+          { merge: true }
+        );
+      });
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `gate_bypass_ack_${assignment.id}_${Date.now()}`
+          ),
+          {
+            type: "GATE_BYPASS_ACKNOWLEDGED",
+            status:
+              cleanUpper(assignment.status),
+            assignmentId:
+              assignment.id,
+            passengerId:
+              assignment.passengerId || null,
+            passengerName:
+              assignment.passengerName || null,
+            assignedSeat:
+              assignment.assignedSeat || null,
+            gateCheckNumber:
+              assignment.gateCheckNumber || null,
+            message:
+              `Gate acknowledged that ${assignment.gateCheckNumber || assignment.id} was received by Ramp without Gate collection.`,
+            createdAt:
+              serverTimestamp(),
+            createdBy:
+              actor,
+          }
+        );
+      } catch (eventError) {
+        console.error(
+          "Carry-On Gate bypass acknowledgment event error:",
+          eventError
+        );
+      }
+
+      setMessage(
+        `${assignment.gateCheckNumber} Gate bypass acknowledged.`
+      );
+    } catch (ackError) {
+      console.error(
+        "Carry-On Gate bypass acknowledgment error:",
+        ackError
+      );
+
+      setError(
+        ackError?.message ||
+          "Unable to acknowledge Gate bypass."
+      );
+    } finally {
+      setAcknowledgingBypassId("");
     }
   };
 
@@ -1374,6 +1526,105 @@ export default function CarryOnGatePage({
             assignments={assignments}
             searchTerm={searchTerm}
           />
+
+          {gateBypassAlerts.length > 0 && (
+            <div
+              style={{
+                padding: 12,
+                borderRadius: 12,
+                border: "1px solid #fde68a",
+                background: "#fffbeb",
+              }}
+            >
+              <div
+                style={{
+                  color: "#92400e",
+                  fontWeight: 900,
+                  fontSize: "0.84rem",
+                }}
+              >
+                Ramp Received Without Gate Collection
+              </div>
+
+              <div
+                style={{
+                  marginTop: 4,
+                  color: "#92400e",
+                  fontSize: "0.74rem",
+                }}
+              >
+                Ramp received the following Gate Check number(s) directly from Counter. Gate can acknowledge the exception without changing the current Ramp/Load status.
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(auto-fit, minmax(145px, 1fr))",
+                  gap: 8,
+                  marginTop: 10,
+                }}
+              >
+                {gateBypassAlerts.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: 10,
+                      borderRadius: 10,
+                      border: "1px solid #fde68a",
+                      background: "white",
+                      textAlign: "center",
+                    }}
+                  >
+                    <div
+                      style={{
+                        color: "#92400e",
+                        fontWeight: 900,
+                        fontSize: "1rem",
+                      }}
+                    >
+                      {item.gateCheckNumber || "-"}
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: 4,
+                        color: "#64748b",
+                        fontSize: "0.68rem",
+                      }}
+                    >
+                      Received at Ramp without Gate
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        acknowledgeGateBypass(item)
+                      }
+                      disabled={
+                        acknowledgingBypassId === item.id ||
+                        !canOperateGate
+                      }
+                      style={{
+                        ...ackButton,
+                        width: "100%",
+                        marginTop: 8,
+                        opacity:
+                          acknowledgingBypassId === item.id ||
+                          !canOperateGate
+                            ? 0.55
+                            : 1,
+                      }}
+                    >
+                      {acknowledgingBypassId === item.id
+                        ? "Acknowledging..."
+                        : "Acknowledge"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {!canOperateGate && (
             <Notice
@@ -2407,6 +2658,17 @@ const closeButton = {
   border: "1px solid #0f172a",
   background: "#0f172a",
   color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+
+const ackButton = {
+  padding: "8px 10px",
+  borderRadius: 10,
+  border: "1px solid #d97706",
+  background: "#fff7ed",
+  color: "#9a3412",
   fontWeight: 900,
   cursor: "pointer",
 };
