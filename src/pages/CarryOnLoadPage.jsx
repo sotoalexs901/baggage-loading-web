@@ -95,7 +95,13 @@ export default function CarryOnLoadPage({
     useState({});
   const [loadingId, setLoadingId] = useState("");
   const [offloadingId, setOffloadingId] = useState("");
+  const [unloadingId, setUnloadingId] = useState("");
+  const [editingId, setEditingId] = useState("");
   const [offloadReasonById, setOffloadReasonById] =
+    useState({});
+  const [unloadReasonById, setUnloadReasonById] =
+    useState({});
+  const [editCompartmentById, setEditCompartmentById] =
     useState({});
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -276,7 +282,7 @@ export default function CarryOnLoadPage({
     }
 
     const ok = window.confirm(
-      `OFFLOAD this Carry-On before loading?\n\n` +
+      `OFFLOAD this Carry-On?\n\n` +
         `Passenger: ${assignment.passengerName || "-"}\n` +
         `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
         `Reason: ${reason}`
@@ -318,7 +324,10 @@ export default function CarryOnLoadPage({
             assignmentSnap.data()?.status
           );
 
-        if (currentStatus !== "RAMP_RECEIVED") {
+        if (
+          currentStatus !== "RAMP_RECEIVED" &&
+          currentStatus !== "AIRCRAFT_LOADED"
+        ) {
           throw new Error(
             `This Carry-On cannot be Offloaded from status ${currentStatus || "UNKNOWN"}.`
           );
@@ -328,11 +337,14 @@ export default function CarryOnLoadPage({
           assignmentRef,
           {
             status: "OFFLOADED",
-            statusBeforeOffload: "RAMP_RECEIVED",
+            statusBeforeOffload: currentStatus,
             offloadedAt: serverTimestamp(),
             offloadedBy: actor,
             offloadReason: reason,
-            offloadStage: "LOAD",
+            offloadStage:
+              currentStatus === "AIRCRAFT_LOADED"
+                ? "AIRCRAFT"
+                : "LOAD",
             updatedAt: serverTimestamp(),
             updatedBy: actor,
           },
@@ -343,11 +355,14 @@ export default function CarryOnLoadPage({
           gateCheckRef,
           {
             status: "OFFLOADED",
-            statusBeforeOffload: "RAMP_RECEIVED",
+            statusBeforeOffload: currentStatus,
             offloadedAt: serverTimestamp(),
             offloadedBy: actor,
             offloadReason: reason,
-            offloadStage: "LOAD",
+            offloadStage:
+              currentStatus === "AIRCRAFT_LOADED"
+                ? "AIRCRAFT"
+                : "LOAD",
           },
           { merge: true }
         );
@@ -406,6 +421,351 @@ export default function CarryOnLoadPage({
       );
     } finally {
       setOffloadingId("");
+    }
+  };
+
+  const unloadCarryOn = async (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateLoad) {
+      setError(
+        "You do not have permission to Unload this Carry-On."
+      );
+      return;
+    }
+
+    if (!selectedFlight || !assignment) return;
+
+    const reason = String(
+      unloadReasonById[assignment.id] || ""
+    )
+      .trim()
+      .replace(/\s+/g, " ");
+
+    if (!reason) {
+      setError(
+        "Enter an Unload reason before continuing."
+      );
+      return;
+    }
+
+    const ok = window.confirm(
+      `UNLOAD this Carry-On from the aircraft?\n\n` +
+        `Passenger: ${assignment.passengerName || "-"}\n` +
+        `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
+        `Compartment: ${assignment.compartment || "-"}\n` +
+        `Reason: ${reason}\n\n` +
+        `The item will return to Ramp and can be loaded again.`
+    );
+
+    if (!ok) return;
+
+    try {
+      setUnloadingId(assignment.id);
+
+      const assignmentRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "assignments",
+        assignment.id
+      );
+
+      const gateCheckRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        assignment.id
+      );
+
+      await runTransaction(db, async (transaction) => {
+        const assignmentSnap =
+          await transaction.get(assignmentRef);
+
+        if (!assignmentSnap.exists()) {
+          throw new Error(
+            "Carry-On assignment no longer exists."
+          );
+        }
+
+        const data = assignmentSnap.data();
+        const currentStatus =
+          cleanUpper(data?.status);
+
+        if (currentStatus !== "AIRCRAFT_LOADED") {
+          throw new Error(
+            `This Carry-On cannot be Unloaded from status ${currentStatus || "UNKNOWN"}.`
+          );
+        }
+
+        transaction.set(
+          assignmentRef,
+          {
+            status: "RAMP_RECEIVED",
+            previousAircraftLoadedAt:
+              data?.aircraftLoadedAt || null,
+            previousAircraftLoadedBy:
+              data?.aircraftLoadedBy || null,
+            unloadedFromCompartment:
+              data?.compartment || null,
+            unloadedAt: serverTimestamp(),
+            unloadedBy: actor,
+            unloadReason: reason,
+            aircraftLoadedAt: null,
+            aircraftLoadedBy: null,
+            compartment: null,
+            updatedAt: serverTimestamp(),
+            updatedBy: actor,
+          },
+          { merge: true }
+        );
+
+        transaction.set(
+          gateCheckRef,
+          {
+            status: "RAMP_RECEIVED",
+            unloadedFromCompartment:
+              data?.compartment || null,
+            unloadedAt: serverTimestamp(),
+            unloadedBy: actor,
+            unloadReason: reason,
+            aircraftLoadedAt: null,
+            aircraftLoadedBy: null,
+            compartment: null,
+          },
+          { merge: true }
+        );
+      });
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `aircraft_unloaded_${assignment.id}_${Date.now()}`
+          ),
+          {
+            type: "AIRCRAFT_UNLOADED",
+            status: "RAMP_RECEIVED",
+            assignmentId: assignment.id,
+            passengerId: assignment.passengerId || null,
+            passengerName: assignment.passengerName || null,
+            assignedSeat: assignment.assignedSeat || null,
+            gateCheckNumber:
+              assignment.gateCheckNumber || null,
+            unloadedFromCompartment:
+              assignment.compartment || null,
+            unloadReason: reason,
+            message:
+              `Carry-On ${assignment.gateCheckNumber || assignment.id} unloaded from aircraft and returned to Ramp.`,
+            createdAt: serverTimestamp(),
+            createdBy: actor,
+          }
+        );
+      } catch (eventError) {
+        console.error(
+          "Carry-On Unload event write error:",
+          eventError
+        );
+      }
+
+      setUnloadReasonById((previous) => ({
+        ...previous,
+        [assignment.id]: "",
+      }));
+
+      setMessage(
+        `${assignment.gateCheckNumber} unloaded and returned to Ramp.`
+      );
+    } catch (unloadError) {
+      console.error(
+        "Carry-On Unload error:",
+        unloadError
+      );
+
+      setError(
+        unloadError?.message ||
+          "Unable to Unload Carry-On."
+      );
+    } finally {
+      setUnloadingId("");
+    }
+  };
+
+  const updateLoadedCompartment = async (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateLoad) {
+      setError(
+        "You do not have permission to edit the loaded compartment."
+      );
+      return;
+    }
+
+    if (!selectedFlight || !assignment) return;
+
+    const newCompartment = cleanUpper(
+      editCompartmentById[assignment.id] ||
+      assignment.compartment ||
+      ""
+    );
+
+    if (
+      !["FORWARD", "MIDDLE", "AFT"].includes(
+        newCompartment
+      )
+    ) {
+      setError(
+        "Select FORWARD, MIDDLE or AFT."
+      );
+      return;
+    }
+
+    if (
+      newCompartment ===
+      cleanUpper(assignment.compartment)
+    ) {
+      setMessage(
+        `${assignment.gateCheckNumber} is already in ${newCompartment}.`
+      );
+      return;
+    }
+
+    const ok = window.confirm(
+      `Update aircraft compartment?\n\n` +
+        `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
+        `From: ${assignment.compartment || "-"}\n` +
+        `To: ${newCompartment}`
+    );
+
+    if (!ok) return;
+
+    try {
+      setEditingId(assignment.id);
+
+      const assignmentRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "assignments",
+        assignment.id
+      );
+
+      const gateCheckRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "gateCheckNumbers",
+        assignment.id
+      );
+
+      await runTransaction(db, async (transaction) => {
+        const assignmentSnap =
+          await transaction.get(assignmentRef);
+
+        if (!assignmentSnap.exists()) {
+          throw new Error(
+            "Carry-On assignment no longer exists."
+          );
+        }
+
+        const data = assignmentSnap.data();
+        const currentStatus =
+          cleanUpper(data?.status);
+
+        if (currentStatus !== "AIRCRAFT_LOADED") {
+          throw new Error(
+            `Compartment cannot be edited from status ${currentStatus || "UNKNOWN"}.`
+          );
+        }
+
+        transaction.set(
+          assignmentRef,
+          {
+            previousCompartment:
+              data?.compartment || null,
+            compartment: newCompartment,
+            compartmentEditedAt:
+              serverTimestamp(),
+            compartmentEditedBy: actor,
+            updatedAt: serverTimestamp(),
+            updatedBy: actor,
+          },
+          { merge: true }
+        );
+
+        transaction.set(
+          gateCheckRef,
+          {
+            previousCompartment:
+              data?.compartment || null,
+            compartment: newCompartment,
+            compartmentEditedAt:
+              serverTimestamp(),
+            compartmentEditedBy: actor,
+          },
+          { merge: true }
+        );
+      });
+
+      try {
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id,
+            "events",
+            `compartment_edit_${assignment.id}_${Date.now()}`
+          ),
+          {
+            type: "AIRCRAFT_COMPARTMENT_UPDATED",
+            status: "AIRCRAFT_LOADED",
+            assignmentId: assignment.id,
+            passengerName:
+              assignment.passengerName || null,
+            gateCheckNumber:
+              assignment.gateCheckNumber || null,
+            previousCompartment:
+              assignment.compartment || null,
+            compartment: newCompartment,
+            message:
+              `Carry-On ${assignment.gateCheckNumber || assignment.id} moved from ${assignment.compartment || "-"} to ${newCompartment}.`,
+            createdAt: serverTimestamp(),
+            createdBy: actor,
+          }
+        );
+      } catch (eventError) {
+        console.error(
+          "Carry-On compartment edit event error:",
+          eventError
+        );
+      }
+
+      setEditCompartmentById((previous) => ({
+        ...previous,
+        [assignment.id]: "",
+      }));
+
+      setMessage(
+        `${assignment.gateCheckNumber} moved to ${newCompartment}.`
+      );
+    } catch (editError) {
+      console.error(
+        "Carry-On compartment edit error:",
+        editError
+      );
+
+      setError(
+        editError?.message ||
+          "Unable to update compartment."
+      );
+    } finally {
+      setEditingId("");
     }
   };
 
@@ -615,7 +975,7 @@ export default function CarryOnLoadPage({
               fontSize: "0.82rem",
             }}
           >
-            Load Carry-On items received by Ramp and record the final aircraft compartment.
+            Load Carry-On items, edit compartment placement, Unload back to Ramp, or Offload when required.
           </p>
         </div>
 
@@ -1032,6 +1392,198 @@ export default function CarryOnLoadPage({
                       {" - "}
                       Loaded: {formatTimestamp(item.aircraftLoadedAt)}
                     </div>
+
+                    <div
+                      style={{
+                        marginTop: 10,
+                        display: "grid",
+                        gap: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 7,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <select
+                          value={
+                            editCompartmentById[item.id] ||
+                            item.compartment ||
+                            ""
+                          }
+                          onChange={(event) =>
+                            setEditCompartmentById(
+                              (previous) => ({
+                                ...previous,
+                                [item.id]:
+                                  event.target.value,
+                              })
+                            )
+                          }
+                          style={{
+                            ...inputStyle,
+                            minWidth: 145,
+                            maxWidth: 180,
+                          }}
+                        >
+                          <option value="FORWARD">
+                            FORWARD
+                          </option>
+                          <option value="MIDDLE">
+                            MIDDLE
+                          </option>
+                          <option value="AFT">
+                            AFT
+                          </option>
+                        </select>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateLoadedCompartment(item)
+                          }
+                          disabled={
+                            editingId === item.id ||
+                            unloadingId === item.id ||
+                            offloadingId === item.id ||
+                            !canOperateLoad
+                          }
+                          style={{
+                            ...secondaryButton,
+                            opacity:
+                              editingId === item.id ||
+                              unloadingId === item.id ||
+                              offloadingId === item.id ||
+                              !canOperateLoad
+                                ? 0.55
+                                : 1,
+                          }}
+                        >
+                          {editingId === item.id
+                            ? "Updating..."
+                            : "Update Compartment"}
+                        </button>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 7,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={
+                            unloadReasonById[item.id] || ""
+                          }
+                          placeholder="Unload reason..."
+                          onChange={(event) =>
+                            setUnloadReasonById(
+                              (previous) => ({
+                                ...previous,
+                                [item.id]:
+                                  event.target.value,
+                              })
+                            )
+                          }
+                          style={{
+                            ...inputStyle,
+                            minWidth: 190,
+                            flex: "1 1 190px",
+                          }}
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            unloadCarryOn(item)
+                          }
+                          disabled={
+                            unloadingId === item.id ||
+                            editingId === item.id ||
+                            offloadingId === item.id ||
+                            !canOperateLoad
+                          }
+                          style={{
+                            ...warningButton,
+                            opacity:
+                              unloadingId === item.id ||
+                              editingId === item.id ||
+                              offloadingId === item.id ||
+                              !canOperateLoad
+                                ? 0.55
+                                : 1,
+                          }}
+                        >
+                          {unloadingId === item.id
+                            ? "Unloading..."
+                            : "Unload to Ramp"}
+                        </button>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 7,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={
+                            offloadReasonById[item.id] || ""
+                          }
+                          placeholder="Offload reason..."
+                          onChange={(event) =>
+                            setOffloadReasonById(
+                              (previous) => ({
+                                ...previous,
+                                [item.id]:
+                                  event.target.value,
+                              })
+                            )
+                          }
+                          style={{
+                            ...inputStyle,
+                            minWidth: 190,
+                            flex: "1 1 190px",
+                          }}
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            offloadCarryOn(item)
+                          }
+                          disabled={
+                            offloadingId === item.id ||
+                            unloadingId === item.id ||
+                            editingId === item.id ||
+                            !canOperateLoad
+                          }
+                          style={{
+                            ...dangerButton,
+                            opacity:
+                              offloadingId === item.id ||
+                              unloadingId === item.id ||
+                              editingId === item.id ||
+                              !canOperateLoad
+                                ? 0.55
+                                : 1,
+                          }}
+                        >
+                          {offloadingId === item.id
+                            ? "Offloading..."
+                            : "Offload"}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1250,6 +1802,26 @@ const dangerButton = {
   border: "1px solid #dc2626",
   background: "#dc2626",
   color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const warningButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #d97706",
+  background: "#d97706",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const secondaryButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  color: "#334155",
   fontWeight: 900,
   cursor: "pointer",
 };
