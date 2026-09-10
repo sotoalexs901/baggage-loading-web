@@ -838,7 +838,7 @@ export default function DashboardPage({
     selectedDate,
   ]);
 
-  const openCarryOnFlight =
+  const openCarryOnSetup =
     (
       flight
     ) => {
@@ -1769,7 +1769,7 @@ export default function DashboardPage({
                       "#22c55e",
                   }}
                 >
-                  â
+                  
                 </span>
 
                 Gate Controller on duty:{" "}
@@ -1851,7 +1851,7 @@ export default function DashboardPage({
             }}
           >
             {loading
-              ? "â¦"
+              ? "..."
               : flights.length}
           </p>
 
@@ -1898,7 +1898,7 @@ export default function DashboardPage({
           label="Gate Total"
           value={
             loading
-              ? "â¦"
+              ? "..."
               : summaryTotals.gate
           }
           tone="blue"
@@ -1908,7 +1908,7 @@ export default function DashboardPage({
           label="Bagroom"
           value={
             loading
-              ? "â¦"
+              ? "..."
               : summaryTotals.bagroom
           }
         />
@@ -1917,7 +1917,7 @@ export default function DashboardPage({
           label="Aircraft"
           value={
             loading
-              ? "â¦"
+              ? "..."
               : summaryTotals.aircraft
           }
         />
@@ -1926,7 +1926,7 @@ export default function DashboardPage({
           label="Missing"
           value={
             loading
-              ? "â¦"
+              ? "..."
               : summaryTotals.missing
           }
           tone={
@@ -1941,7 +1941,7 @@ export default function DashboardPage({
           label="Loaded Flights"
           value={
             loading
-              ? "â¦"
+              ? "..."
               : summaryTotals.loadedFlights
           }
           tone="good"
@@ -2158,7 +2158,7 @@ export default function DashboardPage({
                             }}
                           >
                             {" "}
-                            Â·{" "}
+                            -{" "}
                             {flight.gate ||
                               "No Gate"}
                           </span>
@@ -2183,7 +2183,7 @@ export default function DashboardPage({
                               "-"}
                           </strong>
 
-                          {" Â· "}
+                          {" - "}
 
                           Aircraft:{" "}
                           <strong>
@@ -2213,7 +2213,7 @@ export default function DashboardPage({
                               "-"}
                           </strong>
 
-                          {" Â· "}
+                          {" - "}
 
                           Ramp Supervisor:{" "}
                           <strong>
@@ -2296,7 +2296,7 @@ export default function DashboardPage({
                         value={
                           stats.gateTotal ===
                           null
-                            ? "â"
+                            ? "-"
                             : stats.gateTotal
                         }
 
@@ -2333,7 +2333,7 @@ export default function DashboardPage({
                         value={
                           stats.missing ===
                           null
-                            ? "â"
+                            ? "-"
                             : stats.missing
                         }
 
@@ -2629,7 +2629,7 @@ export default function DashboardPage({
                   "#0f172a",
               }}
             >
-              Carry-On Flights
+              Carry-On Check Only Flights
             </h3>
 
             <p
@@ -2644,7 +2644,7 @@ export default function DashboardPage({
                   "0.84rem",
               }}
             >
-              Live Carry-On setup and operational status for {selectedDate}.
+              Carry-On-only flights for {selectedDate}. Setup and operational progress stay separate from the regular baggage flow.
             </p>
           </div>
 
@@ -2937,7 +2937,7 @@ export default function DashboardPage({
                                 900,
                             }}
                           >
-                            {status.replace(
+                            {status.replaceAll(
                               "_",
                               " "
                             )}
@@ -2958,16 +2958,25 @@ export default function DashboardPage({
                         >
                           {flight.origin ||
                             "-"}
-                          {" \u2192 "}
+                          {" -> "}
                           {flight.destination ||
                             "-"}
 
                           {flight.gate
-                            ? ` \u00B7 Gate ${flight.gate}`
+                            ? ` - Gate ${flight.gate}`
                             : ""}
 
                           {flight.tailNumber
-                            ? ` \u00B7 Tail ${flight.tailNumber}`
+                            ? ` - Tail ${flight.tailNumber}`
+                            : ""}
+
+                          {!flight.tailNumber &&
+                          (flight.aircraftType ||
+                            flight.aircraft)
+                            ? ` - Aircraft ${
+                                flight.aircraftType ||
+                                flight.aircraft
+                              }`
                             : ""}
                         </div>
                       </div>
@@ -2976,7 +2985,7 @@ export default function DashboardPage({
                         type="button"
 
                         onClick={() =>
-                          openCarryOnFlight(
+                          openCarryOnSetup(
                             flight
                           )
                         }
@@ -3004,8 +3013,23 @@ export default function DashboardPage({
                             "pointer",
                         }}
                       >
-                        Open Carry-On
+                        Setup
                       </button>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop:
+                          8,
+
+                        color:
+                          "#64748b",
+
+                        fontSize:
+                          "0.74rem",
+                      }}
+                    >
+                      Use Setup to upload or review the Load Manifest, Empty Seats Report, Required target and Gate Check numbers.
                     </div>
 
                     <div
