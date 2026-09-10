@@ -1,4 +1,4 @@
-// src/pages/CarryOnLoadPage.jsx
+/ src/pages/CarryOnLoadPage.jsx
 
 import React, {
   useEffect,
@@ -93,6 +93,7 @@ export default function CarryOnLoadPage({
   const [assignments, setAssignments] = useState([]);
   const [compartmentByAssignment, setCompartmentByAssignment] =
     useState({});
+  const [searchTerm, setSearchTerm] = useState("");
   const [loadingId, setLoadingId] = useState("");
   const [offloadingId, setOffloadingId] = useState("");
   const [unloadingId, setUnloadingId] = useState("");
@@ -254,6 +255,20 @@ export default function CarryOnLoadPage({
       }
     );
   }, [loaded]);
+
+  const matchesSearch = (item) => {
+    const query = String(searchTerm || "").trim().toLowerCase();
+    if (!query) return true;
+    return [item?.assignedSeat, item?.gateCheckNumber]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  };
+
+  const filteredReadyToLoad = readyToLoad.filter(matchesSearch);
+  const filteredLoaded = loaded.filter(matchesSearch);
+  const filteredOffloaded = offloaded.filter(matchesSearch);
 
   const offloadCarryOn = async (assignment) => {
     setMessage("");
@@ -1059,6 +1074,14 @@ export default function CarryOnLoadPage({
             </div>
           </div>
 
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search by Seat or Gate Check"
+            style={inputStyle}
+          />
+
           <div
             style={{
               display: "grid",
@@ -1127,7 +1150,7 @@ export default function CarryOnLoadPage({
                   marginTop: 10,
                 }}
               >
-                {readyToLoad.map((item) => (
+                {filteredReadyToLoad.map((item) => (
                   <div
                     key={item.id}
                     style={{
@@ -1345,7 +1368,7 @@ export default function CarryOnLoadPage({
                   marginTop: 9,
                 }}
               >
-                {loaded.map((item) => (
+                {filteredLoaded.map((item) => (
                   <div
                     key={item.id}
                     style={{
@@ -1623,7 +1646,7 @@ export default function CarryOnLoadPage({
                   marginTop: 9,
                 }}
               >
-                {offloaded.map((item) => (
+                {filteredOffloaded.map((item) => (
                   <div
                     key={item.id}
                     style={{
