@@ -1,4 +1,4 @@
-// src/pages/CarryOnGateCheckPage.jsx
+// src/pages/FlightsPage.jsx
 
 import React, {
   useEffect,
@@ -7,117 +7,142 @@ import React, {
 } from "react";
 
 import {
+  addDoc,
   collection,
   doc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
-  writeBatch,
+  where,
 } from "firebase/firestore";
 
-import { db } from "../firebase";
+import {
+  httpsCallable,
+} from "firebase/functions";
 
-import * as pdfjsLib from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
+import {
+  db,
+  functions,
+} from "../firebase";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  pdfWorker;
+import {
+  logSystemIncident,
+  logSystemSuccess,
+  startSystemTimer,
+} from "../utils/systemLogger.js";
 
-/* =========================
-   CONSTANTS
-========================= */
-
-const TABS = [
-  "SETUP",
-  "COUNTER",
-  "GATE",
-  "RAMP",
-  "TRACKING",
-  "REPORT",
-];
-
-const MAX_BATCH_WRITES = 400;
+const MOBILE_BREAKPOINT = 760;
 
 /* =========================
    HELPERS
 ========================= */
 
-function normalizeRole(value) {
-  return String(value || "")
+function getTodayYYYYMMDD() {
+  const d = new Date();
+
+  const y = d.getFullYear();
+
+  const m = String(
+    d.getMonth() + 1
+  ).padStart(2, "0");
+
+  const day = String(
+    d.getDate()
+  ).padStart(2, "0");
+
+  return `${y}-${m}-${day}`;
+}
+
+function normalizeRole(
+  roleRaw
+) {
+  return String(
+    roleRaw || ""
+  )
     .trim()
     .toLowerCase();
 }
 
-function cleanUpper(value) {
-  return String(value || "")
+function normalizeOperationalPosition(
+  value
+) {
+  return String(
+    value || ""
+  )
     .trim()
     .toUpperCase();
 }
 
-function normalizeFlightNumber(
-  airline,
-  number
+function canCreateFlights(
+  roleRaw
 ) {
-  const carrier =
-    cleanUpper(airline)
-      .replace(
-        /[^A-Z0-9]/g,
-        ""
-      );
-
-  const flight =
-    String(number || "")
-      .trim()
-      .replace(
-        /[^0-9]/g,
-        ""
-      );
-
-  return `${carrier}${flight}`;
-}
-
-function normalizeGateCheckNumber(
-  value
-) {
-  return cleanUpper(value)
-    .replace(
-      /\s+/g,
-      ""
-    )
-    .replace(
-      /[^A-Z0-9-]/g,
-      ""
+  const role =
+    normalizeRole(
+      roleRaw
     );
-}
 
-function normalizeSeat(value) {
-  return cleanUpper(value)
-    .replace(
-      /\s+/g,
-      ""
-    );
-}
-
-function safeDocId(value) {
-  return String(value || "")
-    .trim()
-    .replace(
-      /[^A-Za-z0-9_-]/g,
-      "_"
-    );
-}
-
-function buildCarryOnFlightId(
-  flightNumber,
-  flightDate
-) {
-  return safeDocId(
-    `${flightNumber}_${flightDate}`
+  return (
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller"
   );
 }
 
-function getActor(
+function isManager(
+  roleRaw
+) {
+  const role =
+    normalizeRole(
+      roleRaw
+    );
+
+  return (
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor" ||
+    role ===
+      "gate_controller"
+  );
+}
+
+function normalizeStatus(
+  value
+) {
+  const status =
+    String(
+      value || "OPEN"
+    )
+      .trim()
+      .toUpperCase();
+
+  return [
+    "OPEN",
+    "RECEIVING",
+    "LOADING",
+    "LOADED",
+  ].includes(status)
+    ? status
+    : "OPEN";
+}
+
+function getOperationalActor(
   user,
   operationalContext
 ) {
@@ -130,801 +155,352 @@ function getActor(
       user?.username ||
       null,
 
-    fullName:
-      operationalContext
-        ?.employeeFullName ||
-      user?.fullName ||
-      user?.username ||
-      null,
-
     role:
       user?.role ||
       null,
 
-    operationalPosition:
+    fullName:
       operationalContext
-        ?.operationalPosition ||
+        ?.employeeFullName ||
+      user?.fullName ||
+      user?.name ||
+      user?.username ||
       null,
+
+    employeeFullName:
+      operationalContext
+        ?.employeeFullName ||
+      user?.fullName ||
+      user?.name ||
+      user?.username ||
+      null,
+
+    operationalPosition:
+      normalizeOperationalPosition(
+        operationalContext
+          ?.operationalPosition
+      ) || null,
 
     operationalPositionLabel:
       operationalContext
         ?.operationalPositionLabel ||
       null,
+
+    basePosition:
+      operationalContext
+        ?.basePosition ||
+      user?.position ||
+      null,
+
+    systemRole:
+      operationalContext
+        ?.systemRole ||
+      normalizeRole(
+        user?.role
+      ) ||
+      null,
+
+    loginAt:
+      operationalContext
+        ?.loginAt ||
+      null,
   };
 }
 
-function formatTimestamp(
-  timestamp
+function formatCallableError(
+  error
 ) {
-  if (
-    !timestamp
-  ) {
-    return "-";
-  }
+  const code =
+    error?.code
+      ? String(
+          error.code
+        )
+      : "";
+
+  const message =
+    error?.message
+      ? String(
+          error.message
+        )
+      : "Unknown error";
+
+  let details = "";
 
   try {
-    const date =
-      timestamp?.toDate
-        ? timestamp.toDate()
-        : new Date(
-            timestamp
-          );
-
-    return date.toLocaleString();
+    details =
+      error?.details
+        ? JSON.stringify(
+            error.details
+          )
+        : "";
   } catch {
-    return "-";
+    details = "";
   }
+
+  return [
+    code &&
+      `(${code})`,
+
+    message,
+
+    details &&
+      `Details: ${details}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 /* =========================
-   PDF READER
+   STATUS
 ========================= */
 
-async function readPdfDocumentData(
-  file
-) {
-  const arrayBuffer =
-    await file.arrayBuffer();
+const STATUS_COLORS = {
+  OPEN: {
+    bg:
+      "#fef3c7",
 
-  const pdf =
-    await pdfjsLib
-      .getDocument({
-        data:
-          arrayBuffer,
-      })
-      .promise;
+    text:
+      "#92400e",
 
-  let fullText =
-    "";
+    border:
+      "#f59e0b",
+  },
 
-  const lines =
-    [];
+  RECEIVING: {
+    bg:
+      "#dbeafe",
 
-  const pages =
-    [];
+    text:
+      "#1e3a8a",
 
-  for (
-    let pageNumber = 1;
-    pageNumber <=
-    pdf.numPages;
-    pageNumber += 1
-  ) {
-    const page =
-      await pdf.getPage(
-        pageNumber
-      );
+    border:
+      "#60a5fa",
+  },
 
-    const content =
-      await page.getTextContent();
+  LOADING: {
+    bg:
+      "#ffedd5",
 
-    const pageItems =
-      [];
+    text:
+      "#9a3412",
 
-    for (
-      const item of
-        content.items
-    ) {
-      const value =
-        String(
-          item?.str ||
-          ""
-        ).trim();
+    border:
+      "#fb923c",
+  },
 
-      if (!value) {
-        continue;
-      }
+  LOADED: {
+    bg:
+      "#dcfce7",
 
-      const transform =
-        Array.isArray(
-          item?.transform
-        )
-          ? item.transform
-          : [];
+    text:
+      "#166534",
 
-      pageItems.push({
-        value,
+    border:
+      "#22c55e",
+  },
+};
 
-        x:
-          Number(
-            transform?.[4] ||
-            0
-          ),
-
-        y:
-          Number(
-            transform?.[5] ||
-            0
-          ),
-      });
-    }
-
-    pages.push({
-      pageNumber,
-      items:
-        pageItems,
-    });
-
-    const rowMap =
-      new Map();
-
-    for (
-      const item of
-        pageItems
-    ) {
-      const yKey =
-        Math.round(
-          item.y / 4
-        ) * 4;
-
-      if (
-        !rowMap.has(
-          yKey
-        )
-      ) {
-        rowMap.set(
-          yKey,
-          []
-        );
-      }
-
-      rowMap
-        .get(
-          yKey
-        )
-        .push(
-          item
-        );
-    }
-
-    const pageRows =
-      Array.from(
-        rowMap.entries()
-      )
-        .sort(
-          (
-            a,
-            b
-          ) =>
-            b[0] -
-            a[0]
-        )
-        .map(
-          (
-            [
-              ,
-              items,
-            ]
-          ) =>
-            items
-              .sort(
-                (
-                  a,
-                  b
-                ) =>
-                  a.x -
-                  b.x
-              )
-              .map(
-                (
-                  item
-                ) =>
-                  item.value
-              )
-              .join(
-                " "
-              )
-              .replace(
-                /\s+/g,
-                " "
-              )
-              .trim()
-        )
-        .filter(
-          Boolean
-        );
-
-    lines.push(
-      ...pageRows
+function StatusPill({
+  status,
+}) {
+  const normalized =
+    normalizeStatus(
+      status
     );
 
-    fullText +=
-      `${pageRows.join("\n")}\n`;
-  }
+  const colors =
+    STATUS_COLORS[
+      normalized
+    ] ||
+    STATUS_COLORS.OPEN;
 
-  return {
-    fullText,
-    lines,
-    pages,
-  };
+  return (
+    <span
+      style={{
+        display:
+          "inline-flex",
+
+        alignItems:
+          "center",
+
+        padding:
+          "4px 10px",
+
+        borderRadius:
+          999,
+
+        border:
+          `1px solid ${colors.border}`,
+
+        background:
+          colors.bg,
+
+        color:
+          colors.text,
+
+        fontWeight:
+          900,
+
+        fontSize:
+          "0.75rem",
+
+        letterSpacing:
+          "0.04em",
+      }}
+    >
+      {normalized}
+    </span>
+  );
 }
 
 /* =========================
-   FLIGHT META PARSER
+   PAGE
 ========================= */
 
-function parseFlightMeta(
-  text
-) {
-  const source =
-    String(text || "");
-
-  const flightMatch =
-    source.match(
-      /Flight:\s*([A-Z0-9]{2,3})\s*([0-9]{1,4})/i
-    );
-
-  const originMatch =
-    source.match(
-      /Origin:\s*([A-Z]{3})\b/i
-    );
-
-  const destinationMatch =
-    source.match(
-      /Destination:\s*([A-Z]{3})\b/i
-    );
-
-  const stdMatch =
-    source.match(
-      /STD:\s*([0-9]{1,2}-[A-Za-z]{3}-[0-9]{4})\s*@\s*([0-9]{1,2}:[0-9]{2})/i
-    );
-
-  const aircraftMatch =
-    source.match(
-      /Aircraft:\s*([^\n\r]+?)(?=\s+Origin:|\n|$)/i
-    );
-
-  const airline =
-    flightMatch?.[1]
-      ? cleanUpper(
-          flightMatch[1]
-        )
-      : "";
-
-  const flightNumberOnly =
-    flightMatch?.[2]
-      ? String(
-          flightMatch[2]
-        )
-      : "";
-
-  const flightNumber =
-    airline &&
-    flightNumberOnly
-      ? normalizeFlightNumber(
-          airline,
-          flightNumberOnly
-        )
-      : "";
-
-  let flightDate =
-    "";
-
-  if (
-    stdMatch?.[1]
-  ) {
-    const parsed =
-      new Date(
-        `${stdMatch[1]} 00:00:00`
-      );
-
-    if (
-      !Number.isNaN(
-        parsed.getTime()
-      )
-    ) {
-      const year =
-        parsed.getFullYear();
-
-      const month =
-        String(
-          parsed.getMonth() + 1
-        ).padStart(
-          2,
-          "0"
-        );
-
-      const day =
-        String(
-          parsed.getDate()
-        ).padStart(
-          2,
-          "0"
-        );
-
-      flightDate =
-        `${year}-${month}-${day}`;
-    }
-  }
-
-  return {
-    airline,
-
-    flightNumberOnly,
-
-    flightNumber,
-
-    flightDate,
-
-    origin:
-      originMatch?.[1]
-        ? cleanUpper(
-            originMatch[1]
-          )
-        : "",
-
-    destination:
-      destinationMatch?.[1]
-        ? cleanUpper(
-            destinationMatch[1]
-          )
-        : "",
-
-    stdTime:
-      stdMatch?.[2] ||
-      "",
-
-    aircraft:
-      aircraftMatch?.[1]
-        ? String(
-            aircraftMatch[1]
-          ).trim()
-        : "",
-  };
-}
-
-/* =========================
-   LOAD MANIFEST PARSER
-========================= */
-
-function parseLoadManifestPassengers(
-  documentData
-) {
-  const lines =
-    Array.isArray(
-      documentData?.lines
-    )
-      ? documentData.lines
-      : [];
-
-  const passengers =
-    [];
-
-  const seen =
-    new Set();
-
-  /*
-   * World Atlantic Load Manifest rows use:
-   * LAST NAME / FIRST NAME
-   *
-   * We intentionally keep Passenger Name only.
-   */
-  const passengerPattern =
-    /^([A-Z][A-Z .'-]{1,60})\s*\/\s*([A-Z][A-Z .'-]{1,40})(?:\s|$)/i;
-
-  const excludedStarts = [
-    "PASSENGER NAME",
-    "LOAD MANIFEST",
-    "TOTAL ",
-    "PRINTED:",
-    "SIGNATURE",
-    "EMPLOYEE NUMBER",
-    "FLIGHT:",
-    "ORIGIN:",
-    "DESTINATION:",
-    "STD:",
-    "STA:",
-    "AIRCRAFT:",
-    "PASSENGER BAGS",
-    "CHECKED BAGS",
-    "CARRY ON",
-    "BODY WEIGHT",
-    "BAG TAGS",
-    "WEIGHT",
-    "BAGS:",
-  ];
-
-  for (
-    const rawLine of
-      lines
-  ) {
-    const line =
-      cleanUpper(
-        rawLine
-      )
-        .replace(
-          /\s+/g,
-          " "
-        );
-
-    if (
-      !line
-    ) {
-      continue;
-    }
-
-    if (
-      excludedStarts.some(
-        (
-          prefix
-        ) =>
-          line.startsWith(
-            prefix
-          )
-      )
-    ) {
-      continue;
-    }
-
-    const match =
-      line.match(
-        passengerPattern
-      );
-
-    if (
-      !match
-    ) {
-      continue;
-    }
-
-    const lastName =
-      String(
-        match[1] ||
-        ""
-      )
-        .trim()
-        .replace(
-          /\s+/g,
-          " "
-        );
-
-    const firstName =
-      String(
-        match[2] ||
-        ""
-      )
-        .trim()
-        .replace(
-          /\s+/g,
-          " "
-        );
-
-    const passengerName =
-      `${lastName} / ${firstName}`;
-
-    if (
-      seen.has(
-        passengerName
-      )
-    ) {
-      continue;
-    }
-
-    seen.add(
-      passengerName
-    );
-
-    passengers.push({
-      id:
-        safeDocId(
-          `PAX_${String(
-            passengers.length +
-            1
-          ).padStart(
-            3,
-            "0"
-          )}`
-        ),
-
-      sequence:
-        passengers.length +
-        1,
-
-      passengerName,
-
-      source:
-        "LOAD_MANIFEST",
-
-      assigned:
-        false,
-    });
-  }
-
-  const totalMatch =
-    String(
-      documentData?.fullText ||
-      ""
-    ).match(
-      /Total\s+([0-9]{1,3})\s+passengers/i
-    );
-
-  const declaredTotal =
-    totalMatch?.[1]
-      ? Number(
-          totalMatch[1]
-        )
-      : null;
-
-  return {
-    passengers,
-
-    declaredTotal,
-  };
-}
-
-/* =========================
-   EMPTY SEAT PARSER
-========================= */
-
-function parseEmptySeats(
-  text
-) {
-  const source =
-    String(text || "")
-      .replace(
-        /\r/g,
-        " "
-      )
-      .replace(
-        /\n+/g,
-        " "
-      )
-      .replace(
-        /\s+/g,
-        " "
-      );
-
-  const seats =
-    [];
-
-  const seen =
-    new Set();
-
-  const regex =
-    /\b(\d{1,2}[A-F])\s+(Premium|Standard|Emergency)\b(?:\s+(Yes|No))?/gi;
-
-  let match =
-    regex.exec(
-      source
-    );
-
-  while (
-    match
-  ) {
-    const seatNumber =
-      normalizeSeat(
-        match[1]
-      );
-
-    const seatType =
-      cleanUpper(
-        match[2]
-      );
-
-    const blocked =
-      cleanUpper(
-        match[3]
-      ) ===
-      "YES";
-
-    if (
-      seatNumber &&
-      !seen.has(
-        seatNumber
-      )
-    ) {
-      seen.add(
-        seatNumber
-      );
-
-      seats.push({
-        id:
-          safeDocId(
-            seatNumber
-          ),
-
-        seatNumber,
-
-        seatType,
-
-        blocked,
-
-        status:
-          blocked
-            ? "BLOCKED"
-            : "AVAILABLE",
-      });
-    }
-
-    match =
-      regex.exec(
-        source
-      );
-  }
-
-  return seats;
-}
-
-/* =========================
-   DOCUMENT VALIDATION
-========================= */
-
-function validateDocumentAgainstFlight(
-  meta,
-  flight
-) {
-  if (
-    !meta ||
-    !flight
-  ) {
-    return {
-      ok:
-        false,
-
-      issues: [
-        "Missing flight information.",
-      ],
-    };
-  }
-
-  const issues =
-    [];
-
-  const checks = [
-    [
-      "Flight",
-      cleanUpper(
-        meta.flightNumber
-      ),
-      cleanUpper(
-        flight.flightNumber
-      ),
-    ],
-
-    [
-      "Date",
-      cleanUpper(
-        meta.flightDate
-      ),
-      cleanUpper(
-        flight.flightDate
-      ),
-    ],
-
-    [
-      "Origin",
-      cleanUpper(
-        meta.origin
-      ),
-      cleanUpper(
-        flight.origin
-      ),
-    ],
-
-    [
-      "Destination",
-      cleanUpper(
-        meta.destination
-      ),
-      cleanUpper(
-        flight.destination
-      ),
-    ],
-  ];
-
-  for (
-    const [
-      label,
-      documentValue,
-      selectedValue,
-    ] of checks
-  ) {
-    if (
-      !documentValue
-    ) {
-      issues.push(
-        `${label}: not identified in PDF.`
-      );
-
-      continue;
-    }
-
-    if (
-      documentValue !==
-      selectedValue
-    ) {
-      issues.push(
-        `${label}: PDF ${documentValue} / Selected flight ${selectedValue}`
-      );
-    }
-  }
-
-  return {
-    ok:
-      issues.length ===
-      0,
-
-    issues,
-  };
-}
-
-/* =========================
-   FIRESTORE BATCH
-========================= */
-
-async function commitWrites(
-  operations
-) {
-  for (
-    let index = 0;
-    index <
-    operations.length;
-    index +=
-      MAX_BATCH_WRITES
-  ) {
-    const batch =
-      writeBatch(
-        db
-      );
-
-    const chunk =
-      operations.slice(
-        index,
-        index +
-          MAX_BATCH_WRITES
-      );
-
-    for (
-      const operation of
-        chunk
-    ) {
-      batch.set(
-        operation.ref,
-        operation.data,
-        operation.options
-      );
-    }
-
-    await batch.commit();
-  }
-}
-
-/* =========================
-   MAIN PAGE
-========================= */
-
-export default function CarryOnGateCheckPage({
+export default function FlightsPage({
   user,
   operationalContext,
+  onFlightSelected,
+  onOpenCarryOnSetup,
 }) {
-  const role =
-    normalizeRole(
+  const today =
+    useMemo(
+      () =>
+        getTodayYYYYMMDD(),
+      []
+    );
+
+  const [
+    isMobile,
+    setIsMobile,
+  ] = useState(
+    typeof window !==
+      "undefined"
+      ? window.innerWidth <
+          MOBILE_BREAKPOINT
+      : false
+  );
+
+  const [
+    selectedDate,
+    setSelectedDate,
+  ] = useState(
+    today
+  );
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] = useState(
+    "active"
+  );
+
+  const [
+    flights,
+    setFlights,
+  ] = useState([]);
+
+  const [
+    carryOnFlights,
+    setCarryOnFlights,
+  ] = useState([]);
+
+  const [
+    loadingCarryOn,
+    setLoadingCarryOn,
+  ] = useState(
+    true
+  );
+
+  const [
+    loading,
+    setLoading,
+  ] = useState(
+    true
+  );
+
+  const [
+    showCreate,
+    setShowCreate,
+  ] = useState(
+    false
+  );
+
+  const [
+    form,
+    setForm,
+  ] = useState({
+    operationType:
+      "REGULAR",
+
+    flightNumber:
+      "",
+
+    flightDate:
+      today,
+
+    gate:
+      "",
+
+    aircraftType:
+      "",
+
+    origin:
+      "TPA",
+
+    destination:
+      "",
+
+    tailNumber:
+      "",
+  });
+
+  const [
+    formError,
+    setFormError,
+  ] = useState("");
+
+  const [
+    saving,
+    setSaving,
+  ] = useState(
+    false
+  );
+
+  const [
+    actionMsg,
+    setActionMsg,
+  ] = useState("");
+
+  const [
+    actionErr,
+    setActionErr,
+  ] = useState("");
+
+  const [
+    deletingId,
+    setDeletingId,
+  ] = useState("");
+
+  const [
+    reopeningId,
+    setReopeningId,
+  ] = useState("");
+
+  const allowCreate =
+    canCreateFlights(
       user?.role
     );
 
-  const actor =
+  const allowManage =
+    isManager(
+      user?.role
+    );
+
+  const operationalActor =
     useMemo(
       () =>
-        getActor(
+        getOperationalActor(
           user,
           operationalContext
         ),
@@ -934,420 +510,225 @@ export default function CarryOnGateCheckPage({
       ]
     );
 
-  const canCreateFlight =
-    role ===
-      "station_manager" ||
-    role ===
-      "duty_manager" ||
-    role ===
-      "duty_managers" ||
-    role ===
-      "supervisor";
+  /* =========================
+     RESPONSIVE
+  ========================= */
 
-  const canUploadDocuments =
-    canCreateFlight;
-
-  const canSetRequired =
-    role ===
-      "station_manager" ||
-    role ===
-      "supervisor";
-
-  const canManageGateChecks =
-    role ===
-      "station_manager" ||
-    role ===
-      "duty_manager" ||
-    role ===
-      "duty_managers" ||
-    role ===
-      "supervisor";
-
-  const [
-    activeTab,
-    setActiveTab,
-  ] = useState(
-    () =>
-      sessionStorage.getItem(
-        "carryOnActiveTab"
-      ) ||
-      "SETUP"
-  );
-
-  const [
-    carryOnFlights,
-    setCarryOnFlights,
-  ] = useState(
-    []
-  );
-
-  const [
-    selectedCarryOnFlightId,
-    setSelectedCarryOnFlightId,
-  ] = useState(
-    () =>
-      sessionStorage.getItem(
-        "selectedCarryOnFlightId"
-      ) ||
-      null
-  );
-
-  const [
-    createForm,
-    setCreateForm,
-  ] = useState({
-    airline:
-      "WL",
-
-    flightNumber:
-      "",
-
-    flightDate:
-      "",
-
-    origin:
-      "TPA",
-
-    destination:
-      "",
-
-    gate:
-      "",
-
-    aircraft:
-      "",
-
-    tailNumber:
-      "",
-  });
-
-  const [
-    creatingFlight,
-    setCreatingFlight,
-  ] = useState(
-    false
-  );
-
-  const [
-    editingFlight,
-    setEditingFlight,
-  ] = useState(
-    false
-  );
-
-  const [
-    savingFlightEdit,
-    setSavingFlightEdit,
-  ] = useState(
-    false
-  );
-
-  const [
-    editFlightForm,
-    setEditFlightForm,
-  ] = useState({
-    airline:
-      "",
-
-    flightNumber:
-      "",
-
-    gate:
-      "",
-
-    tailNumber:
-      "",
-  });
-
-  const [
-    loadManifestFile,
-    setLoadManifestFile,
-  ] = useState(
-    null
-  );
-
-  const [
-    emptySeatFile,
-    setEmptySeatFile,
-  ] = useState(
-    null
-  );
-
-  const [
-    loadManifestMeta,
-    setLoadManifestMeta,
-  ] = useState(
-    null
-  );
-
-  const [
-    emptySeatMeta,
-    setEmptySeatMeta,
-  ] = useState(
-    null
-  );
-
-  const [
-    passengers,
-    setPassengers,
-  ] = useState(
-    []
-  );
-
-  const [
-    declaredPassengerTotal,
-    setDeclaredPassengerTotal,
-  ] = useState(
-    null
-  );
-
-  const [
-    emptySeats,
-    setEmptySeats,
-  ] = useState(
-    []
-  );
-
-  const [
-    requiredCarryOns,
-    setRequiredCarryOns,
-  ] = useState(
-    ""
-  );
-
-  const [
-    gateCheckText,
-    setGateCheckText,
-  ] = useState(
-    ""
-  );
-
-  const [
-    parsingLoadManifest,
-    setParsingLoadManifest,
-  ] = useState(
-    false
-  );
-
-  const [
-    parsingSeats,
-    setParsingSeats,
-  ] = useState(
-    false
-  );
-
-  const [
-    savingSetup,
-    setSavingSetup,
-  ] = useState(
-    false
-  );
-
-  const [
-    message,
-    setMessage,
-  ] = useState(
-    ""
-  );
-
-  const [
-    error,
-    setError,
-  ] = useState(
-    ""
-  );
-
-  const selectedFlight =
-    useMemo(
-      () =>
-        carryOnFlights.find(
-          (
-            item
-          ) =>
-            item.id ===
-            selectedCarryOnFlightId
-        ) ||
-        null,
-      [
-        carryOnFlights,
-        selectedCarryOnFlightId,
-      ]
-    );
-
-  const displayName =
-    operationalContext
-      ?.employeeFullName ||
-    user?.fullName ||
-    user?.username ||
-    "-";
-
-  const positionLabel =
-    operationalContext
-      ?.operationalPositionLabel ||
-    operationalContext
-      ?.operationalPosition ||
-    null;
-
-  const availableSeats =
-    useMemo(
-      () =>
-        emptySeats.filter(
-          (
-            seat
-          ) =>
-            seat.blocked !==
-              true &&
-            seat.status ===
-              "AVAILABLE"
-        ),
-      [
-        emptySeats,
-      ]
-    );
-
-  const gateCheckNumbers =
-    useMemo(
+  useEffect(() => {
+    const handleResize =
       () => {
-        const seen =
-          new Set();
+        setIsMobile(
+          window.innerWidth <
+            MOBILE_BREAKPOINT
+        );
+      };
 
-        return String(
-          gateCheckText ||
-          ""
+    window.addEventListener(
+      "resize",
+      handleResize
+    );
+
+    return () => {
+      window.removeEventListener(
+        "resize",
+        handleResize
+      );
+    };
+  }, []);
+
+  /* =========================
+     FLIGHT SUBSCRIPTION
+  ========================= */
+
+  useEffect(() => {
+    setLoading(
+      true
+    );
+
+    const qRef =
+      query(
+        collection(
+          db,
+          "flights"
+        ),
+
+        where(
+          "flightDate",
+          "==",
+          selectedDate
+        ),
+
+        orderBy(
+          "createdAt",
+          "desc"
         )
-          .split(
-            /[\s,;\n]+/
-          )
-          .map(
-            (
-              value
-            ) =>
-              normalizeGateCheckNumber(
-                value
-              )
-          )
-          .filter(
-            (
-              value
-            ) => {
-              if (
-                !value ||
-                seen.has(
-                  value
-                )
-              ) {
-                return false;
-              }
-
-              seen.add(
-                value
-              );
-
-              return true;
-            }
-          );
-      },
-      [
-        gateCheckText,
-      ]
-    );
-
-  const requiredNumber =
-    Number(
-      requiredCarryOns
-    );
-
-  const validRequiredNumber =
-    Number.isFinite(
-      requiredNumber
-    ) &&
-    requiredNumber >=
-      0;
-
-  /* =========================
-     CARRY-ON NAVIGATION STATE
-  ========================= */
-
-  useEffect(() => {
-    sessionStorage.setItem(
-      "carryOnActiveTab",
-      activeTab
-    );
-  }, [
-    activeTab,
-  ]);
-
-  useEffect(() => {
-    if (
-      selectedCarryOnFlightId
-    ) {
-      sessionStorage.setItem(
-        "selectedCarryOnFlightId",
-        selectedCarryOnFlightId
-      );
-    } else {
-      sessionStorage.removeItem(
-        "selectedCarryOnFlightId"
-      );
-    }
-  }, [
-    selectedCarryOnFlightId,
-  ]);
-
-  /* =========================
-     FLIGHT LIST
-  ========================= */
-
-  useEffect(() => {
-    const ref =
-      collection(
-        db,
-        "carryOnFlights"
       );
 
     const unsub =
       onSnapshot(
-        ref,
+        qRef,
 
         (
           snap
         ) => {
-          const list =
+          const rows =
             snap.docs.map(
               (
-                item
+                documentSnapshot
               ) => ({
                 id:
-                  item.id,
+                  documentSnapshot.id,
 
-                ...item.data(),
+                ...documentSnapshot.data(),
               })
             );
 
-          list.sort(
+          const filtered =
+            statusFilter ===
+            "all"
+              ? rows
+              : statusFilter ===
+                  "completed"
+                ? rows.filter(
+                    (
+                      flight
+                    ) =>
+                      normalizeStatus(
+                        flight.status
+                      ) ===
+                      "LOADED"
+                  )
+                : rows.filter(
+                    (
+                      flight
+                    ) =>
+                      normalizeStatus(
+                        flight.status
+                      ) !==
+                      "LOADED"
+                  );
+
+          setFlights(
+            filtered
+          );
+
+          setLoading(
+            false
+          );
+        },
+
+        (
+          error
+        ) => {
+          console.error(
+            "Flights onSnapshot error:",
+            error
+          );
+
+          setFlights([]);
+
+          setLoading(
+            false
+          );
+
+          logSystemIncident({
+            module:
+              "FLIGHTS",
+
+            action:
+              "LOAD_FLIGHTS",
+
+            status:
+              "ERROR",
+
+            severity:
+              "HIGH",
+
+            errorType:
+              "FIRESTORE_SNAPSHOT",
+
+            errorCode:
+              error?.code ||
+              error?.name ||
+              null,
+
+            message:
+              error?.message ||
+              "Unable to load flights.",
+
+            user,
+
+            operationalContext,
+
+            currentView:
+              "flights",
+
+            metadata: {
+              selectedDate,
+              statusFilter,
+            },
+          });
+        }
+      );
+
+    return () => {
+      unsub();
+    };
+  }, [
+    selectedDate,
+    statusFilter,
+    user,
+    operationalContext,
+  ]);
+
+  /* =========================
+     CARRY-ON FLIGHTS SUBSCRIPTION
+  ========================= */
+
+  useEffect(() => {
+    setLoadingCarryOn(
+      true
+    );
+
+    const qRef =
+      query(
+        collection(
+          db,
+          "carryOnFlights"
+        ),
+
+        where(
+          "flightDate",
+          "==",
+          selectedDate
+        )
+      );
+
+    const unsub =
+      onSnapshot(
+        qRef,
+
+        (
+          snap
+        ) => {
+          const rows =
+            snap.docs.map(
+              (
+                documentSnapshot
+              ) => ({
+                id:
+                  documentSnapshot.id,
+
+                ...documentSnapshot.data(),
+              })
+            );
+
+          rows.sort(
             (
               a,
               b
-            ) => {
-              const dateCompare =
-                String(
-                  b.flightDate ||
-                  ""
-                ).localeCompare(
-                  String(
-                    a.flightDate ||
-                    ""
-                  )
-                );
-
-              if (
-                dateCompare !==
-                0
-              ) {
-                return dateCompare;
-              }
-
-              return String(
+            ) =>
+              String(
                 a.flightNumber ||
                 ""
               ).localeCompare(
@@ -1355,1460 +736,1315 @@ export default function CarryOnGateCheckPage({
                   b.flightNumber ||
                   ""
                 )
-              );
-            }
+              )
           );
 
           setCarryOnFlights(
-            list
+            rows
+          );
+
+          setLoadingCarryOn(
+            false
           );
         },
 
         (
-          snapshotError
+          error
         ) => {
           console.error(
             "Carry-On flights snapshot error:",
-            snapshotError
+            error
           );
 
-          setError(
-            "Unable to load Carry-On flights."
+          setCarryOnFlights(
+            []
+          );
+
+          setLoadingCarryOn(
+            false
           );
         }
       );
 
-    return () =>
+    return () => {
       unsub();
-  }, []);
+    };
+  }, [
+    selectedDate,
+  ]);
 
   /* =========================
-     LOAD SELECTED SETUP
+     CREATE MODAL
   ========================= */
 
-  useEffect(() => {
-    if (
-      !selectedFlight
-    ) {
-      return;
-    }
-
-    setRequiredCarryOns(
-      String(
-        selectedFlight
-          ?.requiredCarryOns ??
+  const openCreate =
+    () => {
+      setFormError(
         ""
-      )
-    );
+      );
 
-    setGateCheckText(
-      ""
-    );
+      setForm({
+        operationType:
+          "REGULAR",
 
-    setLoadManifestFile(
-      null
-    );
+        flightNumber:
+          "",
 
-    setEmptySeatFile(
-      null
-    );
+        flightDate:
+          selectedDate,
 
-    setLoadManifestMeta(
-      null
-    );
+        gate:
+          "",
 
-    setEmptySeatMeta(
-      null
-    );
+        aircraftType:
+          "",
 
-    setPassengers(
-      []
-    );
+        origin:
+          "TPA",
 
-    setDeclaredPassengerTotal(
-      null
-    );
+        destination:
+          "",
 
-    setEmptySeats(
-      []
-    );
+        tailNumber:
+          "",
+      });
 
-    setMessage(
-      ""
-    );
+      setShowCreate(
+        true
+      );
+    };
 
-    setError(
-      ""
-    );
+  const closeCreate =
+    () => {
+      if (saving) {
+        return;
+      }
 
-    setEditingFlight(
-      false
-    );
+      setShowCreate(
+        false
+      );
 
-    setEditFlightForm({
-      airline:
-        selectedFlight
-          ?.airline ||
-        "",
-
-      flightNumber:
-        selectedFlight
-          ?.flightNumberOnly ||
-        String(
-          selectedFlight
-            ?.flightNumber ||
-          ""
-        ).replace(
-          /^[A-Z]+/i,
-          ""
-        ),
-
-      gate:
-        selectedFlight
-          ?.gate ||
-        "",
-
-      tailNumber:
-        selectedFlight
-          ?.tailNumber ||
-        "",
-    });
-  }, [
-    selectedCarryOnFlightId,
-  ]);
+      setFormError(
+        ""
+      );
+    };
 
   /* =========================
      CREATE FLIGHT
   ========================= */
 
-  const createCarryOnFlight =
+  const handleCreate =
     async () => {
-      setMessage(
-        ""
-      );
-
-      setError(
-        ""
-      );
-
-      if (
-        !canCreateFlight
-      ) {
-        setError(
-          "You do not have permission to create Carry-On flights."
-        );
-
+      if (saving) {
         return;
       }
 
-      const airline =
-        cleanUpper(
-          createForm
-            .airline
-        );
+      setFormError(
+        ""
+      );
 
-      const flightNumberOnly =
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      const timer =
+        startSystemTimer();
+
+      const operationType =
         String(
-          createForm
-            .flightNumber ||
-          ""
+          form.operationType ||
+          "REGULAR"
         )
           .trim()
-          .replace(
-            /[^0-9]/g,
-            ""
-          );
+          .toUpperCase();
 
       const flightNumber =
-        normalizeFlightNumber(
-          airline,
-          flightNumberOnly
-        );
+        form.flightNumber
+          .trim()
+          .toUpperCase();
 
       const flightDate =
-        String(
-          createForm
-            .flightDate ||
-          ""
-        );
-
-      const origin =
-        cleanUpper(
-          createForm
-            .origin
-        );
-
-      const destination =
-        cleanUpper(
-          createForm
-            .destination
-        );
+        form.flightDate
+          .trim();
 
       const gate =
-        cleanUpper(
-          createForm
-            .gate
-        );
+        form.gate
+          .trim()
+          .toUpperCase();
 
-      const aircraft =
-        String(
-          createForm
-            .aircraft ||
-          ""
-        ).trim();
+      const aircraftType =
+        form.aircraftType
+          .trim()
+          .toUpperCase();
+
+      const origin =
+        form.origin
+          .trim()
+          .toUpperCase();
+
+      const destination =
+        form.destination
+          .trim()
+          .toUpperCase();
 
       const tailNumber =
-        cleanUpper(
-          createForm
-            .tailNumber
-        );
+        form.tailNumber
+          .trim()
+          .toUpperCase();
 
       if (
-        !airline ||
-        !flightNumberOnly ||
-        !flightDate ||
-        !origin ||
-        !destination
+        !flightNumber ||
+        !flightDate
       ) {
-        setError(
-          "Airline, Flight Number, Flight Date, Origin and Destination are required."
+        setFormError(
+          "Flight number and date are required."
         );
 
         return;
       }
 
-      const carryOnFlightId =
-        buildCarryOnFlightId(
-          flightNumber,
-          flightDate
-        );
-
-      const ref =
-        doc(
-          db,
-          "carryOnFlights",
-          carryOnFlightId
-        );
-
       try {
-        setCreatingFlight(
+        setSaving(
           true
         );
 
-        const existing =
-          await getDoc(
-            ref
-          );
-
         if (
-          existing.exists()
+          operationType ===
+          "CARRY_ON_ONLY"
         ) {
-          setSelectedCarryOnFlightId(
-            carryOnFlightId
+          if (
+            !origin ||
+            !destination
+          ) {
+            throw new Error(
+              "Origin and Destination are required for Carry-On-only flights."
+            );
+          }
+
+          const match =
+            flightNumber.match(
+              /^([A-Z0-9]{2,3})([0-9]{1,4})$/
+            );
+
+          if (
+            !match
+          ) {
+            throw new Error(
+              "Use a complete flight number such as WL294."
+            );
+          }
+
+          const carryOnFlightId =
+            `${flightNumber}_${flightDate}`
+              .replace(
+                /[^A-Za-z0-9_-]/g,
+                "_"
+              );
+
+          const carryOnRef =
+            doc(
+              db,
+              "carryOnFlights",
+              carryOnFlightId
+            );
+
+          const existing =
+            await getDoc(
+              carryOnRef
+            );
+
+          if (
+            existing.exists()
+          ) {
+            setFormError(
+              "This Carry-On flight already exists for that date."
+            );
+
+            return;
+          }
+
+          await setDoc(
+            carryOnRef,
+            {
+              operationType:
+                "CARRY_ON_ONLY",
+
+              flightNumber,
+
+              airline:
+                match[1],
+
+              flightNumberOnly:
+                match[2],
+
+              flightDate,
+
+              origin,
+
+              destination,
+
+              gate:
+                gate ||
+                null,
+
+              aircraft:
+                aircraftType ||
+                null,
+
+              aircraftType:
+                aircraftType ||
+                null,
+
+              tailNumber:
+                tailNumber ||
+                null,
+
+              status:
+                "SETUP",
+
+              requiredCarryOns:
+                0,
+
+              passengerCount:
+                0,
+
+              availableSeatCount:
+                0,
+
+              gateCheckNumberCount:
+                0,
+
+              createdAt:
+                serverTimestamp(),
+
+              createdBy:
+                operationalActor,
+            }
           );
 
-          setMessage(
-            `Carry-On flight ${flightNumber} already exists. It has been opened.`
+          await logSystemSuccess({
+            module:
+              "FLIGHTS",
+
+            action:
+              "CREATE_CARRY_ON_FLIGHT",
+
+            durationMs:
+              timer.elapsed(),
+          });
+
+          setShowCreate(
+            false
+          );
+
+          setActionMsg(
+            `Carry-On flight created: ${flightNumber}. Use Setup to upload documents.`
           );
 
           return;
         }
 
-        await setDoc(
-          ref,
-          {
-            flightNumber,
+        const dupQ =
+          query(
+            collection(
+              db,
+              "flights"
+            ),
 
-            airline,
+            where(
+              "flightDate",
+              "==",
+              flightDate
+            ),
 
-            flightNumberOnly,
+            where(
+              "flightNumber",
+              "==",
+              flightNumber
+            ),
 
-            flightDate,
-
-            origin,
-
-            destination,
-
-            gate:
-              gate ||
-              null,
-
-            aircraft:
-              aircraft ||
-              null,
-
-            tailNumber:
-              tailNumber ||
-              null,
-
-            status:
-              "SETUP",
-
-            requiredCarryOns:
-              0,
-
-            passengerCount:
-              0,
-
-            availableSeatCount:
-              0,
-
-            gateCheckNumberCount:
-              0,
-
-            createdAt:
-              serverTimestamp(),
-
-            createdBy:
-              actor,
-
-            updatedAt:
-              serverTimestamp(),
-
-            updatedBy:
-              actor,
-          }
-        );
-
-        setSelectedCarryOnFlightId(
-          carryOnFlightId
-        );
-
-        setMessage(
-          `Carry-On flight ${flightNumber} created successfully.`
-        );
-      } catch (
-        createError
-      ) {
-        console.error(
-          "Create Carry-On flight error:",
-          createError
-        );
-
-        setError(
-          createError?.message ||
-          "Unable to create Carry-On flight."
-        );
-      } finally {
-        setCreatingFlight(
-          false
-        );
-      }
-    };
-
-  /* =========================
-     EDIT FLIGHT INFORMATION
-  ========================= */
-
-  const saveFlightInformation =
-    async () => {
-      setMessage(
-        ""
-      );
-
-      setError(
-        ""
-      );
-
-      if (
-        !selectedFlight
-      ) {
-        setError(
-          "Select a Carry-On flight first."
-        );
-
-        return;
-      }
-
-      if (
-        !canCreateFlight
-      ) {
-        setError(
-          "You do not have permission to edit Carry-On flight information."
-        );
-
-        return;
-      }
-
-      const airline =
-        cleanUpper(
-          editFlightForm
-            .airline
-        );
-
-      const flightNumberOnly =
-        String(
-          editFlightForm
-            .flightNumber ||
-          ""
-        )
-          .trim()
-          .replace(
-            /[^0-9]/g,
-            ""
+            limit(
+              1
+            )
           );
 
-      const flightNumber =
-        normalizeFlightNumber(
-          airline,
-          flightNumberOnly
-        );
-
-      const gate =
-        cleanUpper(
-          editFlightForm
-            .gate
-        );
-
-      const tailNumber =
-        cleanUpper(
-          editFlightForm
-            .tailNumber
-        );
-
-      if (
-        !airline ||
-        !flightNumberOnly
-      ) {
-        setError(
-          "Airline and Flight Number are required."
-        );
-
-        return;
-      }
-
-      try {
-        setSavingFlightEdit(
-          true
-        );
-
-        await setDoc(
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id
-          ),
-          {
-            airline,
-
-            flightNumberOnly,
-
-            flightNumber,
-
-            gate:
-              gate ||
-              null,
-
-            tailNumber:
-              tailNumber ||
-              null,
-
-            updatedAt:
-              serverTimestamp(),
-
-            updatedBy:
-              actor,
-          },
-          {
-            merge:
-              true,
-          }
-        );
-
-        setEditingFlight(
-          false
-        );
-
-        setMessage(
-          `Flight information updated for ${flightNumber}.`
-        );
-      } catch (
-        editError
-      ) {
-        console.error(
-          "Edit Carry-On flight error:",
-          editError
-        );
-
-        setError(
-          editError?.message ||
-          "Unable to update Carry-On flight information."
-        );
-      } finally {
-        setSavingFlightEdit(
-          false
-        );
-      }
-    };
-
-  /* =========================
-     LOAD MANIFEST
-  ========================= */
-
-  const handleLoadManifest =
-    async (
-      file
-    ) => {
-      if (
-        !file ||
-        !selectedFlight
-      ) {
-        return;
-      }
-
-      setError(
-        ""
-      );
-
-      setMessage(
-        ""
-      );
-
-      try {
-        setParsingLoadManifest(
-          true
-        );
-
-        const documentData =
-          await readPdfDocumentData(
-            file
-          );
-
-        const meta =
-          parseFlightMeta(
-            documentData.fullText
-          );
-
-        const validation =
-          validateDocumentAgainstFlight(
-            meta,
-            selectedFlight
+        const dupSnap =
+          await getDocs(
+            dupQ
           );
 
         if (
-          !validation.ok
+          !dupSnap.empty
+        ) {
+          setFormError(
+            "This flight already exists for that date."
+          );
+
+          return;
+        }
+
+        const payload = {
+          flightNumber,
+          flightDate,
+
+          gate:
+            gate ||
+            null,
+
+          aircraftType:
+            aircraftType ||
+            null,
+
+          status:
+            "OPEN",
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy:
+            operationalActor,
+
+          createdByUsername:
+            user?.username ||
+            null,
+
+          createdByFullName:
+            operationalActor
+              .employeeFullName,
+
+          createdByOperationalPosition:
+            operationalActor
+              .operationalPosition,
+
+          createdByOperationalPositionLabel:
+            operationalActor
+              .operationalPositionLabel,
+        };
+
+        const docRef =
+          await addDoc(
+            collection(
+              db,
+              "flights"
+            ),
+
+            payload
+          );
+
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "CREATE_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        setShowCreate(
+          false
+        );
+
+        setActionMsg(
+          `Flight created: ${flightNumber}`
+        );
+
+        onFlightSelected?.(
+          docRef.id,
+          flightNumber
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "Create flight error:",
+          error
+        );
+
+        setFormError(
+          error?.message ||
+          "Could not create flight."
+        );
+      } finally {
+        setSaving(
+          false
+        );
+      }
+    };
+
+  /* =========================
+     OPEN FLIGHT
+  ========================= */
+
+  const openFlight =
+    async (
+      flight
+    ) => {
+      const timer =
+        startSystemTimer();
+
+      try {
+        if (
+          typeof onFlightSelected !==
+          "function"
         ) {
           throw new Error(
-            `Load Manifest does not match selected flight.\n${validation.issues.join("\n")}`
+            "Flight selection handler is not available."
           );
         }
+
+        onFlightSelected(
+          flight.id,
+          flight.flightNumber ||
+            null
+        );
+
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "OPEN_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } catch (
+        error
+      ) {
+        console.error(
+          "Open flight error:",
+          error
+        );
+
+        setActionErr(
+          "Could not open selected flight."
+        );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "OPEN_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "NAVIGATION",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message:
+            error?.message ||
+            "Could not open selected flight.",
+
+          user,
+
+          operationalContext,
+
+          flightId:
+            flight?.id ||
+            null,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      }
+    };
+
+  /* =========================
+     REOPEN FLIGHT
+  ========================= */
+
+  const handleReopen =
+    async (
+      flight
+    ) => {
+      if (
+        !allowManage
+      ) {
+        return;
+      }
+
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      const ok =
+        window.confirm(
+          `Reopen this flight?\n\n` +
+            `${flight.flightNumber || flight.id} ` +
+            `(${flight.flightDate || "-"})\n\n` +
+            `This will unlock scanning again.`
+        );
+
+      if (!ok) {
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
+
+      try {
+        setReopeningId(
+          flight.id
+        );
+
+        const reopenFlight =
+          httpsCallable(
+            functions,
+            "reopenFlight"
+          );
+
+        await reopenFlight({
+          flightId:
+            flight.id,
+
+          userRole:
+            user?.role ||
+            null,
+
+          username:
+            user?.username ||
+            null,
+
+          employeeFullName:
+            operationalActor
+              .employeeFullName,
+
+          operationalPosition:
+            operationalActor
+              .operationalPosition,
+
+          operationalPositionLabel:
+            operationalActor
+              .operationalPositionLabel,
+        });
+
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
+
+          action:
+            "REOPEN_FLIGHT",
+
+          durationMs:
+            timer.elapsed(),
+        });
+
+        setActionMsg(
+          `Flight reopened: ${
+            flight.flightNumber ||
+            flight.id
+          }`
+        );
+
+        window.setTimeout(
+          () => {
+            setActionMsg(
+              ""
+            );
+          },
+          2500
+        );
+      } catch (
+        error
+      ) {
+        console.error(
+          "reopenFlight failed:",
+          error
+        );
+
+        const message =
+          formatCallableError(
+            error
+          );
+
+        setActionErr(
+          message
+        );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "REOPEN_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "HIGH",
+
+          errorType:
+            "CLOUD_FUNCTION",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message,
+
+          user,
+
+          operationalContext,
+
+          flightId:
+            flight.id,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
+      } finally {
+        setReopeningId(
+          ""
+        );
+      }
+    };
+
+  /* =========================
+     DELETE FLIGHT
+  ========================= */
+
+  const handleDelete =
+    async (
+      flight
+    ) => {
+      if (
+        !allowManage
+      ) {
+        return;
+      }
+
+      setActionMsg(
+        ""
+      );
+
+      setActionErr(
+        ""
+      );
+
+      const labelText =
+        `${flight.flightNumber || flight.id} ` +
+        `(${flight.flightDate || "-"})`;
+
+      const ok =
+        window.confirm(
+          `DELETE FLIGHT?\n\n` +
+            `${labelText}\n\n` +
+            `This will permanently remove:\n` +
+            `- Counter scans\n` +
+            `- Bagroom / Oversize / Gate-Ramp scans\n` +
+            `- Aircraft scans\n` +
+            `- Manifest tags\n` +
+            `- Reports\n` +
+            `- PDFs and flight files in Storage\n` +
+            `- Global bagTags tracking records\n` +
+            `- Bag tag event history\n\n` +
+            `This cannot be undone.`
+        );
+
+      if (!ok) {
+        return;
+      }
+
+      const timer =
+        startSystemTimer();
+
+      try {
+        setDeletingId(
+          flight.id
+        );
+
+        const deleteFlightCascade =
+          httpsCallable(
+            functions,
+            "deleteFlightCascade"
+          );
 
         const result =
-          parseLoadManifestPassengers(
-            documentData
-          );
+          await deleteFlightCascade({
+            flightId:
+              flight.id,
 
-        if (
-          result
-            .passengers
-            .length ===
-          0
-        ) {
-          throw new Error(
-            "No passenger names could be extracted from Load Manifest."
-          );
-        }
-
-        setLoadManifestFile(
-          file
-        );
-
-        setLoadManifestMeta(
-          meta
-        );
-
-        setPassengers(
-          result.passengers
-        );
-
-        setDeclaredPassengerTotal(
-          result.declaredTotal
-        );
-
-        const totalMessage =
-          result.declaredTotal
-            ? ` / PDF total: ${result.declaredTotal}`
-            : "";
-
-        setMessage(
-          `Load Manifest parsed: ${result.passengers.length} passenger(s)${totalMessage}.`
-        );
-      } catch (
-        parseError
-      ) {
-        console.error(
-          "Load Manifest parse error:",
-          parseError
-        );
-
-        setLoadManifestFile(
-          null
-        );
-
-        setLoadManifestMeta(
-          null
-        );
-
-        setPassengers(
-          []
-        );
-
-        setDeclaredPassengerTotal(
-          null
-        );
-
-        setError(
-          parseError?.message ||
-          "Unable to parse Load Manifest."
-        );
-      } finally {
-        setParsingLoadManifest(
-          false
-        );
-      }
-    };
-
-  /* =========================
-     EMPTY SEATS
-  ========================= */
-
-  const handleEmptySeatPdf =
-    async (
-      file
-    ) => {
-      if (
-        !file ||
-        !selectedFlight
-      ) {
-        return;
-      }
-
-      setError(
-        ""
-      );
-
-      setMessage(
-        ""
-      );
-
-      try {
-        setParsingSeats(
-          true
-        );
-
-        const documentData =
-          await readPdfDocumentData(
-            file
-          );
-
-        const meta =
-          parseFlightMeta(
-            documentData.fullText
-          );
-
-        const validation =
-          validateDocumentAgainstFlight(
-            meta,
-            selectedFlight
-          );
-
-        if (
-          !validation.ok
-        ) {
-          throw new Error(
-            `Empty Seats Report does not match selected flight.\n${validation.issues.join("\n")}`
-          );
-        }
-
-        const parsedSeats =
-          parseEmptySeats(
-            documentData.fullText
-          );
-
-        if (
-          parsedSeats.length ===
-          0
-        ) {
-          throw new Error(
-            "No empty seats could be extracted from Empty Seats Report."
-          );
-        }
-
-        setEmptySeatFile(
-          file
-        );
-
-        setEmptySeatMeta(
-          meta
-        );
-
-        setEmptySeats(
-          parsedSeats
-        );
-
-        setMessage(
-          `Empty Seats Report parsed: ${parsedSeats.length} seat(s).`
-        );
-      } catch (
-        parseError
-      ) {
-        console.error(
-          "Empty Seats parse error:",
-          parseError
-        );
-
-        setEmptySeatFile(
-          null
-        );
-
-        setEmptySeatMeta(
-          null
-        );
-
-        setEmptySeats(
-          []
-        );
-
-        setError(
-          parseError?.message ||
-          "Unable to parse Empty Seats Report."
-        );
-      } finally {
-        setParsingSeats(
-          false
-        );
-      }
-    };
-
-  /* =========================
-     SAVE SETUP
-  ========================= */
-
-  const saveSetup =
-    async () => {
-      setError(
-        ""
-      );
-
-      setMessage(
-        ""
-      );
-
-      if (
-        !selectedFlight
-      ) {
-        setError(
-          "Select a Carry-On flight first."
-        );
-
-        return;
-      }
-
-      if (
-        !canManageGateChecks
-      ) {
-        setError(
-          "You do not have permission to save Carry-On setup."
-        );
-
-        return;
-      }
-
-      if (
-        passengers.length ===
-        0
-      ) {
-        setError(
-          "Upload a valid Load Manifest first."
-        );
-
-        return;
-      }
-
-      if (
-        availableSeats.length ===
-        0
-      ) {
-        setError(
-          "Upload a valid Empty Seats Report first."
-        );
-
-        return;
-      }
-
-      if (
-        !validRequiredNumber
-      ) {
-        setError(
-          "Enter a valid Required Carry-On Gate Checks value."
-        );
-
-        return;
-      }
-
-      try {
-        setSavingSetup(
-          true
-        );
-
-        const flightRef =
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id
-          );
-
-        const currentSnap =
-          await getDoc(
-            flightRef
-          );
-
-        if (
-          !currentSnap.exists()
-        ) {
-          throw new Error(
-            "Selected Carry-On flight no longer exists."
-          );
-        }
-
-        const currentData =
-          currentSnap.data();
-
-        const currentStatus =
-          cleanUpper(
-            currentData?.status
-          );
-
-        if (
-          currentStatus &&
-          currentStatus !==
-            "SETUP" &&
-          currentStatus !==
-            "READY"
-        ) {
-          throw new Error(
-            "This Carry-On flight is already in operation. Setup cannot overwrite operational data."
-          );
-        }
-
-        await setDoc(
-          flightRef,
-          {
-            requiredCarryOns:
-              Math.trunc(
-                requiredNumber
-              ),
-
-            passengerCount:
-              passengers.length,
-
-            declaredPassengerTotal:
-              declaredPassengerTotal ??
+            userRole:
+              user?.role ||
               null,
 
-            availableSeatCount:
-              availableSeats.length,
+            username:
+              user?.username ||
+              null,
 
-            gateCheckNumberCount:
-              gateCheckNumbers.length,
+            employeeFullName:
+              operationalActor
+                .employeeFullName,
 
-            status:
-              "READY",
+            operationalPosition:
+              operationalActor
+                .operationalPosition,
 
-            documents: {
-              loadManifest: {
-                fileName:
-                  loadManifestFile
-                    ?.name ||
-                  null,
+            operationalPositionLabel:
+              operationalActor
+                .operationalPositionLabel,
+          });
 
-                parsedAt:
-                  serverTimestamp(),
+        const deletedBagTags =
+          result?.data
+            ?.deletedBagTags ||
+          0;
 
-                passengerCount:
-                  passengers.length,
+        await logSystemSuccess({
+          module:
+            "FLIGHTS",
 
-                declaredPassengerTotal:
-                  declaredPassengerTotal ??
-                  null,
-              },
+          action:
+            "DELETE_FLIGHT",
 
-              emptySeatsReport: {
-                fileName:
-                  emptySeatFile
-                    ?.name ||
-                  null,
+          durationMs:
+            timer.elapsed(),
+        });
 
-                parsedAt:
-                  serverTimestamp(),
+        setActionMsg(
+          `Flight deleted: ${labelText}. ` +
+            `${deletedBagTags} tracked bag tag record(s) removed.`
+        );
 
-                availableSeatCount:
-                  availableSeats.length,
-              },
-            },
-
-            updatedAt:
-              serverTimestamp(),
-
-            updatedBy:
-              actor,
+        window.setTimeout(
+          () => {
+            setActionMsg(
+              ""
+            );
           },
-          {
-            merge:
-              true,
-          }
-        );
-
-        const operations =
-          [];
-
-        for (
-          const passenger of
-            passengers
-        ) {
-          operations.push({
-            ref:
-              doc(
-                db,
-                "carryOnFlights",
-                selectedFlight.id,
-                "passengers",
-                passenger.id
-              ),
-
-            data: {
-              ...passenger,
-
-              updatedAt:
-                serverTimestamp(),
-            },
-
-            options: {
-              merge:
-                true,
-            },
-          });
-        }
-
-        for (
-          const seat of
-            availableSeats
-        ) {
-          operations.push({
-            ref:
-              doc(
-                db,
-                "carryOnFlights",
-                selectedFlight.id,
-                "availableSeats",
-                seat.id
-              ),
-
-            data: {
-              ...seat,
-
-              updatedAt:
-                serverTimestamp(),
-            },
-
-            options: {
-              merge:
-                true,
-            },
-          });
-        }
-
-        for (
-          const gateCheckNumber of
-            gateCheckNumbers
-        ) {
-          operations.push({
-            ref:
-              doc(
-                db,
-                "carryOnFlights",
-                selectedFlight.id,
-                "gateCheckNumbers",
-                safeDocId(
-                  gateCheckNumber
-                )
-              ),
-
-            data: {
-              gateCheckNumber,
-
-              status:
-                "AVAILABLE",
-
-              source:
-                "PRELOADED",
-
-              addedAt:
-                serverTimestamp(),
-
-              addedBy:
-                actor,
-            },
-
-            options: {
-              merge:
-                true,
-            },
-          });
-        }
-
-        await commitWrites(
-          operations
-        );
-
-        setMessage(
-          `Carry-On setup saved for ${selectedFlight.flightNumber}.`
+          3500
         );
       } catch (
-        saveError
+        error
       ) {
         console.error(
-          "Save Carry-On setup error:",
-          saveError
+          "deleteFlightCascade failed:",
+          error
         );
 
-        setError(
-          saveError?.message ||
-          "Unable to save Carry-On setup."
+        const message =
+          formatCallableError(
+            error
+          );
+
+        setActionErr(
+          message
         );
+
+        await logSystemIncident({
+          module:
+            "FLIGHTS",
+
+          action:
+            "DELETE_FLIGHT",
+
+          status:
+            "ERROR",
+
+          severity:
+            "CRITICAL",
+
+          errorType:
+            "CLOUD_FUNCTION",
+
+          errorCode:
+            error?.code ||
+            error?.name ||
+            null,
+
+          message,
+
+          user,
+
+          operationalContext,
+
+          flightId:
+            flight.id,
+
+          flightNumber:
+            flight
+              ?.flightNumber ||
+            null,
+
+          currentView:
+            "flights",
+
+          durationMs:
+            timer.elapsed(),
+        });
       } finally {
-        setSavingSetup(
-          false
+        setDeletingId(
+          ""
         );
       }
     };
+
+  /* =========================
+     RENDER
+  ========================= */
 
   return (
     <div
       style={{
-        display:
-          "grid",
+        background:
+          "white",
 
-        gap:
-          14,
+        borderRadius:
+          isMobile
+            ? 10
+            : 12,
+
+        padding:
+          isMobile
+            ? 10
+            : 16,
+
+        border:
+          "1px solid #e5e7eb",
       }}
     >
-      <section
+      <div
         style={{
-          background:
-            "white",
+          display:
+            "flex",
 
-          border:
-            "1px solid #e5e7eb",
+          flexDirection:
+            isMobile
+              ? "column"
+              : "row",
 
-          borderRadius:
-            14,
+          justifyContent:
+            "space-between",
 
-          padding:
-            16,
+          alignItems:
+            isMobile
+              ? "stretch"
+              : "end",
+
+          gap:
+            12,
+
+          flexWrap:
+            "wrap",
         }}
       >
-        <div
-          style={{
-            display:
-              "flex",
+        <div>
+          <h2
+            style={{
+              margin:
+                0,
+            }}
+          >
+            Flights
+          </h2>
 
-            justifyContent:
-              "space-between",
+          <p
+            style={{
+              margin:
+                "6px 0 0",
 
-            gap:
-              14,
+              color:
+                "#6b7280",
 
-            flexWrap:
-              "wrap",
+              fontSize:
+                "0.9rem",
+            }}
+          >
+            Select a date, filter, then choose a flight.
+          </p>
 
-            alignItems:
-              "flex-start",
-          }}
-        >
-          <div>
+          {operationalContext
+            ?.operationalPositionLabel && (
             <div
               style={{
+                display:
+                  "inline-flex",
+
+                marginTop:
+                  8,
+
+                padding:
+                  "5px 9px",
+
+                borderRadius:
+                  999,
+
+                background:
+                  "#eff6ff",
+
+                border:
+                  "1px solid #bfdbfe",
+
                 color:
-                  "#7c3aed",
+                  "#1d4ed8",
 
                 fontSize:
                   "0.72rem",
 
                 fontWeight:
                   900,
-
-                letterSpacing:
-                  "0.07em",
               }}
             >
-              BLCS OPERATIONS
+              Working as:{" "}
+              {
+                operationalContext
+                  .operationalPositionLabel
+              }
             </div>
-
-            <h2
-              style={{
-                margin:
-                  "5px 0 0",
-              }}
-            >
-              Carry-On Gate Check Control
-            </h2>
-
-            <p
-              style={{
-                margin:
-                  "6px 0 0",
-
-                color:
-                  "#64748b",
-
-                maxWidth:
-                  760,
-              }}
-            >
-              Independent Carry-On flow. Existing BLCS baggage operations remain unchanged.
-            </p>
-          </div>
-
-          <div
-            style={{
-              textAlign:
-                "right",
-
-              color:
-                "#64748b",
-
-              fontSize:
-                "0.78rem",
-            }}
-          >
-            <div>
-              User:{" "}
-              <strong
-                style={{
-                  color:
-                    "#0f172a",
-                }}
-              >
-                {displayName}
-              </strong>
-            </div>
-
-            {positionLabel && (
-              <div
-                style={{
-                  marginTop:
-                    4,
-                }}
-              >
-                Working as:{" "}
-                <strong
-                  style={{
-                    color:
-                      "#0f172a",
-                  }}
-                >
-                  {positionLabel}
-                </strong>
-              </div>
-            )}
-          </div>
+          )}
         </div>
-      </section>
 
-      <section
-        style={{
-          background:
-            "white",
-
-          border:
-            "1px solid #e5e7eb",
-
-          borderRadius:
-            14,
-
-          padding:
-            12,
-        }}
-      >
         <div
           style={{
             display:
-              "flex",
+              "grid",
+
+            gridTemplateColumns:
+              isMobile
+                ? "1fr 1fr"
+                : "auto auto auto",
 
             gap:
               8,
 
-            flexWrap:
-              "wrap",
+            alignItems:
+              "end",
+
+            width:
+              isMobile
+                ? "100%"
+                : "auto",
           }}
         >
-          {TABS.map(
-            (
-              tab
-            ) => {
-              const active =
-                activeTab ===
-                tab;
-
-              return (
-                <button
-                  key={
-                    tab
-                  }
-
-                  type="button"
-
-                  onClick={() =>
-                    setActiveTab(
-                      tab
-                    )
-                  }
-
-                  style={{
-                    padding:
-                      "8px 12px",
-
-                    borderRadius:
-                      999,
-
-                    border:
-                      active
-                        ? "1px solid #7c3aed"
-                        : "1px solid #d1d5db",
-
-                    background:
-                      active
-                        ? "#7c3aed"
-                        : "white",
-
-                    color:
-                      active
-                        ? "white"
-                        : "#334155",
-
-                    fontWeight:
-                      900,
-
-                    cursor:
-                      "pointer",
-                  }}
-                >
-                  {tab}
-                </button>
-              );
-            }
-          )}
-        </div>
-      </section>
-
-      <section
-        style={{
-          background:
-            "white",
-
-          border:
-            "1px solid #e5e7eb",
-
-          borderRadius:
-            14,
-
-          padding:
-            16,
-        }}
-      >
-        {activeTab ===
-          "SETUP" && (
-          <div
-            style={{
-              display:
-                "grid",
-
-              gap:
-                16,
-            }}
-          >
-            <div>
-              <h3
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                Carry-On Flights
-              </h3>
-
-              <p
-                style={
-                  smallText
-                }
-              >
-                Create the flight from the main Flights page. Then open the Carry-On flight here and upload the Load Manifest and Empty Seats Report for that exact flight.
-              </p>
-            </div>
-
-            <Notice
-              tone="warning"
-              text="Create flights from the main Flights page. Choose Carry-On Check Only, then return here for document setup."
-            />
-
-            <div
+          <div>
+            <label
               style={
-                panelStyle
+                label
               }
             >
-              <h4
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                Carry-On Flight List
-              </h4>
+              Date
+            </label>
 
-              {carryOnFlights.length ===
-              0 ? (
-                <p
-                  style={
-                    smallText
-                  }
-                >
-                  No Carry-On flights created yet.
-                </p>
-              ) : (
-                <div
-                  style={{
-                    display:
-                      "grid",
+            <input
+              type="date"
 
-                    gap:
-                      7,
+              value={
+                selectedDate
+              }
 
-                    marginTop:
-                      10,
-                  }}
-                >
-                  {carryOnFlights.map(
-                    (
-                      item
-                    ) => {
-                      const selected =
-                        item.id ===
-                        selectedCarryOnFlightId;
+              onChange={(
+                event
+              ) => {
+                setSelectedDate(
+                  event.target
+                    .value
+                );
+              }}
 
-                      return (
-                        <button
-                          key={
-                            item.id
-                          }
+              style={{
+                ...input,
 
-                          type="button"
+                minHeight:
+                  42,
+              }}
+            />
+          </div>
 
-                          onClick={() =>
-                            setSelectedCarryOnFlightId(
-                              item.id
-                            )
-                          }
+          <div>
+            <label
+              style={
+                label
+              }
+            >
+              Filter
+            </label>
 
-                          style={{
-                            width:
-                              "100%",
+            <select
+              value={
+                statusFilter
+              }
 
-                            padding:
-                              10,
+              onChange={(
+                event
+              ) => {
+                setStatusFilter(
+                  event.target
+                    .value
+                );
+              }}
 
-                            textAlign:
-                              "left",
+              style={{
+                ...input,
 
-                            borderRadius:
-                              10,
+                minHeight:
+                  42,
+              }}
+            >
+              <option value="active">
+                Active
+              </option>
 
-                            border:
-                              selected
-                                ? "2px solid #7c3aed"
-                                : "1px solid #dbe2ea",
+              <option value="completed">
+                Completed
+              </option>
 
-                            background:
-                              selected
-                                ? "#f5f3ff"
-                                : "white",
+              <option value="all">
+                All
+              </option>
+            </select>
+          </div>
 
-                            cursor:
-                              "pointer",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display:
-                                "flex",
+          {allowCreate ? (
+            <button
+              type="button"
 
-                              justifyContent:
-                                "space-between",
+              onClick={
+                openCreate
+              }
 
-                              gap:
-                                10,
+              style={{
+                minHeight:
+                  42,
 
-                              flexWrap:
-                                "wrap",
-                            }}
-                          >
-                            <strong>
-                              {item.flightNumber}
-                              {" - "}
-                              {item.flightDate}
-                            </strong>
+                padding:
+                  "8px 12px",
 
-                            <span>
-                              {item.status ||
-                                "SETUP"}
-                            </span>
-                          </div>
+                borderRadius:
+                  10,
 
-                          <div
-                            style={{
-                              marginTop:
-                                4,
+                border:
+                  "1px solid #111827",
 
-                              color:
-                                "#64748b",
+                background:
+                  "#111827",
 
-                              fontSize:
-                                "0.78rem",
-                            }}
-                          >
-                            {item.origin}
-                            {" \u2192 "}
-                            {item.destination}
-                            {item.gate
-                              ? ` - Gate ${item.gate}`
-                              : ""}
-                            {item.tailNumber
-                              ? ` - Tail ${item.tailNumber}`
-                              : ""}
-                          </div>
-                        </button>
-                      );
-                    }
-                  )}
-                </div>
-              )}
+                color:
+                  "white",
+
+                fontWeight:
+                  800,
+
+                cursor:
+                  "pointer",
+
+                gridColumn:
+                  isMobile
+                    ? "1 / -1"
+                    : "auto",
+              }}
+            >
+              + Create Flight
+            </button>
+          ) : (
+            <div
+              style={{
+                color:
+                  "#6b7280",
+
+                fontSize:
+                  "0.82rem",
+
+                gridColumn:
+                  isMobile
+                    ? "1 / -1"
+                    : "auto",
+              }}
+            >
+              Create Flight: managers only
             </div>
+          )}
+        </div>
+      </div>
 
-            {selectedFlight && (
-              <>
+      {(actionMsg ||
+        actionErr) && (
+        <div
+          style={{
+            marginTop:
+              12,
+          }}
+        >
+          {actionMsg && (
+            <div
+              style={{
+                padding:
+                  "10px 12px",
+
+                borderRadius:
+                  10,
+
+                background:
+                  "#dcfce7",
+
+                border:
+                  "1px solid #86efac",
+
+                color:
+                  "#166534",
+
+                fontWeight:
+                  800,
+              }}
+            >
+              {actionMsg}
+            </div>
+          )}
+
+          {actionErr && (
+            <div
+              style={{
+                padding:
+                  "10px 12px",
+
+                borderRadius:
+                  10,
+
+                background:
+                  "#fee2e2",
+
+                border:
+                  "1px solid #fecaca",
+
+                color:
+                  "#991b1b",
+
+                fontWeight:
+                  800,
+
+                overflowWrap:
+                  "anywhere",
+              }}
+            >
+              {actionErr}
+            </div>
+          )}
+        </div>
+      )}
+
+      <hr
+        style={{
+          border:
+            "none",
+
+          borderTop:
+            "1px solid #e5e7eb",
+
+          margin:
+            "14px 0",
+        }}
+      />
+
+      {loading ? (
+        <p
+          style={{
+            color:
+              "#6b7280",
+          }}
+        >
+          Loading flights...
+        </p>
+      ) : flights.length ===
+        0 ? (
+        <p
+          style={{
+            color:
+              "#6b7280",
+          }}
+        >
+          No flights found for{" "}
+          {selectedDate} (
+          {statusFilter}).
+        </p>
+      ) : isMobile ? (
+        <div
+          style={{
+            display:
+              "grid",
+
+            gap:
+              9,
+          }}
+        >
+          {flights.map(
+            (
+              flight
+            ) => {
+              const status =
+                normalizeStatus(
+                  flight.status
+                );
+
+              const isCompleted =
+                status ===
+                "LOADED";
+
+              const busyDelete =
+                deletingId ===
+                flight.id;
+
+              const busyReopen =
+                reopeningId ===
+                flight.id;
+
+              return (
                 <div
+                  key={
+                    flight.id
+                  }
+
                   style={{
-                    padding:
-                      13,
+                    border:
+                      "1px solid #e5e7eb",
 
                     borderRadius:
                       12,
 
-                    border:
-                      "1px solid #c4b5fd",
+                    padding:
+                      11,
 
                     background:
-                      "#f5f3ff",
+                      "#ffffff",
+
+                    boxShadow:
+                      "0 1px 3px rgba(15,23,42,0.04)",
                   }}
                 >
                   <div
@@ -2820,46 +2056,28 @@ export default function CarryOnGateCheckPage({
                         "space-between",
 
                       gap:
-                        10,
-
-                      flexWrap:
-                        "wrap",
+                        8,
 
                       alignItems:
-                        "center",
+                        "start",
                     }}
                   >
                     <div>
                       <div
                         style={{
+                          fontSize:
+                            "1.05rem",
+
+                          fontWeight:
+                            900,
+
                           color:
-                            "#5b21b6",
-
-                          fontSize:
-                            "0.72rem",
-
-                          fontWeight:
-                            900,
+                            "#0f172a",
                         }}
                       >
-                        SELECTED CARRY-ON FLIGHT
-                      </div>
-
-                      <div
-                        style={{
-                          marginTop:
-                            3,
-
-                          fontSize:
-                            "1.15rem",
-
-                          fontWeight:
-                            900,
-                        }}
-                      >
-                        {selectedFlight.flightNumber}
-                        {" - "}
-                        {selectedFlight.flightDate}
+                        {flight
+                          .flightNumber ||
+                          flight.id}
                       </div>
 
                       <div
@@ -2869,607 +2087,1217 @@ export default function CarryOnGateCheckPage({
 
                           color:
                             "#64748b",
+
+                          fontSize:
+                            "0.78rem",
                         }}
                       >
-                        {selectedFlight.origin}
-                        {" \u2192 "}
-                        {selectedFlight.destination}
-                        {selectedFlight.gate
-                          ? ` - Gate ${selectedFlight.gate}`
-                          : ""}
-                        {selectedFlight.tailNumber
-                          ? ` - Tail ${selectedFlight.tailNumber}`
-                          : ""}
+                        {flight
+                          .flightDate ||
+                          "-"}
                       </div>
                     </div>
 
-                    {canCreateFlight && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingFlight(
-                            !editingFlight
-                          );
+                    <StatusPill
+                      status={
+                        status
+                      }
+                    />
+                  </div>
 
-                          setEditFlightForm({
-                            airline:
-                              selectedFlight
-                                ?.airline ||
-                              "",
+                  <div
+                    style={{
+                      display:
+                        "grid",
 
-                            flightNumber:
-                              selectedFlight
-                                ?.flightNumberOnly ||
-                              String(
-                                selectedFlight
-                                  ?.flightNumber ||
-                                ""
-                              ).replace(
-                                /^[A-Z]+/i,
-                                ""
-                              ),
+                      gridTemplateColumns:
+                        "repeat(2, minmax(0, 1fr))",
 
-                            gate:
-                              selectedFlight
-                                ?.gate ||
-                              "",
+                      gap:
+                        7,
 
-                            tailNumber:
-                              selectedFlight
-                                ?.tailNumber ||
-                              "",
-                          });
+                      marginTop:
+                        10,
+                    }}
+                  >
+                    <MiniInfo
+                      label="Gate"
+                      value={
+                        flight.gate ||
+                        "-"
+                      }
+                    />
 
-                          setMessage(
-                            ""
-                          );
+                    <MiniInfo
+                      label="Aircraft"
+                      value={
+                        flight
+                          .aircraftType ||
+                        "-"
+                      }
+                    />
+                  </div>
 
-                          setError(
-                            ""
-                          );
-                        }}
-                        style={{
-                          padding:
-                            "7px 11px",
+                  <div
+                    style={{
+                      display:
+                        "grid",
 
-                          borderRadius:
-                            9,
+                      gridTemplateColumns:
+                        allowManage &&
+                        isCompleted
+                          ? "repeat(3, minmax(0, 1fr))"
+                          : allowManage
+                            ? "repeat(2, minmax(0, 1fr))"
+                            : "1fr",
 
-                          border:
-                            "1px solid #7c3aed",
+                      gap:
+                        7,
 
-                          background:
-                            "white",
+                      marginTop:
+                        10,
+                    }}
+                  >
+                    <ActionButton
+                      label={
+                        isCompleted
+                          ? "View"
+                          : "Open"
+                      }
 
-                          color:
-                            "#6d28d9",
+                      onClick={() =>
+                        openFlight(
+                          flight
+                        )
+                      }
+                    />
 
-                          fontWeight:
-                            900,
+                    {allowManage &&
+                      isCompleted && (
+                        <ActionButton
+                          label={
+                            busyReopen
+                              ? "Reopening..."
+                              : "Reopen"
+                          }
 
-                          cursor:
-                            "pointer",
-                        }}
-                      >
-                        {editingFlight
-                          ? "Cancel Edit"
-                          : "Edit Flight"}
-                      </button>
+                          onClick={() =>
+                            handleReopen(
+                              flight
+                            )
+                          }
+
+                          disabled={
+                            busyReopen ||
+                            busyDelete
+                          }
+
+                          tone="success"
+                        />
+                      )}
+
+                    {allowManage && (
+                      <ActionButton
+                        label={
+                          busyDelete
+                            ? "Deleting..."
+                            : "Delete"
+                        }
+
+                        onClick={() =>
+                          handleDelete(
+                            flight
+                          )
+                        }
+
+                        disabled={
+                          busyDelete ||
+                          busyReopen
+                        }
+
+                        tone="danger"
+                      />
                     )}
                   </div>
+                </div>
+              );
+            }
+          )}
+        </div>
+      ) : (
+        <div
+          style={{
+            overflowX:
+              "auto",
 
-                  {editingFlight && (
+            WebkitOverflowScrolling:
+              "touch",
+          }}
+        >
+          <table
+            style={{
+              width:
+                "100%",
+
+              borderCollapse:
+                "collapse",
+
+              fontSize:
+                "0.92rem",
+
+              minWidth:
+                760,
+            }}
+          >
+            <thead>
+              <tr
+                style={{
+                  background:
+                    "#f9fafb",
+                }}
+              >
+                <th style={th}>
+                  Flight
+                </th>
+
+                <th style={th}>
+                  Date
+                </th>
+
+                <th style={th}>
+                  Gate
+                </th>
+
+                <th style={th}>
+                  Aircraft
+                </th>
+
+                <th style={th}>
+                  Status
+                </th>
+
+                <th
+                  style={{
+                    ...th,
+
+                    textAlign:
+                      "right",
+                  }}
+                >
+                  Action
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {flights.map(
+                (
+                  flight
+                ) => {
+                  const status =
+                    normalizeStatus(
+                      flight.status
+                    );
+
+                  const isCompleted =
+                    status ===
+                    "LOADED";
+
+                  const busyDelete =
+                    deletingId ===
+                    flight.id;
+
+                  const busyReopen =
+                    reopeningId ===
+                    flight.id;
+
+                  return (
+                    <tr
+                      key={
+                        flight.id
+                      }
+                    >
+                      <td
+                        style={
+                          td
+                        }
+                      >
+                        <strong>
+                          {flight
+                            .flightNumber ||
+                            flight.id}
+                        </strong>
+                      </td>
+
+                      <td
+                        style={
+                          td
+                        }
+                      >
+                        {flight
+                          .flightDate ||
+                          "-"}
+                      </td>
+
+                      <td
+                        style={
+                          td
+                        }
+                      >
+                        {flight.gate ||
+                          "-"}
+                      </td>
+
+                      <td
+                        style={
+                          td
+                        }
+                      >
+                        {flight
+                          .aircraftType ||
+                          "-"}
+                      </td>
+
+                      <td
+                        style={
+                          td
+                        }
+                      >
+                        <StatusPill
+                          status={
+                            status
+                          }
+                        />
+                      </td>
+
+                      <td
+                        style={{
+                          ...td,
+
+                          textAlign:
+                            "right",
+
+                          whiteSpace:
+                            "nowrap",
+                        }}
+                      >
+                        <button
+                          type="button"
+
+                          onClick={() =>
+                            openFlight(
+                              flight
+                            )
+                          }
+
+                          style={
+                            tableOpenButton
+                          }
+                        >
+                          {isCompleted
+                            ? "View"
+                            : "Open"}
+                        </button>
+
+                        {allowManage &&
+                          isCompleted && (
+                            <button
+                              type="button"
+
+                              onClick={() =>
+                                handleReopen(
+                                  flight
+                                )
+                              }
+
+                              disabled={
+                                busyReopen ||
+                                busyDelete
+                              }
+
+                              style={{
+                                ...tableReopenButton,
+
+                                opacity:
+                                  busyReopen ||
+                                  busyDelete
+                                    ? 0.7
+                                    : 1,
+
+                                cursor:
+                                  busyReopen ||
+                                  busyDelete
+                                    ? "not-allowed"
+                                    : "pointer",
+                              }}
+                            >
+                              {busyReopen
+                                ? "Reopening..."
+                                : "Reopen"}
+                            </button>
+                          )}
+
+                        {allowManage && (
+                          <button
+                            type="button"
+
+                            onClick={() =>
+                              handleDelete(
+                                flight
+                              )
+                            }
+
+                            disabled={
+                              busyDelete ||
+                              busyReopen
+                            }
+
+                            style={{
+                              ...tableDeleteButton,
+
+                              opacity:
+                                busyDelete ||
+                                busyReopen
+                                  ? 0.7
+                                  : 1,
+
+                              cursor:
+                                busyDelete ||
+                                busyReopen
+                                  ? "not-allowed"
+                                  : "pointer",
+                            }}
+                          >
+                            {busyDelete
+                              ? "Deleting..."
+                              : "Delete"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
+              )}
+            </tbody>
+          </table>
+
+          <p
+            style={{
+              marginTop:
+                10,
+
+              color:
+                "#6b7280",
+
+              fontSize:
+                "0.8rem",
+            }}
+          >
+            Tip: Completed flights (LOADED) remain accessible for Gate, Aircraft, and Reports. Managers can Reopen if needed.
+          </p>
+        </div>
+      )}
+
+      {/* =========================
+          CARRY-ON CHECK ONLY FLIGHTS
+      ========================= */}
+
+      <div
+        style={{
+          marginTop:
+            18,
+
+          paddingTop:
+            16,
+
+          borderTop:
+            "1px solid #e5e7eb",
+        }}
+      >
+        <h3
+          style={{
+            margin:
+              0,
+
+            color:
+              "#4c1d95",
+          }}
+        >
+          Carry-On Check Only Flights
+        </h3>
+
+        <p
+          style={{
+            margin:
+              "5px 0 10px",
+
+            color:
+              "#64748b",
+
+            fontSize:
+              "0.82rem",
+          }}
+        >
+          Carry-On-only flights remain managed from Flights. Open Setup only when you are ready to upload documents.
+        </p>
+
+        {loadingCarryOn ? (
+          <p
+            style={{
+              color:
+                "#64748b",
+            }}
+          >
+            Loading Carry-On flights...
+          </p>
+        ) : carryOnFlights.length ===
+          0 ? (
+          <p
+            style={{
+              color:
+                "#64748b",
+            }}
+          >
+            No Carry-On-only flights found for {selectedDate}.
+          </p>
+        ) : (
+          <div
+            style={{
+              display:
+                "grid",
+
+              gap:
+                8,
+            }}
+          >
+            {carryOnFlights.map(
+              (
+                flight
+              ) => (
+                <div
+                  key={
+                    flight.id
+                  }
+
+                  style={{
+                    display:
+                      "flex",
+
+                    justifyContent:
+                      "space-between",
+
+                    gap:
+                      10,
+
+                    flexWrap:
+                      "wrap",
+
+                    alignItems:
+                      "center",
+
+                    padding:
+                      11,
+
+                    borderRadius:
+                      12,
+
+                    border:
+                      "1px solid #ddd6fe",
+
+                    background:
+                      "#faf5ff",
+                  }}
+                >
+                  <div>
+                    <strong>
+                      {flight.flightNumber ||
+                        flight.id}
+                    </strong>
+
                     <div
                       style={{
                         marginTop:
-                          12,
-
-                        paddingTop:
-                          12,
-
-                        borderTop:
-                          "1px solid #ddd6fe",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display:
-                            "grid",
-
-                          gridTemplateColumns:
-                            "repeat(auto-fit, minmax(150px, 1fr))",
-
-                          gap:
-                            9,
-                        }}
-                      >
-                        <Field
-                          label="Airline"
-                          value={
-                            editFlightForm
-                              .airline
-                          }
-                          disabled={
-                            savingFlightEdit
-                          }
-                          onChange={(
-                            value
-                          ) =>
-                            setEditFlightForm(
-                              (
-                                previous
-                              ) => ({
-                                ...previous,
-
-                                airline:
-                                  value,
-                              })
-                            )
-                          }
-                        />
-
-                        <Field
-                          label="Flight Number"
-                          value={
-                            editFlightForm
-                              .flightNumber
-                          }
-                          disabled={
-                            savingFlightEdit
-                          }
-                          inputMode="numeric"
-                          onChange={(
-                            value
-                          ) =>
-                            setEditFlightForm(
-                              (
-                                previous
-                              ) => ({
-                                ...previous,
-
-                                flightNumber:
-                                  value,
-                              })
-                            )
-                          }
-                        />
-
-                        <Field
-                          label="Assigned Gate"
-                          value={
-                            editFlightForm
-                              .gate
-                          }
-                          disabled={
-                            savingFlightEdit
-                          }
-                          placeholder="Example: F88"
-                          onChange={(
-                            value
-                          ) =>
-                            setEditFlightForm(
-                              (
-                                previous
-                              ) => ({
-                                ...previous,
-
-                                gate:
-                                  value,
-                              })
-                            )
-                          }
-                        />
-
-                        <Field
-                          label="Tail Number"
-                          value={
-                            editFlightForm
-                              .tailNumber
-                          }
-                          disabled={
-                            savingFlightEdit
-                          }
-                          placeholder="Example: N802WA"
-                          onChange={(
-                            value
-                          ) =>
-                            setEditFlightForm(
-                              (
-                                previous
-                              ) => ({
-                                ...previous,
-
-                                tailNumber:
-                                  value,
-                              })
-                            )
-                          }
-                        />
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={
-                          saveFlightInformation
-                        }
-                        disabled={
-                          savingFlightEdit
-                        }
-                        style={{
-                          ...primaryButton,
-
-                          marginTop:
-                            10,
-
-                          opacity:
-                            savingFlightEdit
-                              ? 0.6
-                              : 1,
-                        }}
-                      >
-                        {savingFlightEdit
-                          ? "Saving..."
-                          : "Save Flight Information"}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(280px, 1fr))",
-
-                    gap:
-                      12,
-                  }}
-                >
-                  <UploadCard
-                    title="Load Manifest"
-                    description="Imports Passenger Name only."
-                    file={
-                      loadManifestFile
-                    }
-                    loading={
-                      parsingLoadManifest
-                    }
-                    disabled={
-                      !canUploadDocuments
-                    }
-                    onFile={
-                      handleLoadManifest
-                    }
-                    summary={
-                      loadManifestMeta
-                        ? `${passengers.length} passenger(s) imported${
-                            declaredPassengerTotal
-                              ? ` / PDF total ${declaredPassengerTotal}`
-                              : ""
-                          }`
-                        : null
-                    }
-                  />
-
-                  <UploadCard
-                    title="Empty Seats Report"
-                    description="Imports available seat number and seat type."
-                    file={
-                      emptySeatFile
-                    }
-                    loading={
-                      parsingSeats
-                    }
-                    disabled={
-                      !canUploadDocuments
-                    }
-                    onFile={
-                      handleEmptySeatPdf
-                    }
-                    summary={
-                      emptySeatMeta
-                        ? `${availableSeats.length} assignable seat(s)`
-                        : null
-                    }
-                  />
-                </div>
-
-                <div
-                  style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(150px, 1fr))",
-
-                    gap:
-                      8,
-                  }}
-                >
-                  <Stat
-                    label="Passengers"
-                    value={
-                      passengers.length ||
-                      selectedFlight.passengerCount ||
-                      0
-                    }
-                  />
-
-                  <Stat
-                    label="Available Seats"
-                    value={
-                      availableSeats.length ||
-                      selectedFlight.availableSeatCount ||
-                      0
-                    }
-                  />
-
-                  <Stat
-                    label="Required"
-                    value={
-                      validRequiredNumber
-                        ? Math.trunc(
-                            requiredNumber
-                          )
-                        : selectedFlight.requiredCarryOns ||
-                          0
-                    }
-                  />
-
-                  <Stat
-                    label="Gate Checks"
-                    value={
-                      gateCheckNumbers.length ||
-                      selectedFlight.gateCheckNumberCount ||
-                      0
-                    }
-                  />
-                </div>
-
-                <div
-                  style={{
-                    display:
-                      "grid",
-
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(280px, 1fr))",
-
-                    gap:
-                      12,
-                  }}
-                >
-                  <div
-                    style={
-                      panelStyle
-                    }
-                  >
-                    <h4
-                      style={{
-                        margin:
-                          0,
-                      }}
-                    >
-                      Required Carry-On Gate Checks
-                    </h4>
-
-                    <p
-                      style={
-                        smallText
-                      }
-                    >
-                      Supervisor sets this manually. It is an operational target, not a hard limit.
-                    </p>
-
-                    <input
-                      type="number"
-
-                      min="0"
-
-                      value={
-                        requiredCarryOns
-                      }
-
-                      onChange={(
-                        event
-                      ) =>
-                        setRequiredCarryOns(
-                          event.target
-                            .value
-                        )
-                      }
-
-                      disabled={
-                        !canSetRequired
-                      }
-
-                      placeholder="Example: 10"
-
-                      style={
-                        inputStyle
-                      }
-                    />
-                  </div>
-
-                  <div
-                    style={
-                      panelStyle
-                    }
-                  >
-                    <h4
-                      style={{
-                        margin:
-                          0,
-                      }}
-                    >
-                      Gate Check Numbers
-                    </h4>
-
-                    <p
-                      style={
-                        smallText
-                      }
-                    >
-                      Duty Manager / Supervisor can paste numbers separated by spaces, commas or new lines.
-                    </p>
-
-                    <textarea
-                      rows={5}
-
-                      value={
-                        gateCheckText
-                      }
-
-                      onChange={(
-                        event
-                      ) =>
-                        setGateCheckText(
-                          event.target
-                            .value
-                        )
-                      }
-
-                      disabled={
-                        !canManageGateChecks
-                      }
-
-                      placeholder={
-                        "Example:\nGC823001\nGC823002\nGC823003"
-                      }
-
-                      style={{
-                        ...inputStyle,
-
-                        resize:
-                          "vertical",
-                      }}
-                    />
-
-                    <div
-                      style={{
-                        marginTop:
-                          7,
+                          4,
 
                         color:
-                          "#475569",
+                          "#64748b",
 
                         fontSize:
                           "0.78rem",
-
-                        fontWeight:
-                          800,
                       }}
                     >
-                      Unique Gate Check Numbers: {gateCheckNumbers.length}
+                      {flight.origin || "-"}
+                      {" \u2192 "}
+                      {flight.destination || "-"}
+                      {flight.gate
+                        ? ` - Gate ${flight.gate}`
+                        : ""}
+                      {" - "}
+                      {flight.status || "SETUP"}
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+
+                    onClick={() =>
+                      onOpenCarryOnSetup?.(
+                        flight.id
+                      )
+                    }
+
+                    style={{
+                      padding:
+                        "7px 12px",
+
+                      borderRadius:
+                        999,
+
+                      border:
+                        "1px solid #7c3aed",
+
+                      background:
+                        "#7c3aed",
+
+                      color:
+                        "white",
+
+                      fontWeight:
+                        900,
+
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    Setup
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-
-                  onClick={
-                    saveSetup
-                  }
-
-                  disabled={
-                    savingSetup ||
-                    !canManageGateChecks ||
-                    passengers.length ===
-                      0 ||
-                    availableSeats.length ===
-                      0 ||
-                    !validRequiredNumber
-                  }
-
-                  style={{
-                    ...primaryButton,
-
-                    opacity:
-                      savingSetup ||
-                      !canManageGateChecks ||
-                      passengers.length ===
-                        0 ||
-                      availableSeats.length ===
-                        0 ||
-                      !validRequiredNumber
-                        ? 0.55
-                        : 1,
-                  }}
-                >
-                  {savingSetup
-                    ? "Saving Setup..."
-                    : "Save Flight Setup"}
-                </button>
-
-                <Notice
-                  tone="warning"
-                  text="Last-minute passenger and last-minute Gate Check creation will be available in COUNTER. Extra assignments will not be blocked if they exceed the Required target."
-                />
-              </>
-            )}
-
-            {message && (
-              <Notice
-                tone="success"
-                text={
-                  message
-                }
-              />
-            )}
-
-            {error && (
-              <Notice
-                tone="error"
-                text={
-                  error
-                }
-              />
+              )
             )}
           </div>
         )}
+      </div>
 
-        {activeTab ===
-          "COUNTER" && (
-          <ComingSoon
-            title="Counter Assignment"
-            description="Next phase: select Carry-On flight, passenger, empty seat and Gate Check number. Last-minute passenger and Gate Check will also be supported."
-          />
-        )}
+      {/* =========================
+          CREATE FLIGHT MODAL
+      ========================= */}
 
-        {activeTab ===
-          "GATE" && (
-          <ComingSoon
-            title="Gate Collection"
-            description="Gate Controller will mark each assigned Carry-On as Collected at Gate."
-          />
-        )}
+      {showCreate && (
+        <div
+          style={
+            overlay
+          }
 
-        {activeTab ===
-          "RAMP" && (
-          <ComingSoon
-            title="Ramp & Aircraft"
-            description="Ramp will confirm Received at Ramp and then Loaded in Forward / Middle / Aft."
-          />
-        )}
+          onMouseDown={(
+            event
+          ) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              closeCreate();
+            }
+          }}
+        >
+          <div
+            style={{
+              ...modal,
 
-        {activeTab ===
-          "TRACKING" && (
-          <ComingSoon
-            title="Carry-On Tracking"
-            description="Timeline from Counter Assigned through Aircraft Loaded."
-          />
-        )}
+              maxHeight:
+                "90dvh",
 
-        {activeTab ===
-          "REPORT" && (
-          <ComingSoon
-            title="Final Report"
-            description="Operational summary and printable Carry-On Gate Check report."
-          />
-        )}
-      </section>
+              overflowY:
+                "auto",
+
+              padding:
+                isMobile
+                  ? 14
+                  : 16,
+            }}
+          >
+            <div
+              style={{
+                display:
+                  "flex",
+
+                justifyContent:
+                  "space-between",
+
+                alignItems:
+                  "center",
+
+                gap:
+                  12,
+              }}
+            >
+              <div>
+                <h3
+                  style={{
+                    margin:
+                      0,
+                  }}
+                >
+                  Create Flight
+                </h3>
+
+                {operationalContext
+                  ?.operationalPositionLabel && (
+                  <div
+                    style={{
+                      marginTop:
+                        3,
+
+                      color:
+                        "#64748b",
+
+                      fontSize:
+                        "0.76rem",
+                    }}
+                  >
+                    Working as:{" "}
+                    <strong>
+                      {
+                        operationalContext
+                          .operationalPositionLabel
+                      }
+                    </strong>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+
+                onClick={
+                  closeCreate
+                }
+
+                style={
+                  xBtn
+                }
+
+                aria-label="Close"
+
+                disabled={
+                  saving
+                }
+              >
+                {"\u2715"}
+              </button>
+            </div>
+
+            <div
+              style={{
+                display:
+                  "grid",
+
+                gridTemplateColumns:
+                  isMobile
+                    ? "1fr"
+                    : "1fr 1fr",
+
+                gap:
+                  12,
+
+                marginTop:
+                  12,
+              }}
+            >
+              <div
+                style={{
+                  gridColumn:
+                    isMobile
+                      ? "auto"
+                      : "1 / -1",
+                }}
+              >
+                <label
+                  style={
+                    label
+                  }
+                >
+                  Flight Operation
+                </label>
+
+                <select
+                  value={
+                    form.operationType
+                  }
+
+                  onChange={(
+                    event
+                  ) =>
+                    setForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        operationType:
+                          event
+                            .target
+                            .value,
+                      })
+                    )
+                  }
+
+                  style={
+                    input
+                  }
+                >
+                  <option value="REGULAR">
+                    Regular Flight - Full Baggage Flow
+                  </option>
+
+                  <option value="CARRY_ON_ONLY">
+                    Carry-On Check Only
+                  </option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  style={
+                    label
+                  }
+                >
+                  Flight Number
+                </label>
+
+                <input
+                  value={
+                    form.flightNumber
+                  }
+
+                  onChange={(
+                    event
+                  ) =>
+                    setForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        flightNumber:
+                          event
+                            .target
+                            .value,
+                      })
+                    )
+                  }
+
+                  placeholder="e.g. SY214"
+
+                  autoCapitalize="characters"
+
+                  style={
+                    input
+                  }
+                />
+              </div>
+
+              <div>
+                <label
+                  style={
+                    label
+                  }
+                >
+                  Date
+                </label>
+
+                <input
+                  type="date"
+
+                  value={
+                    form.flightDate
+                  }
+
+                  onChange={(
+                    event
+                  ) =>
+                    setForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        flightDate:
+                          event
+                            .target
+                            .value,
+                      })
+                    )
+                  }
+
+                  style={
+                    input
+                  }
+                />
+              </div>
+
+              <div>
+                <label
+                  style={
+                    label
+                  }
+                >
+                  Gate
+                </label>
+
+                <input
+                  value={
+                    form.gate
+                  }
+
+                  onChange={(
+                    event
+                  ) =>
+                    setForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        gate:
+                          event
+                            .target
+                            .value,
+                      })
+                    )
+                  }
+
+                  placeholder="e.g. E68"
+
+                  autoCapitalize="characters"
+
+                  style={
+                    input
+                  }
+                />
+              </div>
+
+              <div>
+                <label
+                  style={
+                    label
+                  }
+                >
+                  Aircraft Type
+                </label>
+
+                <input
+                  value={
+                    form.aircraftType
+                  }
+
+                  onChange={(
+                    event
+                  ) =>
+                    setForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        aircraftType:
+                          event
+                            .target
+                            .value,
+                      })
+                    )
+                  }
+
+                  placeholder="e.g. B737-800"
+
+                  autoCapitalize="characters"
+
+                  style={
+                    input
+                  }
+                />
+              </div>
+
+              {form.operationType ===
+                "CARRY_ON_ONLY" && (
+                <>
+                  <div>
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      Origin
+                    </label>
+
+                    <input
+                      value={
+                        form.origin
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            origin:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      placeholder="e.g. TPA"
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      Destination
+                    </label>
+
+                    <input
+                      value={
+                        form.destination
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            destination:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      placeholder="e.g. SNU"
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      style={
+                        label
+                      }
+                    >
+                      Tail Number
+                    </label>
+
+                    <input
+                      value={
+                        form.tailNumber
+                      }
+
+                      onChange={(
+                        event
+                      ) =>
+                        setForm(
+                          (
+                            previous
+                          ) => ({
+                            ...previous,
+
+                            tailNumber:
+                              event
+                                .target
+                                .value,
+                          })
+                        )
+                      }
+
+                      placeholder="e.g. N802WA"
+                      style={
+                        input
+                      }
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {formError && (
+              <div
+                style={{
+                  marginTop:
+                    10,
+
+                  padding:
+                    10,
+
+                  borderRadius:
+                    10,
+
+                  background:
+                    "#fef2f2",
+
+                  border:
+                    "1px solid #fecaca",
+
+                  color:
+                    "#b91c1c",
+
+                  fontSize:
+                    "0.86rem",
+
+                  fontWeight:
+                    800,
+                }}
+              >
+                {formError}
+              </div>
+            )}
+
+            <div
+              style={{
+                display:
+                  "grid",
+
+                gridTemplateColumns:
+                  isMobile
+                    ? "1fr 1fr"
+                    : "auto auto",
+
+                justifyContent:
+                  isMobile
+                    ? "stretch"
+                    : "end",
+
+                gap:
+                  10,
+
+                marginTop:
+                  16,
+              }}
+            >
+              <button
+                type="button"
+
+                onClick={
+                  closeCreate
+                }
+
+                disabled={
+                  saving
+                }
+
+                style={{
+                  ...btnGhost,
+
+                  minHeight:
+                    44,
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+
+                onClick={
+                  handleCreate
+                }
+
+                disabled={
+                  saving
+                }
+
+                style={{
+                  ...btnPrimary,
+
+                  minHeight:
+                    44,
+
+                  opacity:
+                    saving
+                      ? 0.7
+                      : 1,
+
+                  cursor:
+                    saving
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {saving
+                  ? "Creating..."
+                  : "Create Flight"}
+              </button>
+            </div>
+
+            <div
+              style={{
+                marginTop:
+                  12,
+
+                padding:
+                  9,
+
+                borderRadius:
+                  10,
+
+                background:
+                  "#f8fafc",
+
+                border:
+                  "1px solid #e2e8f0",
+
+                color:
+                  "#64748b",
+
+                fontSize:
+                  "0.75rem",
+
+                lineHeight:
+                  1.5,
+              }}
+            >
+              Created by:{" "}
+              <strong>
+                {operationalActor
+                  .employeeFullName ||
+                  user?.username ||
+                  "-"}
+              </strong>
+
+              {operationalActor
+                .operationalPositionLabel && (
+                <>
+                  {" - "}
+                  Working as:{" "}
+                  <strong>
+                    {
+                      operationalActor
+                        .operationalPositionLabel
+                    }
+                  </strong>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3478,167 +3306,7 @@ export default function CarryOnGateCheckPage({
    UI
 ========================= */
 
-function Field({
-  label,
-  value,
-  onChange,
-  disabled,
-  type = "text",
-  inputMode,
-  placeholder,
-}) {
-  return (
-    <label
-      style={{
-        display:
-          "grid",
-
-        gap:
-          5,
-      }}
-    >
-      <span
-        style={{
-          color:
-            "#475569",
-
-          fontSize:
-            "0.75rem",
-
-          fontWeight:
-            800,
-        }}
-      >
-        {label}
-      </span>
-
-      <input
-        type={
-          type
-        }
-
-        value={
-          value
-        }
-
-        inputMode={
-          inputMode
-        }
-
-        disabled={
-          disabled
-        }
-
-        placeholder={
-          placeholder
-        }
-
-        onChange={(
-          event
-        ) =>
-          onChange(
-            event.target
-              .value
-          )
-        }
-
-        style={
-          inputStyle
-        }
-      />
-    </label>
-  );
-}
-
-function UploadCard({
-  title,
-  description,
-  file,
-  loading,
-  disabled,
-  onFile,
-  summary,
-}) {
-  return (
-    <div
-      style={
-        panelStyle
-      }
-    >
-      <h4
-        style={{
-          margin:
-            0,
-        }}
-      >
-        {title}
-      </h4>
-
-      <p
-        style={
-          smallText
-        }
-      >
-        {description}
-      </p>
-
-      <input
-        type="file"
-
-        accept="application/pdf,.pdf"
-
-        disabled={
-          disabled ||
-          loading
-        }
-
-        onChange={(
-          event
-        ) => {
-          const selected =
-            event.target
-              .files?.[0];
-
-          if (
-            selected
-          ) {
-            onFile(
-              selected
-            );
-          }
-        }}
-      />
-
-      <div
-        style={{
-          marginTop:
-            8,
-
-          color:
-            loading
-              ? "#2563eb"
-              : file
-                ? "#166534"
-                : "#64748b",
-
-          fontSize:
-            "0.78rem",
-
-          fontWeight:
-            800,
-        }}
-      >
-        {loading
-          ? "Parsing PDF..."
-          : summary ||
-            file?.name ||
-            "No PDF selected"}
-      </div>
-    </div>
-  );
-}
-
-function Stat({
+function MiniInfo({
   label,
   value,
 }) {
@@ -3646,16 +3314,16 @@ function Stat({
     <div
       style={{
         padding:
-          10,
+          8,
 
         borderRadius:
           10,
 
-        border:
-          "1px solid #e2e8f0",
-
         background:
           "#f8fafc",
+
+        border:
+          "1px solid #e2e8f0",
       }}
     >
       <div
@@ -3664,7 +3332,7 @@ function Stat({
             "#64748b",
 
           fontSize:
-            "0.7rem",
+            "0.68rem",
         }}
       >
         {label}
@@ -3673,16 +3341,16 @@ function Stat({
       <div
         style={{
           marginTop:
-            2,
+            1,
 
           color:
             "#0f172a",
 
-          fontSize:
-            "1.12rem",
-
           fontWeight:
             900,
+
+          fontSize:
+            "0.88rem",
         }}
       >
         {value}
@@ -3691,189 +3359,343 @@ function Stat({
   );
 }
 
-function Notice({
-  tone,
-  text,
+function ActionButton({
+  label,
+  onClick,
+  disabled = false,
+  tone = "default",
 }) {
-  const tones = {
-    success: {
-      background:
-        "#f0fdf4",
+  let background =
+    "white";
 
-      border:
-        "#bbf7d0",
+  let color =
+    "#334155";
 
-      color:
-        "#166534",
-    },
+  let border =
+    "#cbd5e1";
 
-    warning: {
-      background:
-        "#fffbeb",
+  if (
+    tone ===
+    "success"
+  ) {
+    background =
+      "#16a34a";
 
-      border:
-        "#fde68a",
+    color =
+      "white";
 
-      color:
-        "#92400e",
-    },
+    border =
+      "#16a34a";
+  }
 
-    error: {
-      background:
-        "#fef2f2",
+  if (
+    tone ===
+    "danger"
+  ) {
+    background =
+      "#ef4444";
 
-      border:
-        "#fecaca",
+    color =
+      "white";
 
-      color:
-        "#991b1b",
-    },
-  };
-
-  const selected =
-    tones[tone] ||
-    tones.warning;
+    border =
+      "#ef4444";
+  }
 
   return (
-    <div
+    <button
+      type="button"
+
+      onClick={
+        onClick
+      }
+
+      disabled={
+        disabled
+      }
+
       style={{
+        minHeight:
+          42,
+
         padding:
-          11,
+          "7px 8px",
 
         borderRadius:
           10,
 
-        background:
-          selected.background,
-
         border:
-          `1px solid ${selected.border}`,
+          `1px solid ${border}`,
 
-        color:
-          selected.color,
+        background,
+
+        color,
 
         fontSize:
-          "0.82rem",
+          "0.76rem",
 
         fontWeight:
-          800,
+          900,
 
-        whiteSpace:
-          "pre-wrap",
+        cursor:
+          disabled
+            ? "not-allowed"
+            : "pointer",
+
+        opacity:
+          disabled
+            ? 0.65
+            : 1,
       }}
     >
-      {text}
-    </div>
+      {label}
+    </button>
   );
 }
 
-function ComingSoon({
-  title,
-  description,
-}) {
-  return (
-    <div
-      style={{
-        padding:
-          18,
+/* =========================
+   STYLES
+========================= */
 
-        borderRadius:
-          12,
+const th = {
+  textAlign:
+    "left",
 
-        border:
-          "1px solid #e2e8f0",
-
-        background:
-          "#f8fafc",
-      }}
-    >
-      <h3
-        style={{
-          margin:
-            0,
-        }}
-      >
-        {title}
-      </h3>
-
-      <p
-        style={{
-          margin:
-            "6px 0 0",
-
-          color:
-            "#64748b",
-        }}
-      >
-        {description}
-      </p>
-    </div>
-  );
-}
-
-const panelStyle = {
   padding:
-    12,
+    "10px 8px",
 
-  borderRadius:
-    12,
-
-  border:
-    "1px solid #e2e8f0",
-
-  background:
-    "#f8fafc",
-};
-
-const smallText = {
-  margin:
-    "6px 0 10px",
-
-  color:
-    "#64748b",
+  borderBottom:
+    "1px solid #e5e7eb",
 
   fontSize:
     "0.8rem",
 
-  lineHeight:
-    1.45,
+  textTransform:
+    "uppercase",
+
+  letterSpacing:
+    "0.04em",
+
+  color:
+    "#6b7280",
+
+  whiteSpace:
+    "nowrap",
 };
 
-const inputStyle = {
+const td = {
+  padding:
+    "10px 8px",
+
+  borderBottom:
+    "1px solid #f3f4f6",
+
+  color:
+    "#111827",
+
+  verticalAlign:
+    "middle",
+};
+
+const overlay = {
+  position:
+    "fixed",
+
+  inset:
+    0,
+
+  background:
+    "rgba(15,23,42,0.5)",
+
+  display:
+    "flex",
+
+  alignItems:
+    "center",
+
+  justifyContent:
+    "center",
+
+  padding:
+    16,
+
+  zIndex:
+    9999,
+
+  backdropFilter:
+    "blur(2px)",
+};
+
+const modal = {
+  width:
+    "100%",
+
+  maxWidth:
+    640,
+
+  background:
+    "white",
+
+  borderRadius:
+    14,
+
+  padding:
+    16,
+
+  boxShadow:
+    "0 20px 50px rgba(0,0,0,0.25)",
+};
+
+const label = {
+  display:
+    "block",
+
+  fontSize:
+    "0.82rem",
+
+  color:
+    "#374151",
+
+  marginBottom:
+    5,
+
+  fontWeight:
+    800,
+};
+
+const input = {
   width:
     "100%",
 
   boxSizing:
     "border-box",
 
+  minHeight:
+    44,
+
   padding:
-    "10px 12px",
+    "8px 10px",
 
   borderRadius:
     10,
 
   border:
-    "1px solid #cbd5e1",
+    "1px solid #d1d5db",
 
   background:
     "white",
 
-  fontSize:
-    "0.9rem",
+  color:
+    "#111827",
 };
 
-const primaryButton = {
+const btnPrimary = {
   padding:
-    "10px 14px",
+    "8px 12px",
 
   borderRadius:
     10,
 
   border:
-    "1px solid #7c3aed",
+    "1px solid #111827",
 
   background:
-    "#7c3aed",
+    "#111827",
+
+  color:
+    "white",
+
+  fontWeight:
+    800,
+};
+
+const btnGhost = {
+  padding:
+    "8px 12px",
+
+  borderRadius:
+    10,
+
+  border:
+    "1px solid #d1d5db",
+
+  background:
+    "white",
+
+  color:
+    "#334155",
+
+  fontWeight:
+    800,
+
+  cursor:
+    "pointer",
+};
+
+const xBtn = {
+  border:
+    "1px solid #e5e7eb",
+
+  borderRadius:
+    10,
+
+  background:
+    "white",
+
+  color:
+    "#334155",
+
+  width:
+    36,
+
+  height:
+    36,
+
+  cursor:
+    "pointer",
+
+  fontWeight:
+    900,
+};
+
+const tableOpenButton = {
+  padding:
+    "6px 12px",
+
+  borderRadius:
+    999,
+
+  border:
+    "1px solid #d1d5db",
+
+  background:
+    "white",
+
+  color:
+    "#334155",
+
+  cursor:
+    "pointer",
+
+  fontWeight:
+    800,
+
+  marginRight:
+    8,
+};
+
+const tableReopenButton = {
+  padding:
+    "6px 12px",
+
+  borderRadius:
+    999,
+
+  border:
+    "1px solid #16a34a",
+
+  background:
+    "#16a34a",
 
   color:
     "white",
@@ -3881,6 +3703,26 @@ const primaryButton = {
   fontWeight:
     900,
 
-  cursor:
-    "pointer",
+  marginRight:
+    8,
+};
+
+const tableDeleteButton = {
+  padding:
+    "6px 12px",
+
+  borderRadius:
+    999,
+
+  border:
+    "1px solid #ef4444",
+
+  background:
+    "#ef4444",
+
+  color:
+    "white",
+
+  fontWeight:
+    900,
 };
