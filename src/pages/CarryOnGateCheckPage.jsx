@@ -1008,6 +1008,9 @@ export default function CarryOnGateCheckPage({
 
     aircraft:
       "",
+
+    tailNumber:
+      "",
   });
 
   const [
@@ -1016,6 +1019,37 @@ export default function CarryOnGateCheckPage({
   ] = useState(
     false
   );
+
+  const [
+    editingFlight,
+    setEditingFlight,
+  ] = useState(
+    false
+  );
+
+  const [
+    savingFlightEdit,
+    setSavingFlightEdit,
+  ] = useState(
+    false
+  );
+
+  const [
+    editFlightForm,
+    setEditFlightForm,
+  ] = useState({
+    airline:
+      "",
+
+    flightNumber:
+      "",
+
+    gate:
+      "",
+
+    tailNumber:
+      "",
+  });
 
   const [
     loadManifestFile,
@@ -1368,6 +1402,39 @@ export default function CarryOnGateCheckPage({
     setError(
       ""
     );
+
+    setEditingFlight(
+      false
+    );
+
+    setEditFlightForm({
+      airline:
+        selectedFlight
+          ?.airline ||
+        "",
+
+      flightNumber:
+        selectedFlight
+          ?.flightNumberOnly ||
+        String(
+          selectedFlight
+            ?.flightNumber ||
+          ""
+        ).replace(
+          /^[A-Z]+/i,
+          ""
+        ),
+
+      gate:
+        selectedFlight
+          ?.gate ||
+        "",
+
+      tailNumber:
+        selectedFlight
+          ?.tailNumber ||
+        "",
+    });
   }, [
     selectedCarryOnFlightId,
   ]);
@@ -1452,6 +1519,12 @@ export default function CarryOnGateCheckPage({
           ""
         ).trim();
 
+      const tailNumber =
+        cleanUpper(
+          createForm
+            .tailNumber
+        );
+
       if (
         !airline ||
         !flightNumberOnly ||
@@ -1526,6 +1599,10 @@ export default function CarryOnGateCheckPage({
               aircraft ||
               null,
 
+            tailNumber:
+              tailNumber ||
+              null,
+
             status:
               "SETUP",
 
@@ -1576,6 +1653,151 @@ export default function CarryOnGateCheckPage({
         );
       } finally {
         setCreatingFlight(
+          false
+        );
+      }
+    };
+
+  /* =========================
+     EDIT FLIGHT INFORMATION
+  ========================= */
+
+  const saveFlightInformation =
+    async () => {
+      setMessage(
+        ""
+      );
+
+      setError(
+        ""
+      );
+
+      if (
+        !selectedFlight
+      ) {
+        setError(
+          "Select a Carry-On flight first."
+        );
+
+        return;
+      }
+
+      if (
+        !canCreateFlight
+      ) {
+        setError(
+          "You do not have permission to edit Carry-On flight information."
+        );
+
+        return;
+      }
+
+      const airline =
+        cleanUpper(
+          editFlightForm
+            .airline
+        );
+
+      const flightNumberOnly =
+        String(
+          editFlightForm
+            .flightNumber ||
+          ""
+        )
+          .trim()
+          .replace(
+            /[^0-9]/g,
+            ""
+          );
+
+      const flightNumber =
+        normalizeFlightNumber(
+          airline,
+          flightNumberOnly
+        );
+
+      const gate =
+        cleanUpper(
+          editFlightForm
+            .gate
+        );
+
+      const tailNumber =
+        cleanUpper(
+          editFlightForm
+            .tailNumber
+        );
+
+      if (
+        !airline ||
+        !flightNumberOnly
+      ) {
+        setError(
+          "Airline and Flight Number are required."
+        );
+
+        return;
+      }
+
+      try {
+        setSavingFlightEdit(
+          true
+        );
+
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id
+          ),
+          {
+            airline,
+
+            flightNumberOnly,
+
+            flightNumber,
+
+            gate:
+              gate ||
+              null,
+
+            tailNumber:
+              tailNumber ||
+              null,
+
+            updatedAt:
+              serverTimestamp(),
+
+            updatedBy:
+              actor,
+          },
+          {
+            merge:
+              true,
+          }
+        );
+
+        setEditingFlight(
+          false
+        );
+
+        setMessage(
+          `Flight information updated for ${flightNumber}.`
+        );
+      } catch (
+        editError
+      ) {
+        console.error(
+          "Edit Carry-On flight error:",
+          editError
+        );
+
+        setError(
+          editError?.message ||
+          "Unable to update Carry-On flight information."
+        );
+      } finally {
+        setSavingFlightEdit(
           false
         );
       }
@@ -2593,6 +2815,32 @@ export default function CarryOnGateCheckPage({
                     )
                   }
                 />
+
+                <Field
+                  label="Tail Number"
+                  value={
+                    createForm
+                      .tailNumber
+                  }
+                  disabled={
+                    !canCreateFlight
+                  }
+                  placeholder="Example: N802WA"
+                  onChange={(
+                    value
+                  ) =>
+                    setCreateForm(
+                      (
+                        previous
+                      ) => ({
+                        ...previous,
+
+                        tailNumber:
+                          value,
+                      })
+                    )
+                  }
+                />
               </div>
 
               <button
@@ -2756,6 +3004,9 @@ export default function CarryOnGateCheckPage({
                             {item.gate
                               ? ` - Gate ${item.gate}`
                               : ""}
+                            {item.tailNumber
+                              ? ` - Tail ${item.tailNumber}`
+                              : ""}
                           </div>
                         </button>
                       );
@@ -2784,52 +3035,306 @@ export default function CarryOnGateCheckPage({
                 >
                   <div
                     style={{
-                      color:
-                        "#5b21b6",
+                      display:
+                        "flex",
 
-                      fontSize:
-                        "0.72rem",
+                      justifyContent:
+                        "space-between",
 
-                      fontWeight:
-                        900,
+                      gap:
+                        10,
+
+                      flexWrap:
+                        "wrap",
+
+                      alignItems:
+                        "center",
                     }}
                   >
-                    SELECTED CARRY-ON FLIGHT
+                    <div>
+                      <div
+                        style={{
+                          color:
+                            "#5b21b6",
+
+                          fontSize:
+                            "0.72rem",
+
+                          fontWeight:
+                            900,
+                        }}
+                      >
+                        SELECTED CARRY-ON FLIGHT
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop:
+                            3,
+
+                          fontSize:
+                            "1.15rem",
+
+                          fontWeight:
+                            900,
+                        }}
+                      >
+                        {selectedFlight.flightNumber}
+                        {" - "}
+                        {selectedFlight.flightDate}
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop:
+                            3,
+
+                          color:
+                            "#64748b",
+                        }}
+                      >
+                        {selectedFlight.origin}
+                        {" \u2192 "}
+                        {selectedFlight.destination}
+                        {selectedFlight.gate
+                          ? ` - Gate ${selectedFlight.gate}`
+                          : ""}
+                        {selectedFlight.tailNumber
+                          ? ` - Tail ${selectedFlight.tailNumber}`
+                          : ""}
+                      </div>
+                    </div>
+
+                    {canCreateFlight && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingFlight(
+                            !editingFlight
+                          );
+
+                          setEditFlightForm({
+                            airline:
+                              selectedFlight
+                                ?.airline ||
+                              "",
+
+                            flightNumber:
+                              selectedFlight
+                                ?.flightNumberOnly ||
+                              String(
+                                selectedFlight
+                                  ?.flightNumber ||
+                                ""
+                              ).replace(
+                                /^[A-Z]+/i,
+                                ""
+                              ),
+
+                            gate:
+                              selectedFlight
+                                ?.gate ||
+                              "",
+
+                            tailNumber:
+                              selectedFlight
+                                ?.tailNumber ||
+                              "",
+                          });
+
+                          setMessage(
+                            ""
+                          );
+
+                          setError(
+                            ""
+                          );
+                        }}
+                        style={{
+                          padding:
+                            "7px 11px",
+
+                          borderRadius:
+                            9,
+
+                          border:
+                            "1px solid #7c3aed",
+
+                          background:
+                            "white",
+
+                          color:
+                            "#6d28d9",
+
+                          fontWeight:
+                            900,
+
+                          cursor:
+                            "pointer",
+                        }}
+                      >
+                        {editingFlight
+                          ? "Cancel Edit"
+                          : "Edit Flight"}
+                      </button>
+                    )}
                   </div>
 
-                  <div
-                    style={{
-                      marginTop:
-                        3,
+                  {editingFlight && (
+                    <div
+                      style={{
+                        marginTop:
+                          12,
 
-                      fontSize:
-                        "1.15rem",
+                        paddingTop:
+                          12,
 
-                      fontWeight:
-                        900,
-                    }}
-                  >
-                    {selectedFlight.flightNumber}
-                    {" - "}
-                    {selectedFlight.flightDate}
-                  </div>
+                        borderTop:
+                          "1px solid #ddd6fe",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display:
+                            "grid",
 
-                  <div
-                    style={{
-                      marginTop:
-                        3,
+                          gridTemplateColumns:
+                            "repeat(auto-fit, minmax(150px, 1fr))",
 
-                      color:
-                        "#64748b",
-                    }}
-                  >
-                    {selectedFlight.origin}
-                    {" \u2192 "}
-                    {selectedFlight.destination}
-                    {selectedFlight.gate
-                      ? ` - Gate ${selectedFlight.gate}`
-                      : ""}
-                  </div>
+                          gap:
+                            9,
+                        }}
+                      >
+                        <Field
+                          label="Airline"
+                          value={
+                            editFlightForm
+                              .airline
+                          }
+                          disabled={
+                            savingFlightEdit
+                          }
+                          onChange={(
+                            value
+                          ) =>
+                            setEditFlightForm(
+                              (
+                                previous
+                              ) => ({
+                                ...previous,
+
+                                airline:
+                                  value,
+                              })
+                            )
+                          }
+                        />
+
+                        <Field
+                          label="Flight Number"
+                          value={
+                            editFlightForm
+                              .flightNumber
+                          }
+                          disabled={
+                            savingFlightEdit
+                          }
+                          inputMode="numeric"
+                          onChange={(
+                            value
+                          ) =>
+                            setEditFlightForm(
+                              (
+                                previous
+                              ) => ({
+                                ...previous,
+
+                                flightNumber:
+                                  value,
+                              })
+                            )
+                          }
+                        />
+
+                        <Field
+                          label="Assigned Gate"
+                          value={
+                            editFlightForm
+                              .gate
+                          }
+                          disabled={
+                            savingFlightEdit
+                          }
+                          placeholder="Example: F88"
+                          onChange={(
+                            value
+                          ) =>
+                            setEditFlightForm(
+                              (
+                                previous
+                              ) => ({
+                                ...previous,
+
+                                gate:
+                                  value,
+                              })
+                            )
+                          }
+                        />
+
+                        <Field
+                          label="Tail Number"
+                          value={
+                            editFlightForm
+                              .tailNumber
+                          }
+                          disabled={
+                            savingFlightEdit
+                          }
+                          placeholder="Example: N802WA"
+                          onChange={(
+                            value
+                          ) =>
+                            setEditFlightForm(
+                              (
+                                previous
+                              ) => ({
+                                ...previous,
+
+                                tailNumber:
+                                  value,
+                              })
+                            )
+                          }
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={
+                          saveFlightInformation
+                        }
+                        disabled={
+                          savingFlightEdit
+                        }
+                        style={{
+                          ...primaryButton,
+
+                          marginTop:
+                            10,
+
+                          opacity:
+                            savingFlightEdit
+                              ? 0.6
+                              : 1,
+                        }}
+                      >
+                        {savingFlightEdit
+                          ? "Saving..."
+                          : "Save Flight Information"}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div
