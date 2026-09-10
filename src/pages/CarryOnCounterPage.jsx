@@ -9,7 +9,6 @@ import React, {
 import {
   collection,
   doc,
-  getDoc,
   onSnapshot,
   runTransaction,
   serverTimestamp,
@@ -18,14 +17,104 @@ import {
 
 import { db } from "../../firebase";
 
-import {
-  cleanUpper,
-  getActor,
-  normalizeGateCheckNumber,
-  normalizeRole,
-  normalizeSeat,
-  safeDocId,
-} from "./carryOnUtils.js";
+function normalizeRole(
+  value
+) {
+  return String(
+    value ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function cleanUpper(
+  value
+) {
+  return String(
+    value ||
+    ""
+  )
+    .trim()
+    .toUpperCase();
+}
+
+function safeDocId(
+  value
+) {
+  return String(
+    value ||
+    ""
+  )
+    .trim()
+    .replace(
+      /[^A-Za-z0-9_-]/g,
+      "_"
+    );
+}
+
+function normalizeGateCheckNumber(
+  value
+) {
+  return cleanUpper(
+    value
+  )
+    .replace(
+      /\s+/g,
+      ""
+    )
+    .replace(
+      /[^A-Z0-9-]/g,
+      ""
+    );
+}
+
+function normalizeSeat(
+  value
+) {
+  return cleanUpper(
+    value
+  ).replace(
+    /\s+/g,
+    ""
+  );
+}
+
+function getActor(
+  user,
+  operationalContext
+) {
+  return {
+    userId:
+      user?.id ||
+      null,
+
+    username:
+      user?.username ||
+      null,
+
+    fullName:
+      operationalContext
+        ?.employeeFullName ||
+      user?.fullName ||
+      user?.username ||
+      null,
+
+    role:
+      user?.role ||
+      null,
+
+    operationalPosition:
+      operationalContext
+        ?.operationalPosition ||
+      null,
+
+    operationalPositionLabel:
+      operationalContext
+        ?.operationalPositionLabel ||
+      null,
+  };
+}
 
 export default function CarryOnCounterPage({
   user,
@@ -62,8 +151,10 @@ export default function CarryOnCounterPage({
       "supervisor" ||
     role ===
       "agent" ||
-    operationalContext
-      ?.operationalPosition ===
+    cleanUpper(
+      operationalContext
+        ?.operationalPosition
+    ) ===
       "COUNTER_SCAN";
 
   const [
@@ -71,13 +162,6 @@ export default function CarryOnCounterPage({
     setFlights,
   ] = useState(
     []
-  );
-
-  const [
-    selectedFlight,
-    setSelectedFlight,
-  ] = useState(
-    null
   );
 
   const [
@@ -178,10 +262,6 @@ export default function CarryOnCounterPage({
     ""
   );
 
-  /* =========================
-     FLIGHT LIST
-  ========================= */
-
   useEffect(() => {
     const unsub =
       onSnapshot(
@@ -230,7 +310,7 @@ export default function CarryOnCounterPage({
           snapshotError
         ) => {
           console.error(
-            "Carry-On Counter flights snapshot error:",
+            "Carry-On Counter flight list error:",
             snapshotError
           );
 
@@ -243,29 +323,6 @@ export default function CarryOnCounterPage({
     return () =>
       unsub();
   }, []);
-
-  useEffect(() => {
-    const next =
-      flights.find(
-        (
-          item
-        ) =>
-          item.id ===
-          selectedCarryOnFlightId
-      ) ||
-      null;
-
-    setSelectedFlight(
-      next
-    );
-  }, [
-    flights,
-    selectedCarryOnFlightId,
-  ]);
-
-  /* =========================
-     SUBSCRIPTIONS
-  ========================= */
 
   useEffect(() => {
     if (
@@ -297,7 +354,7 @@ export default function CarryOnCounterPage({
       (
         subcollection,
         setter,
-        errorLabel
+        fallback
       ) => {
         const unsub =
           onSnapshot(
@@ -311,7 +368,7 @@ export default function CarryOnCounterPage({
             (
               snap
             ) => {
-              const rows =
+              setter(
                 snap.docs.map(
                   (
                     item
@@ -321,10 +378,7 @@ export default function CarryOnCounterPage({
 
                     ...item.data(),
                   })
-                );
-
-              setter(
-                rows
+                )
               );
             },
 
@@ -332,12 +386,12 @@ export default function CarryOnCounterPage({
               snapshotError
             ) => {
               console.error(
-                errorLabel,
+                fallback,
                 snapshotError
               );
 
               setError(
-                errorLabel
+                fallback
               );
             }
           );
@@ -356,7 +410,7 @@ export default function CarryOnCounterPage({
     subscribe(
       "availableSeats",
       setSeats,
-      "Unable to load Carry-On available seats."
+      "Unable to load Carry-On seats."
     );
 
     subscribe(
@@ -379,7 +433,7 @@ export default function CarryOnCounterPage({
           try {
             unsub();
           } catch {
-            // Ignore unsubscribe cleanup errors.
+            // Cleanup only.
           }
         }
       );
@@ -388,9 +442,22 @@ export default function CarryOnCounterPage({
     selectedCarryOnFlightId,
   ]);
 
-  /* =========================
-     DERIVED DATA
-  ========================= */
+  const selectedFlight =
+    useMemo(
+      () =>
+        flights.find(
+          (
+            item
+          ) =>
+            item.id ===
+            selectedCarryOnFlightId
+        ) ||
+        null,
+      [
+        flights,
+        selectedCarryOnFlightId,
+      ]
+    );
 
   const availablePassengers =
     useMemo(
@@ -548,9 +615,407 @@ export default function CarryOnCounterPage({
     ) ||
     null;
 
-  /* =========================
-     ASSIGNMENT
-  ========================= */
+  const createAssignment =
+    async ({
+      passengerId,
+      passengerName,
+      passengerSource,
+      seatId,
+      seatNumber,
+      seatType,
+      gateCheckId,
+      gateCheckNumber,
+      gateCheckSource,
+      createPassenger = false,
+      createSeat = false,
+      createGateCheck = false,
+    }) => {
+      const flightRef =
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id
+        );
+
+      const passengerRef =
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "passengers",
+          passengerId
+        );
+
+      const seatRef =
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "availableSeats",
+          seatId
+        );
+
+      const gateCheckRef =
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "gateCheckNumbers",
+          gateCheckId
+        );
+
+      const assignmentId =
+        gateCheckId;
+
+      const assignmentRef =
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "assignments",
+          assignmentId
+        );
+
+      await runTransaction(
+        db,
+        async (
+          transaction
+        ) => {
+          const [
+            flightSnap,
+            passengerSnap,
+            seatSnap,
+            gateCheckSnap,
+            assignmentSnap,
+          ] =
+            await Promise.all([
+              transaction.get(
+                flightRef
+              ),
+
+              transaction.get(
+                passengerRef
+              ),
+
+              transaction.get(
+                seatRef
+              ),
+
+              transaction.get(
+                gateCheckRef
+              ),
+
+              transaction.get(
+                assignmentRef
+              ),
+            ]);
+
+          if (
+            assignmentSnap.exists()
+          ) {
+            throw new Error(
+              "This Gate Check number already has an assignment."
+            );
+          }
+
+          if (
+            passengerSnap.exists() &&
+            passengerSnap
+              .data()
+              ?.assigned ===
+              true
+          ) {
+            throw new Error(
+              "This passenger already has a Carry-On assignment."
+            );
+          }
+
+          if (
+            seatSnap.exists() &&
+            cleanUpper(
+              seatSnap
+                .data()
+                ?.status
+            ) !==
+              "AVAILABLE"
+          ) {
+            throw new Error(
+              "This seat is already assigned."
+            );
+          }
+
+          if (
+            gateCheckSnap.exists() &&
+            cleanUpper(
+              gateCheckSnap
+                .data()
+                ?.status
+            ) !==
+              "AVAILABLE"
+          ) {
+            throw new Error(
+              "This Gate Check number is already assigned."
+            );
+          }
+
+          if (
+            !createPassenger &&
+            !passengerSnap.exists()
+          ) {
+            throw new Error(
+              "Passenger no longer exists."
+            );
+          }
+
+          if (
+            !createSeat &&
+            !seatSnap.exists()
+          ) {
+            throw new Error(
+              "Seat no longer exists."
+            );
+          }
+
+          if (
+            !createGateCheck &&
+            !gateCheckSnap.exists()
+          ) {
+            throw new Error(
+              "Gate Check number no longer exists."
+            );
+          }
+
+          transaction.set(
+            passengerRef,
+            {
+              passengerName,
+
+              source:
+                passengerSource,
+
+              assigned:
+                true,
+
+              assignedSeat:
+                seatNumber,
+
+              gateCheckNumber,
+
+              assignmentId,
+
+              updatedAt:
+                serverTimestamp(),
+
+              ...(createPassenger
+                ? {
+                    createdAt:
+                      serverTimestamp(),
+
+                    createdBy:
+                      actor,
+                  }
+                : {}),
+            },
+            {
+              merge:
+                true,
+            }
+          );
+
+          transaction.set(
+            seatRef,
+            {
+              seatNumber,
+
+              seatType:
+                seatType ||
+                null,
+
+              blocked:
+                false,
+
+              status:
+                "ASSIGNED",
+
+              assignmentId,
+
+              passengerId,
+
+              passengerName,
+
+              gateCheckNumber,
+
+              assignedAt:
+                serverTimestamp(),
+
+              assignedBy:
+                actor,
+
+              ...(createSeat
+                ? {
+                    source:
+                      "LAST_MINUTE",
+                  }
+                : {}),
+            },
+            {
+              merge:
+                true,
+            }
+          );
+
+          transaction.set(
+            gateCheckRef,
+            {
+              gateCheckNumber,
+
+              status:
+                "ASSIGNED",
+
+              source:
+                gateCheckSource,
+
+              assignmentId,
+
+              passengerId,
+
+              passengerName,
+
+              assignedSeat:
+                seatNumber,
+
+              assignedAt:
+                serverTimestamp(),
+
+              assignedBy:
+                actor,
+
+              ...(createGateCheck
+                ? {
+                    addedAt:
+                      serverTimestamp(),
+
+                    addedBy:
+                      actor,
+                  }
+                : {}),
+            },
+            {
+              merge:
+                true,
+            }
+          );
+
+          transaction.set(
+            assignmentRef,
+            {
+              passengerId,
+
+              passengerName,
+
+              passengerSource,
+
+              assignedSeat:
+                seatNumber,
+
+              assignedSeatType:
+                seatType ||
+                null,
+
+              gateCheckNumber,
+
+              gateCheckSource,
+
+              status:
+                "COUNTER_ASSIGNED",
+
+              counterAssignedAt:
+                serverTimestamp(),
+
+              counterAssignedBy:
+                actor,
+
+              createdAt:
+                serverTimestamp(),
+
+              createdBy:
+                actor,
+
+              updatedAt:
+                serverTimestamp(),
+
+              updatedBy:
+                actor,
+            }
+          );
+
+          const previousCount =
+            Number(
+              flightSnap
+                .data()
+                ?.assignmentCount ||
+              0
+            );
+
+          transaction.set(
+            flightRef,
+            {
+              status:
+                "IN_PROGRESS",
+
+              assignmentCount:
+                previousCount +
+                1,
+
+              updatedAt:
+                serverTimestamp(),
+
+              updatedBy:
+                actor,
+            },
+            {
+              merge:
+                true,
+            }
+          );
+        }
+      );
+
+      await setDoc(
+        doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "events",
+          `counter_${assignmentId}_${Date.now()}`
+        ),
+        {
+          type:
+            "COUNTER_ASSIGNED",
+
+          status:
+            "COUNTER_ASSIGNED",
+
+          passengerId,
+
+          passengerName,
+
+          assignedSeat:
+            seatNumber,
+
+          gateCheckNumber,
+
+          message:
+            `Carry-On ${gateCheckNumber} assigned at Counter.`,
+
+          createdAt:
+            serverTimestamp(),
+
+          createdBy:
+            actor,
+        }
+      );
+    };
 
   const assignCarryOn =
     async () => {
@@ -585,370 +1050,48 @@ export default function CarryOnCounterPage({
         return;
       }
 
-      const assignmentId =
-        safeDocId(
-          selectedGateCheck
-            .gateCheckNumber
-        );
-
-      const flightRef =
-        doc(
-          db,
-          "carryOnFlights",
-          selectedFlight.id
-        );
-
-      const passengerRef =
-        doc(
-          db,
-          "carryOnFlights",
-          selectedFlight.id,
-          "passengers",
-          selectedPassenger.id
-        );
-
-      const seatRef =
-        doc(
-          db,
-          "carryOnFlights",
-          selectedFlight.id,
-          "availableSeats",
-          selectedSeat.id
-        );
-
-      const gateCheckRef =
-        doc(
-          db,
-          "carryOnFlights",
-          selectedFlight.id,
-          "gateCheckNumbers",
-          selectedGateCheck.id
-        );
-
-      const assignmentRef =
-        doc(
-          db,
-          "carryOnFlights",
-          selectedFlight.id,
-          "assignments",
-          assignmentId
-        );
-
       try {
         setAssigning(
           true
         );
 
-        await runTransaction(
-          db,
-          async (
-            transaction
-          ) => {
-            const [
-              passengerSnap,
-              seatSnap,
-              gateCheckSnap,
-              assignmentSnap,
-              flightSnap,
-            ] =
-              await Promise.all([
-                transaction.get(
-                  passengerRef
-                ),
+        await createAssignment({
+          passengerId:
+            selectedPassenger.id,
 
-                transaction.get(
-                  seatRef
-                ),
+          passengerName:
+            selectedPassenger
+              .passengerName,
 
-                transaction.get(
-                  gateCheckRef
-                ),
+          passengerSource:
+            selectedPassenger
+              .source ||
+            "LOAD_MANIFEST",
 
-                transaction.get(
-                  assignmentRef
-                ),
+          seatId:
+            selectedSeat.id,
 
-                transaction.get(
-                  flightRef
-                ),
-              ]);
+          seatNumber:
+            selectedSeat
+              .seatNumber,
 
-            if (
-              !passengerSnap.exists()
-            ) {
-              throw new Error(
-                "Passenger no longer exists."
-              );
-            }
+          seatType:
+            selectedSeat
+              .seatType ||
+            null,
 
-            if (
-              passengerSnap
-                .data()
-                ?.assigned ===
-              true
-            ) {
-              throw new Error(
-                "This passenger already has a Carry-On assignment."
-              );
-            }
+          gateCheckId:
+            selectedGateCheck.id,
 
-            if (
-              !seatSnap.exists() ||
-              cleanUpper(
-                seatSnap
-                  .data()
-                  ?.status
-              ) !==
-                "AVAILABLE"
-            ) {
-              throw new Error(
-                "This seat is no longer available."
-              );
-            }
+          gateCheckNumber:
+            selectedGateCheck
+              .gateCheckNumber,
 
-            if (
-              !gateCheckSnap.exists() ||
-              cleanUpper(
-                gateCheckSnap
-                  .data()
-                  ?.status
-              ) !==
-                "AVAILABLE"
-            ) {
-              throw new Error(
-                "This Gate Check number is no longer available."
-              );
-            }
-
-            if (
-              assignmentSnap.exists()
-            ) {
-              throw new Error(
-                "This Gate Check number already has an assignment."
-              );
-            }
-
-            const assignmentData = {
-              passengerId:
-                selectedPassenger.id,
-
-              passengerName:
-                selectedPassenger
-                  .passengerName,
-
-              passengerSource:
-                selectedPassenger
-                  .source ||
-                "LOAD_MANIFEST",
-
-              originalSeat:
-                selectedPassenger
-                  .originalSeat ||
-                null,
-
-              assignedSeat:
-                selectedSeat
-                  .seatNumber,
-
-              assignedSeatType:
-                selectedSeat
-                  .seatType ||
-                null,
-
-              gateCheckNumber:
-                selectedGateCheck
-                  .gateCheckNumber,
-
-              gateCheckSource:
-                selectedGateCheck
-                  .source ||
-                "PRELOADED",
-
-              status:
-                "COUNTER_ASSIGNED",
-
-              counterAssignedAt:
-                serverTimestamp(),
-
-              counterAssignedBy:
-                actor,
-
-              createdAt:
-                serverTimestamp(),
-
-              createdBy:
-                actor,
-
-              updatedAt:
-                serverTimestamp(),
-
-              updatedBy:
-                actor,
-            };
-
-            transaction.set(
-              assignmentRef,
-              assignmentData
-            );
-
-            transaction.set(
-              passengerRef,
-              {
-                assigned:
-                  true,
-
-                assignmentId,
-
-                assignedSeat:
-                  selectedSeat
-                    .seatNumber,
-
-                gateCheckNumber:
-                  selectedGateCheck
-                    .gateCheckNumber,
-
-                updatedAt:
-                  serverTimestamp(),
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-
-            transaction.set(
-              seatRef,
-              {
-                status:
-                  "ASSIGNED",
-
-                assignmentId,
-
-                passengerId:
-                  selectedPassenger.id,
-
-                passengerName:
-                  selectedPassenger
-                    .passengerName,
-
-                gateCheckNumber:
-                  selectedGateCheck
-                    .gateCheckNumber,
-
-                assignedAt:
-                  serverTimestamp(),
-
-                assignedBy:
-                  actor,
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-
-            transaction.set(
-              gateCheckRef,
-              {
-                status:
-                  "ASSIGNED",
-
-                assignmentId,
-
-                passengerId:
-                  selectedPassenger.id,
-
-                passengerName:
-                  selectedPassenger
-                    .passengerName,
-
-                assignedSeat:
-                  selectedSeat
-                    .seatNumber,
-
-                assignedAt:
-                  serverTimestamp(),
-
-                assignedBy:
-                  actor,
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-
-            transaction.set(
-              flightRef,
-              {
-                status:
-                  "IN_PROGRESS",
-
-                assignmentCount:
-                  (
-                    Number(
-                      flightSnap
-                        .data()
-                        ?.assignmentCount ||
-                      0
-                    ) +
-                    1
-                  ),
-
-                updatedAt:
-                  serverTimestamp(),
-
-                updatedBy:
-                  actor,
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-          }
-        );
-
-        await setDoc(
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id,
-            "events",
-            `counter_${assignmentId}_${Date.now()}`
-          ),
-          {
-            type:
-              "COUNTER_ASSIGNED",
-
-            status:
-              "COUNTER_ASSIGNED",
-
-            passengerId:
-              selectedPassenger.id,
-
-            passengerName:
-              selectedPassenger
-                .passengerName,
-
-            assignedSeat:
-              selectedSeat
-                .seatNumber,
-
-            gateCheckNumber:
-              selectedGateCheck
-                .gateCheckNumber,
-
-            message:
-              `Carry-On ${selectedGateCheck.gateCheckNumber} assigned at Counter.`,
-
-            createdAt:
-              serverTimestamp(),
-
-            createdBy:
-              actor,
-          }
-        );
+          gateCheckSource:
+            selectedGateCheck
+              .source ||
+            "PRELOADED",
+        });
 
         setMessage(
           `Assigned ${selectedGateCheck.gateCheckNumber} to ${selectedPassenger.passengerName}.`
@@ -966,15 +1109,15 @@ export default function CarryOnCounterPage({
           ""
         );
       } catch (
-        assignError
+        assignmentError
       ) {
         console.error(
           "Carry-On Counter assignment error:",
-          assignError
+          assignmentError
         );
 
         setError(
-          assignError?.message ||
+          assignmentError?.message ||
           "Unable to create Carry-On assignment."
         );
       } finally {
@@ -984,11 +1127,7 @@ export default function CarryOnCounterPage({
       }
     };
 
-  /* =========================
-     LAST MINUTE
-  ========================= */
-
-  const addLastMinute =
+  const addLastMinuteAssignment =
     async () => {
       setMessage(
         ""
@@ -1002,7 +1141,7 @@ export default function CarryOnCounterPage({
         !canOperateCounter
       ) {
         setError(
-          "You do not have permission to add last-minute Carry-On data."
+          "You do not have permission to add last-minute Carry-On assignments."
         );
 
         return;
@@ -1040,30 +1179,12 @@ export default function CarryOnCounterPage({
         );
 
       if (
-        !passengerName
-      ) {
-        setError(
-          "Passenger Name is required."
-        );
-
-        return;
-      }
-
-      if (
-        !seatNumber
-      ) {
-        setError(
-          "Assigned Seat is required."
-        );
-
-        return;
-      }
-
-      if (
+        !passengerName ||
+        !seatNumber ||
         !gateCheckNumber
       ) {
         setError(
-          "Gate Check Number is required."
+          "Passenger Name, Assigned Seat and Gate Check Number are required."
         );
 
         return;
@@ -1079,381 +1200,83 @@ export default function CarryOnCounterPage({
             `LAST_${Date.now()}`
           );
 
+        const seatId =
+          safeDocId(
+            seatNumber
+          );
+
         const gateCheckId =
           safeDocId(
             gateCheckNumber
           );
 
-        const assignmentId =
-          gateCheckId;
-
-        const passengerRef =
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id,
-            "passengers",
-            passengerId
-          );
-
-        const seatRef =
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id,
-            "availableSeats",
-            safeDocId(
+        const existingSeat =
+          seats.find(
+            (
+              item
+            ) =>
+              normalizeSeat(
+                item
+                  ?.seatNumber
+              ) ===
               seatNumber
-            )
           );
 
-        const gateCheckRef =
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id,
-            "gateCheckNumbers",
-            gateCheckId
+        const existingGateCheck =
+          gateChecks.find(
+            (
+              item
+            ) =>
+              normalizeGateCheckNumber(
+                item
+                  ?.gateCheckNumber
+              ) ===
+              gateCheckNumber
           );
 
-        const assignmentRef =
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id,
-            "assignments",
-            assignmentId
-          );
+        await createAssignment({
+          passengerId,
 
-        const flightRef =
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id
-          );
+          passengerName,
 
-        await runTransaction(
-          db,
-          async (
-            transaction
-          ) => {
-            const [
-              seatSnap,
-              gateCheckSnap,
-              assignmentSnap,
-              flightSnap,
-            ] =
-              await Promise.all([
-                transaction.get(
-                  seatRef
-                ),
+          passengerSource:
+            "LAST_MINUTE",
 
-                transaction.get(
-                  gateCheckRef
-                ),
+          seatId:
+            existingSeat?.id ||
+            seatId,
 
-                transaction.get(
-                  assignmentRef
-                ),
+          seatNumber,
 
-                transaction.get(
-                  flightRef
-                ),
-              ]);
+          seatType:
+            existingSeat
+              ?.seatType ||
+            null,
 
-            if (
-              seatSnap.exists() &&
-              cleanUpper(
-                seatSnap
-                  .data()
-                  ?.status
-              ) !==
-                "AVAILABLE"
-            ) {
-              throw new Error(
-                "This seat is already assigned."
-              );
-            }
+          gateCheckId:
+            existingGateCheck
+              ?.id ||
+            gateCheckId,
 
-            if (
-              gateCheckSnap.exists() &&
-              cleanUpper(
-                gateCheckSnap
-                  .data()
-                  ?.status
-              ) !==
-                "AVAILABLE"
-            ) {
-              throw new Error(
-                "This Gate Check number is already assigned."
-              );
-            }
+          gateCheckNumber,
 
-            if (
-              assignmentSnap.exists()
-            ) {
-              throw new Error(
-                "This Gate Check number already has an assignment."
-              );
-            }
+          gateCheckSource:
+            existingGateCheck
+              ?.source ||
+            "LAST_MINUTE",
 
-            transaction.set(
-              passengerRef,
-              {
-                passengerName,
+          createPassenger:
+            true,
 
-                source:
-                  "LAST_MINUTE",
+          createSeat:
+            !existingSeat,
 
-                assigned:
-                  true,
-
-                assignedSeat:
-                  seatNumber,
-
-                gateCheckNumber,
-
-                assignmentId,
-
-                createdAt:
-                  serverTimestamp(),
-
-                createdBy:
-                  actor,
-
-                updatedAt:
-                  serverTimestamp(),
-              }
-            );
-
-            transaction.set(
-              seatRef,
-              {
-                seatNumber,
-
-                seatType:
-                  seatSnap.exists()
-                    ? seatSnap
-                        .data()
-                        ?.seatType ||
-                      null
-                    : null,
-
-                blocked:
-                  false,
-
-                status:
-                  "ASSIGNED",
-
-                source:
-                  seatSnap.exists()
-                    ? seatSnap
-                        .data()
-                        ?.source ||
-                      "EMPTY_SEATS_REPORT"
-                    : "LAST_MINUTE",
-
-                assignmentId,
-
-                passengerId,
-
-                passengerName,
-
-                gateCheckNumber,
-
-                assignedAt:
-                  serverTimestamp(),
-
-                assignedBy:
-                  actor,
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-
-            transaction.set(
-              gateCheckRef,
-              {
-                gateCheckNumber,
-
-                status:
-                  "ASSIGNED",
-
-                source:
-                  gateCheckSnap.exists()
-                    ? gateCheckSnap
-                        .data()
-                        ?.source ||
-                      "PRELOADED"
-                    : "LAST_MINUTE",
-
-                assignmentId,
-
-                passengerId,
-
-                passengerName,
-
-                assignedSeat:
-                  seatNumber,
-
-                addedAt:
-                  gateCheckSnap.exists()
-                    ? gateCheckSnap
-                        .data()
-                        ?.addedAt ||
-                      serverTimestamp()
-                    : serverTimestamp(),
-
-                addedBy:
-                  gateCheckSnap.exists()
-                    ? gateCheckSnap
-                        .data()
-                        ?.addedBy ||
-                      actor
-                    : actor,
-
-                assignedAt:
-                  serverTimestamp(),
-
-                assignedBy:
-                  actor,
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-
-            transaction.set(
-              assignmentRef,
-              {
-                passengerId,
-
-                passengerName,
-
-                passengerSource:
-                  "LAST_MINUTE",
-
-                originalSeat:
-                  null,
-
-                assignedSeat:
-                  seatNumber,
-
-                assignedSeatType:
-                  seatSnap.exists()
-                    ? seatSnap
-                        .data()
-                        ?.seatType ||
-                      null
-                    : null,
-
-                gateCheckNumber,
-
-                gateCheckSource:
-                  gateCheckSnap.exists()
-                    ? gateCheckSnap
-                        .data()
-                        ?.source ||
-                      "PRELOADED"
-                    : "LAST_MINUTE",
-
-                status:
-                  "COUNTER_ASSIGNED",
-
-                counterAssignedAt:
-                  serverTimestamp(),
-
-                counterAssignedBy:
-                  actor,
-
-                createdAt:
-                  serverTimestamp(),
-
-                createdBy:
-                  actor,
-
-                updatedAt:
-                  serverTimestamp(),
-
-                updatedBy:
-                  actor,
-              }
-            );
-
-            transaction.set(
-              flightRef,
-              {
-                status:
-                  "IN_PROGRESS",
-
-                assignmentCount:
-                  (
-                    Number(
-                      flightSnap
-                        .data()
-                        ?.assignmentCount ||
-                      0
-                    ) +
-                    1
-                  ),
-
-                updatedAt:
-                  serverTimestamp(),
-
-                updatedBy:
-                  actor,
-              },
-              {
-                merge:
-                  true,
-              }
-            );
-          }
-        );
-
-        await setDoc(
-          doc(
-            db,
-            "carryOnFlights",
-            selectedFlight.id,
-            "events",
-            `counter_${assignmentId}_${Date.now()}`
-          ),
-          {
-            type:
-              "COUNTER_ASSIGNED",
-
-            status:
-              "COUNTER_ASSIGNED",
-
-            passengerId,
-
-            passengerName,
-
-            assignedSeat:
-              seatNumber,
-
-            gateCheckNumber,
-
-            source:
-              "LAST_MINUTE",
-
-            message:
-              `Last-minute Carry-On ${gateCheckNumber} assigned at Counter.`,
-
-            createdAt:
-              serverTimestamp(),
-
-            createdBy:
-              actor,
-          }
-        );
+          createGateCheck:
+            !existingGateCheck,
+        });
 
         setMessage(
-          `Last-minute assignment created for ${passengerName}.`
+          `Last-minute Carry-On assigned to ${passengerName}.`
         );
 
         setLastMinuteName(
@@ -1477,7 +1300,7 @@ export default function CarryOnCounterPage({
 
         setError(
           lastMinuteError?.message ||
-          "Unable to create last-minute assignment."
+          "Unable to create last-minute Carry-On assignment."
         );
       } finally {
         setAddingLastMinute(
@@ -1487,19 +1310,13 @@ export default function CarryOnCounterPage({
     };
 
   return (
-    <section
+    <div
       style={{
-        background:
-          "white",
+        display:
+          "grid",
 
-        border:
-          "1px solid #e5e7eb",
-
-        borderRadius:
+        gap:
           14,
-
-        padding:
-          16,
       }}
     >
       <div
@@ -1517,7 +1334,7 @@ export default function CarryOnCounterPage({
             "wrap",
 
           alignItems:
-            "flex-start",
+            "flex-end",
         }}
       >
         <div>
@@ -1542,85 +1359,86 @@ export default function CarryOnCounterPage({
                 "0.82rem",
             }}
           >
-            Assign Passenger + Seat + Gate Check Number.
+            Select a passenger, available seat and Gate Check number.
           </p>
         </div>
 
-        <select
-          value={
-            selectedCarryOnFlightId ||
-            ""
-          }
-
-          onChange={(
-            event
-          ) => {
-            const value =
-              event.target
-                .value;
-
-            if (
-              typeof onSelectCarryOnFlight ===
-              "function"
-            ) {
-              onSelectCarryOnFlight(
-                value ||
-                null
-              );
-            }
-          }}
-
+        <label
           style={{
+            display:
+              "grid",
+
+            gap:
+              5,
+
             minWidth:
-              230,
-
-            padding:
-              "9px 10px",
-
-            borderRadius:
-              10,
-
-            border:
-              "1px solid #cbd5e1",
-
-            background:
-              "white",
-
-            fontWeight:
-              800,
+              240,
           }}
         >
-          <option value="">
-            Select Carry-On Flight
-          </option>
+          <span
+            style={{
+              color:
+                "#475569",
 
-          {flights.map(
-            (
-              item
-            ) => (
-              <option
-                key={
-                  item.id
-                }
+              fontSize:
+                "0.75rem",
 
-                value={
-                  item.id
-                }
-              >
-                {item.flightNumber} - {item.flightDate}
-              </option>
-            )
-          )}
-        </select>
+              fontWeight:
+                800,
+            }}
+          >
+            Carry-On Flight
+          </span>
+
+          <select
+            value={
+              selectedCarryOnFlightId ||
+              ""
+            }
+
+            onChange={(
+              event
+            ) =>
+              onSelectCarryOnFlight?.(
+                event.target
+                  .value ||
+                null
+              )
+            }
+
+            style={
+              inputStyle
+            }
+          >
+            <option value="">
+              Select flight
+            </option>
+
+            {flights.map(
+              (
+                flight
+              ) => (
+                <option
+                  key={
+                    flight.id
+                  }
+
+                  value={
+                    flight.id
+                  }
+                >
+                  {flight.flightNumber} - {flight.flightDate}
+                </option>
+              )
+            )}
+          </select>
+        </label>
       </div>
 
       {selectedFlight ? (
         <>
           <div
             style={{
-              marginTop:
-                14,
-
               padding:
                 12,
 
@@ -1653,13 +1471,11 @@ export default function CarryOnCounterPage({
               }}
             >
               {selectedFlight.origin}
-              {" \u2192 "}
+              {" -> "}
               {selectedFlight.destination}
-
               {selectedFlight.gate
                 ? ` - Gate ${selectedFlight.gate}`
                 : ""}
-
               {selectedFlight.tailNumber
                 ? ` - Tail ${selectedFlight.tailNumber}`
                 : ""}
@@ -1672,13 +1488,10 @@ export default function CarryOnCounterPage({
                 "grid",
 
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(130px, 1fr))",
+                "repeat(auto-fit, minmax(125px, 1fr))",
 
               gap:
                 8,
-
-              marginTop:
-                12,
             }}
           >
             <Metric
@@ -1710,7 +1523,7 @@ export default function CarryOnCounterPage({
             />
 
             <Metric
-              label="Pax Available"
+              label="Passengers Available"
               value={
                 availablePassengers.length
               }
@@ -1731,23 +1544,20 @@ export default function CarryOnCounterPage({
             />
           </div>
 
+          {cleanUpper(
+            selectedFlight.status
+          ) ===
+            "SETUP" && (
+            <Notice
+              tone="warning"
+              text="This flight is still in SETUP. Complete and save the document setup before starting Counter assignments."
+            />
+          )}
+
           <div
-            style={{
-              marginTop:
-                14,
-
-              padding:
-                13,
-
-              border:
-                "1px solid #e2e8f0",
-
-              borderRadius:
-                12,
-
-              background:
-                "#f8fafc",
-            }}
+            style={
+              panelStyle
+            }
           >
             <h4
               style={{
@@ -1755,7 +1565,7 @@ export default function CarryOnCounterPage({
                   0,
               }}
             >
-              Assign from Load Manifest
+              Assign Carry-On
             </h4>
 
             <div
@@ -1815,7 +1625,7 @@ export default function CarryOnCounterPage({
                 }
               >
                 <option value="">
-                  Select available seat
+                  Select seat
                 </option>
 
                 {availableSeats.map(
@@ -1882,7 +1692,11 @@ export default function CarryOnCounterPage({
 
               disabled={
                 assigning ||
-                !canOperateCounter
+                !canOperateCounter ||
+                cleanUpper(
+                  selectedFlight.status
+                ) ===
+                  "SETUP"
               }
 
               style={{
@@ -1893,8 +1707,12 @@ export default function CarryOnCounterPage({
 
                 opacity:
                   assigning ||
-                  !canOperateCounter
-                    ? 0.6
+                  !canOperateCounter ||
+                  cleanUpper(
+                    selectedFlight.status
+                  ) ===
+                    "SETUP"
+                    ? 0.55
                     : 1,
               }}
             >
@@ -1906,17 +1724,10 @@ export default function CarryOnCounterPage({
 
           <div
             style={{
-              marginTop:
-                14,
-
-              padding:
-                13,
+              ...panelStyle,
 
               border:
                 "1px solid #fde68a",
-
-              borderRadius:
-                12,
 
               background:
                 "#fffbeb",
@@ -1931,7 +1742,7 @@ export default function CarryOnCounterPage({
                   "#92400e",
               }}
             >
-              Last-Minute Passenger / Gate Check
+              Last-Minute Assignment
             </h4>
 
             <p
@@ -1946,7 +1757,7 @@ export default function CarryOnCounterPage({
                   "0.8rem",
               }}
             >
-              Use this when a passenger or Gate Check Number was not included in the original setup.
+              For passengers or Gate Check numbers not included in the original setup.
             </p>
 
             <div
@@ -2002,12 +1813,16 @@ export default function CarryOnCounterPage({
               type="button"
 
               onClick={
-                addLastMinute
+                addLastMinuteAssignment
               }
 
               disabled={
                 addingLastMinute ||
-                !canOperateCounter
+                !canOperateCounter ||
+                cleanUpper(
+                  selectedFlight.status
+                ) ===
+                  "SETUP"
               }
 
               style={{
@@ -2024,8 +1839,12 @@ export default function CarryOnCounterPage({
 
                 opacity:
                   addingLastMinute ||
-                  !canOperateCounter
-                    ? 0.6
+                  !canOperateCounter ||
+                  cleanUpper(
+                    selectedFlight.status
+                  ) ===
+                    "SETUP"
+                    ? 0.55
                     : 1,
               }}
             >
@@ -2036,10 +1855,9 @@ export default function CarryOnCounterPage({
           </div>
 
           <div
-            style={{
-              marginTop:
-                14,
-            }}
+            style={
+              panelStyle
+            }
           >
             <h4
               style={{
@@ -2174,51 +1992,32 @@ export default function CarryOnCounterPage({
               </div>
             )}
           </div>
+
+          {message && (
+            <Notice
+              tone="success"
+              text={
+                message
+              }
+            />
+          )}
+
+          {error && (
+            <Notice
+              tone="error"
+              text={
+                error
+              }
+            />
+          )}
         </>
       ) : (
-        <div
-          style={{
-            marginTop:
-              14,
-
-            padding:
-              14,
-
-            borderRadius:
-              10,
-
-            border:
-              "1px dashed #cbd5e1",
-
-            background:
-              "#f8fafc",
-
-            color:
-              "#64748b",
-          }}
-        >
-          Select a Carry-On flight to begin Counter assignments.
-        </div>
-      )}
-
-      {message && (
         <Notice
-          tone="success"
-          text={
-            message
-          }
+          tone="warning"
+          text="Select a Carry-On flight to begin Counter assignments."
         />
       )}
-
-      {error && (
-        <Notice
-          tone="error"
-          text={
-            error
-          }
-        />
-      )}
-    </section>
+    </div>
   );
 }
 
@@ -2400,12 +2199,13 @@ function Notice({
     tone ===
     "success";
 
+  const warning =
+    tone ===
+    "warning";
+
   return (
     <div
       style={{
-        marginTop:
-          12,
-
         padding:
           10,
 
@@ -2415,17 +2215,23 @@ function Notice({
         background:
           success
             ? "#f0fdf4"
-            : "#fef2f2",
+            : warning
+              ? "#fffbeb"
+              : "#fef2f2",
 
         border:
           success
             ? "1px solid #bbf7d0"
-            : "1px solid #fecaca",
+            : warning
+              ? "1px solid #fde68a"
+              : "1px solid #fecaca",
 
         color:
           success
             ? "#166534"
-            : "#991b1b",
+            : warning
+              ? "#92400e"
+              : "#991b1b",
 
         fontSize:
           "0.82rem",
@@ -2441,6 +2247,20 @@ function Notice({
     </div>
   );
 }
+
+const panelStyle = {
+  padding:
+    13,
+
+  border:
+    "1px solid #e2e8f0",
+
+  borderRadius:
+    12,
+
+  background:
+    "#f8fafc",
+};
 
 const inputStyle = {
   width:
