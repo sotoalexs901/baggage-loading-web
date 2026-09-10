@@ -20,6 +20,9 @@ import { db } from "../firebase";
 
 import CarryOnCounterPage from "./CarryOnCounterPage.jsx";
 import CarryOnGatePage from "./CarryOnGatePage.jsx";
+import CarryOnRampPage from "./CarryOnRampPage.jsx";
+import CarryOnLoadPage from "./CarryOnLoadPage.jsx";
+import CarryOnReportPage from "./CarryOnReportPage.jsx";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
@@ -36,6 +39,7 @@ const TABS = [
   "COUNTER",
   "GATE",
   "RAMP",
+  "LOAD",
   "TRACKING",
   "REPORT",
 ];
@@ -3471,9 +3475,37 @@ export default function CarryOnGateCheckPage({
 
         {activeTab ===
           "RAMP" && (
-          <ComingSoon
-            title="Ramp & Aircraft"
-            description="Ramp will confirm Received at Ramp and then Loaded in Forward / Middle / Aft."
+          <CarryOnRampPage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+            onSelectCarryOnFlight={
+              setSelectedCarryOnFlightId
+            }
+          />
+        )}
+
+        {activeTab ===
+          "LOAD" && (
+          <CarryOnLoadPage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+            onSelectCarryOnFlight={
+              setSelectedCarryOnFlightId
+            }
           />
         )}
 
@@ -3487,9 +3519,13 @@ export default function CarryOnGateCheckPage({
 
         {activeTab ===
           "REPORT" && (
-          <ComingSoon
-            title="Final Report"
-            description="Operational summary and printable Carry-On Gate Check report."
+          <CarryOnReportPage
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+            onSelectCarryOnFlight={
+              setSelectedCarryOnFlightId
+            }
           />
         )}
       </section>
