@@ -36,6 +36,7 @@ import ReportsPage from "./pages/ReportsPage.jsx";
 import AdminUsersPage from "./pages/AdminUsersPage.jsx";
 import CounterScanPage from "./pages/CounterScanPage.jsx";
 import BaggageTrackingPage from "./pages/BaggageTrackingPage.jsx";
+import CarryOnGateCheckPage from "./pages/CarryOnGateCheckPage.jsx";
 
 import {
   createPresenceHeartbeat,
@@ -1031,6 +1032,22 @@ export default function App() {
         );
       }
 
+      if (
+        currentView ===
+        "carryOnGateChecks"
+      ) {
+        return (
+          <CarryOnGateCheckPage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
+
       /* =========================
          FLIGHT REQUIRED
       ========================= */
@@ -1442,6 +1459,29 @@ export default function App() {
               }
             >
               Baggage Tracking
+            </button>
+
+            <button
+              onClick={() =>
+                goToView(
+                  "carryOnGateChecks"
+                )
+              }
+              style={{
+                border:
+                  "1px solid #c4b5fd",
+
+                background:
+                  "#f5f3ff",
+
+                color:
+                  "#5b21b6",
+
+                fontWeight:
+                  800,
+              }}
+            >
+              Carry-On Gate Checks
             </button>
 
             <button
