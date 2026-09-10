@@ -108,6 +108,7 @@ export default function CarryOnGatePage({
   const [noteTypeById, setNoteTypeById] = useState({});
   const [noteTextById, setNoteTextById] = useState({});
   const [weightById, setWeightById] = useState({});
+  const [searchTerm, setSearchTerm] = useState("");
   const [dashboardFilter, setDashboardFilter] =
     useState("WAITING_GATE");
   const [message, setMessage] = useState("");
@@ -284,6 +285,20 @@ export default function CarryOnGatePage({
       [assignmentId]: "",
     }));
   };
+
+  const matchesSearch = (item) => {
+    const query = String(searchTerm || "").trim().toLowerCase();
+    if (!query) return true;
+    return [item?.assignedSeat, item?.gateCheckNumber]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  };
+
+  const filteredWaitingAtGate = waitingAtGate.filter(matchesSearch);
+  const filteredCollectedAtGate = collectedAtGate.filter(matchesSearch);
+  const filteredOffloaded = offloaded.filter(matchesSearch);
 
   const markCollectedAtGate = async (assignment) => {
     setMessage("");
@@ -748,6 +763,14 @@ export default function CarryOnGatePage({
             </div>
           </div>
 
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search by Seat or Gate Check"
+            style={inputStyle}
+          />
+
           <div
             style={{
               display: "grid",
@@ -805,6 +828,7 @@ export default function CarryOnGatePage({
           <GateDashboardDetail
             filter={dashboardFilter}
             assignments={assignments}
+            searchTerm={searchTerm}
           />
 
           {!canOperateGate && (
@@ -831,7 +855,7 @@ export default function CarryOnGatePage({
                   marginTop: 10,
                 }}
               >
-                {waitingAtGate.map((item) => (
+                {filteredWaitingAtGate.map((item) => (
                   <GateActionCard
                     key={item.id}
                     item={item}
@@ -904,7 +928,7 @@ export default function CarryOnGatePage({
                   marginTop: 9,
                 }}
               >
-                {collectedAtGate.map((item) => (
+                {filteredCollectedAtGate.map((item) => (
                   <div
                     key={item.id}
                     style={{
@@ -1085,7 +1109,7 @@ export default function CarryOnGatePage({
                   marginTop: 9,
                 }}
               >
-                {offloaded.map((item) => (
+                {filteredOffloaded.map((item) => (
                   <div
                     key={item.id}
                     style={{
@@ -1455,16 +1479,27 @@ function DashboardMetric({
 function GateDashboardDetail({
   filter,
   assignments,
+  searchTerm,
 }) {
   const rows = assignments
     .filter((item) => {
       const status = cleanUpper(item?.status);
 
-      if (filter === "WAITING_GATE") {
-        return status === "COUNTER_ASSIGNED";
-      }
+      const targetStatus =
+        filter === "WAITING_GATE"
+          ? "COUNTER_ASSIGNED"
+          : filter;
 
-      return status === filter;
+      if (status !== targetStatus) return false;
+
+      const query = String(searchTerm || "").trim().toLowerCase();
+      if (!query) return true;
+
+      return [item?.assignedSeat, item?.gateCheckNumber]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
     })
     .sort((a, b) =>
       String(a.gateCheckNumber || "").localeCompare(
