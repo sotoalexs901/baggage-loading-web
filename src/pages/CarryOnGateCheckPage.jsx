@@ -18,7 +18,7 @@ import {
 
 import { db } from "../firebase";
 
-import CarryOnCounterPage from "./carryOn/CarryOnCounterPage.jsx";
+import CarryOnCounterPage from "./CarryOnCounterPage.jsx";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
