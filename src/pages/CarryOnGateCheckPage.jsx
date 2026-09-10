@@ -967,7 +967,11 @@ export default function CarryOnGateCheckPage({
     activeTab,
     setActiveTab,
   ] = useState(
-    "SETUP"
+    () =>
+      sessionStorage.getItem(
+        "carryOnActiveTab"
+      ) ||
+      "SETUP"
   );
 
   const [
@@ -981,7 +985,11 @@ export default function CarryOnGateCheckPage({
     selectedCarryOnFlightId,
     setSelectedCarryOnFlightId,
   ] = useState(
-    null
+    () =>
+      sessionStorage.getItem(
+        "selectedCarryOnFlightId"
+      ) ||
+      null
   );
 
   const [
@@ -1255,6 +1263,36 @@ export default function CarryOnGateCheckPage({
     ) &&
     requiredNumber >=
       0;
+
+  /* =========================
+     CARRY-ON NAVIGATION STATE
+  ========================= */
+
+  useEffect(() => {
+    sessionStorage.setItem(
+      "carryOnActiveTab",
+      activeTab
+    );
+  }, [
+    activeTab,
+  ]);
+
+  useEffect(() => {
+    if (
+      selectedCarryOnFlightId
+    ) {
+      sessionStorage.setItem(
+        "selectedCarryOnFlightId",
+        selectedCarryOnFlightId
+      );
+    } else {
+      sessionStorage.removeItem(
+        "selectedCarryOnFlightId"
+      );
+    }
+  }, [
+    selectedCarryOnFlightId,
+  ]);
 
   /* =========================
      FLIGHT LIST
@@ -2605,274 +2643,14 @@ export default function CarryOnGateCheckPage({
                   smallText
                 }
               >
-                Create the Carry-On flight first. Then open it and upload the Load Manifest and Empty Seats Report for that exact flight.
+                Create the flight from the main Flights page. Then open the Carry-On flight here and upload the Load Manifest and Empty Seats Report for that exact flight.
               </p>
             </div>
 
-            <div
-              style={
-                panelStyle
-              }
-            >
-              <h4
-                style={{
-                  margin:
-                    0,
-                }}
-              >
-                Create Carry-On Flight
-              </h4>
-
-              <div
-                style={{
-                  display:
-                    "grid",
-
-                  gridTemplateColumns:
-                    "repeat(auto-fit, minmax(150px, 1fr))",
-
-                  gap:
-                    9,
-
-                  marginTop:
-                    10,
-                }}
-              >
-                <Field
-                  label="Airline"
-                  value={
-                    createForm
-                      .airline
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        airline:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Flight Number"
-                  value={
-                    createForm
-                      .flightNumber
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  inputMode="numeric"
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        flightNumber:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Flight Date"
-                  value={
-                    createForm
-                      .flightDate
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  type="date"
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        flightDate:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Origin"
-                  value={
-                    createForm
-                      .origin
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        origin:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Destination"
-                  value={
-                    createForm
-                      .destination
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        destination:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Gate"
-                  value={
-                    createForm
-                      .gate
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        gate:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Aircraft"
-                  value={
-                    createForm
-                      .aircraft
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  placeholder="Optional"
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        aircraft:
-                          value,
-                      })
-                    )
-                  }
-                />
-
-                <Field
-                  label="Tail Number"
-                  value={
-                    createForm
-                      .tailNumber
-                  }
-                  disabled={
-                    !canCreateFlight
-                  }
-                  placeholder="Example: N802WA"
-                  onChange={(
-                    value
-                  ) =>
-                    setCreateForm(
-                      (
-                        previous
-                      ) => ({
-                        ...previous,
-
-                        tailNumber:
-                          value,
-                      })
-                    )
-                  }
-                />
-              </div>
-
-              <button
-                type="button"
-
-                onClick={
-                  createCarryOnFlight
-                }
-
-                disabled={
-                  !canCreateFlight ||
-                  creatingFlight
-                }
-
-                style={{
-                  ...primaryButton,
-
-                  marginTop:
-                    10,
-
-                  opacity:
-                    !canCreateFlight ||
-                    creatingFlight
-                      ? 0.6
-                      : 1,
-                }}
-              >
-                {creatingFlight
-                  ? "Creating..."
-                  : "+ Create Carry-On Flight"}
-              </button>
-            </div>
+            <Notice
+              tone="warning"
+              text="Create flights from the main Flights page. Choose Carry-On Check Only, then return here for document setup."
+            />
 
             <div
               style={
