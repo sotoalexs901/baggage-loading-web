@@ -15,7 +15,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 
-import { db } from "../../firebase";
+import { db } from "../firebase";
 
 function normalizeRole(
   value
