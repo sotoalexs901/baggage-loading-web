@@ -17,6 +17,8 @@ import {
 
 import { db } from "../firebase";
 
+import BLCSOperationsGuides from "../components/BLCSOperationsGuides.jsx";
+
 import {
   logSystemIncident,
   logSystemSuccess,
@@ -1874,6 +1876,20 @@ export default function DashboardPage({
           </p>
         </div>
       </section>
+
+      {/* =========================
+          BLCS OPERATIONS GUIDES
+          BILINGUAL / ROLE BASED
+          ISOLATED FROM LIVE FLIGHT LOGIC
+      ========================= */}
+
+      <div
+        style={{
+          marginBottom: 16,
+        }}
+      >
+        <BLCSOperationsGuides />
+      </div>
 
       {/* =========================
           DAY SUMMARY
