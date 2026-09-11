@@ -503,6 +503,13 @@ export default function DashboardPage({
     true
   );
 
+  const [
+    showGuidesPanel,
+    setShowGuidesPanel,
+  ] = useState(
+    false
+  );
+
   const dashboardLoadTimerRef =
     useRef(null);
 
@@ -1599,6 +1606,35 @@ export default function DashboardPage({
     <div
       className="dash-root"
     >
+      <style>
+        {`
+          @keyframes blcsGuideFloat {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-4px); }
+          }
+
+          @keyframes blcsGuidePulse {
+            0%, 100% { box-shadow: 0 12px 28px rgba(124, 58, 237, 0.22); }
+            50% { box-shadow: 0 16px 36px rgba(124, 58, 237, 0.34); }
+          }
+
+          .blcs-guide-fab-emoji {
+            display: inline-block;
+            animation: blcsGuideFloat 1.6s ease-in-out infinite;
+            transform-origin: center;
+          }
+
+          .blcs-guide-fab {
+            animation: blcsGuidePulse 2.2s ease-in-out infinite;
+          }
+
+          @media (max-width: 768px) {
+            .blcs-guide-fab-text {
+              display: none;
+            }
+          }
+        `}
+      </style>
       {/* =========================
           WELCOME
       ========================= */}
@@ -1876,20 +1912,6 @@ export default function DashboardPage({
           </p>
         </div>
       </section>
-
-      {/* =========================
-          BLCS OPERATIONS GUIDES
-          BILINGUAL / ROLE BASED
-          ISOLATED FROM LIVE FLIGHT LOGIC
-      ========================= */}
-
-      <div
-        style={{
-          marginBottom: 16,
-        }}
-      >
-        <BLCSOperationsGuides />
-      </div>
 
       {/* =========================
           DAY SUMMARY
@@ -3132,6 +3154,160 @@ export default function DashboardPage({
           </div>
         )}
       </section>
+
+      {showGuidesPanel && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15, 23, 42, 0.35)",
+            zIndex: 80,
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+            padding: 12,
+          }}
+          onClick={() =>
+            setShowGuidesPanel(false)
+          }
+        >
+          <div
+            style={{
+              width: "min(980px, 100%)",
+              maxHeight: "82vh",
+              overflow: "auto",
+              borderRadius: 20,
+              border: "1px solid #d8b4fe",
+              background: "white",
+              boxShadow:
+                "0 20px 55px rgba(15,23,42,0.25)",
+              padding: 14,
+            }}
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+                marginBottom: 10,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    color: "#7c3aed",
+                    fontSize: "0.74rem",
+                    fontWeight: 900,
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  BLCS TRAINING
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 2,
+                    color: "#0f172a",
+                    fontSize: "1.05rem",
+                    fontWeight: 900,
+                  }}
+                >
+                  Supervisor & Agent Guides
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setShowGuidesPanel(false)
+                }
+                style={{
+                  border: "1px solid #cbd5e1",
+                  background: "white",
+                  color: "#334155",
+                  borderRadius: 10,
+                  padding: "8px 12px",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+            </div>
+
+            <BLCSOperationsGuides />
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="blcs-guide-fab"
+        onClick={() =>
+          setShowGuidesPanel(
+            (previous) => !previous
+          )
+        }
+        style={{
+          position: "fixed",
+          right: 16,
+          bottom: 18,
+          zIndex: 70,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "12px 16px",
+          borderRadius: 999,
+          border: "1px solid #c4b5fd",
+          background:
+            "linear-gradient(135deg, #ffffff, #f5f3ff)",
+          color: "#4c1d95",
+          fontWeight: 900,
+          cursor: "pointer",
+        }}
+      >
+        <span
+          className="blcs-guide-fab-emoji"
+          style={{
+            fontSize: "1.4rem",
+            lineHeight: 1,
+          }}
+        >
+          ð§âð«
+        </span>
+
+        <span
+          className="blcs-guide-fab-text"
+          style={{
+            display: "grid",
+            textAlign: "left",
+            lineHeight: 1.15,
+          }}
+        >
+          <span
+            style={{
+              fontSize: "0.92rem",
+            }}
+          >
+            Â¿Tienes dudas?
+          </span>
+
+          <span
+            style={{
+              fontSize: "0.74rem",
+              fontWeight: 700,
+              color: "#6d28d9",
+            }}
+          >
+            Visita aquÃ­
+          </span>
+        </span>
+      </button>
     </div>
   );
 }
