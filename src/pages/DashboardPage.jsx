@@ -1609,28 +1609,36 @@ export default function DashboardPage({
       <style>
         {`
           @keyframes blcsGuideFloat {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-4px); }
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
           }
 
           @keyframes blcsGuidePulse {
-            0%, 100% { box-shadow: 0 12px 28px rgba(124, 58, 237, 0.22); }
-            50% { box-shadow: 0 16px 36px rgba(124, 58, 237, 0.34); }
-          }
-
-          .blcs-guide-fab-emoji {
-            display: inline-block;
-            animation: blcsGuideFloat 1.6s ease-in-out infinite;
-            transform-origin: center;
+            0%, 100% { box-shadow: 0 10px 28px rgba(124,58,237,.20); }
+            50% { box-shadow: 0 14px 34px rgba(124,58,237,.34); }
           }
 
           .blcs-guide-fab {
             animation: blcsGuidePulse 2.2s ease-in-out infinite;
           }
 
-          @media (max-width: 768px) {
-            .blcs-guide-fab-text {
-              display: none;
+          .blcs-guide-fab-emoji {
+            display: inline-block;
+            animation: blcsGuideFloat 1.55s ease-in-out infinite;
+          }
+
+          @media (max-width: 640px) {
+            .blcs-guide-fab {
+              padding: 10px 13px !important;
+              gap: 7px !important;
+            }
+
+            .blcs-guide-fab-main {
+              font-size: .78rem !important;
+            }
+
+            .blcs-guide-fab-sub {
+              display: none !important;
             }
           }
         `}
@@ -3157,42 +3165,41 @@ export default function DashboardPage({
 
       {showGuidesPanel && (
         <div
+          role="presentation"
+          onClick={() => setShowGuidesPanel(false)}
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(15, 23, 42, 0.35)",
-            zIndex: 80,
+            zIndex: 90,
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "center",
             padding: 12,
+            background: "rgba(15,23,42,0.42)",
           }}
-          onClick={() =>
-            setShowGuidesPanel(false)
-          }
         >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="BLCS Operations Guides"
+            onClick={(event) => event.stopPropagation()}
             style={{
               width: "min(980px, 100%)",
-              maxHeight: "82vh",
-              overflow: "auto",
+              maxHeight: "84dvh",
+              overflowY: "auto",
               borderRadius: 20,
               border: "1px solid #d8b4fe",
               background: "white",
-              boxShadow:
-                "0 20px 55px rgba(15,23,42,0.25)",
               padding: 14,
+              boxShadow: "0 24px 70px rgba(15,23,42,0.30)",
             }}
-            onClick={(event) =>
-              event.stopPropagation()
-            }
           >
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
                 justifyContent: "space-between",
-                gap: 12,
+                alignItems: "center",
+                gap: 10,
                 flexWrap: "wrap",
                 marginBottom: 10,
               }}
@@ -3201,7 +3208,7 @@ export default function DashboardPage({
                 <div
                   style={{
                     color: "#7c3aed",
-                    fontSize: "0.74rem",
+                    fontSize: "0.7rem",
                     fontWeight: 900,
                     letterSpacing: "0.08em",
                   }}
@@ -3213,26 +3220,24 @@ export default function DashboardPage({
                   style={{
                     marginTop: 2,
                     color: "#0f172a",
-                    fontSize: "1.05rem",
+                    fontSize: "1rem",
                     fontWeight: 900,
                   }}
                 >
-                  Supervisor & Agent Guides
+                  Need help? / {"\u00bfTienes dudas?"}
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() =>
-                  setShowGuidesPanel(false)
-                }
+                onClick={() => setShowGuidesPanel(false)}
                 style={{
+                  padding: "8px 11px",
+                  borderRadius: 10,
                   border: "1px solid #cbd5e1",
                   background: "white",
                   color: "#334155",
-                  borderRadius: 10,
-                  padding: "8px 12px",
-                  fontWeight: 800,
+                  fontWeight: 900,
                   cursor: "pointer",
                 }}
               >
@@ -3248,63 +3253,67 @@ export default function DashboardPage({
       <button
         type="button"
         className="blcs-guide-fab"
-        onClick={() =>
-          setShowGuidesPanel(
-            (previous) => !previous
-          )
-        }
+        onClick={() => setShowGuidesPanel(true)}
+        aria-label="Open BLCS Operations Guides"
         style={{
           position: "fixed",
-          right: 16,
-          bottom: 18,
-          zIndex: 70,
+          left: "50%",
+          bottom: 16,
+          transform: "translateX(-50%)",
+          zIndex: 80,
           display: "inline-flex",
           alignItems: "center",
-          gap: 10,
-          padding: "12px 16px",
+          justifyContent: "center",
+          gap: 9,
+          maxWidth: "calc(100vw - 24px)",
+          padding: "11px 16px",
           borderRadius: 999,
           border: "1px solid #c4b5fd",
-          background:
-            "linear-gradient(135deg, #ffffff, #f5f3ff)",
+          background: "linear-gradient(135deg, #ffffff, #f5f3ff)",
           color: "#4c1d95",
           fontWeight: 900,
           cursor: "pointer",
+          whiteSpace: "nowrap",
         }}
       >
         <span
           className="blcs-guide-fab-emoji"
+          aria-hidden="true"
           style={{
-            fontSize: "1.4rem",
+            fontSize: "1.35rem",
             lineHeight: 1,
           }}
         >
-          ð§âð«
+          {"\uD83E\uDDD1\u200D\uD83C\uDFEB"}
         </span>
 
         <span
-          className="blcs-guide-fab-text"
           style={{
             display: "grid",
             textAlign: "left",
-            lineHeight: 1.15,
+            lineHeight: 1.08,
           }}
         >
           <span
+            className="blcs-guide-fab-main"
             style={{
-              fontSize: "0.92rem",
+              fontSize: "0.86rem",
+              fontWeight: 900,
             }}
           >
-            Â¿Tienes dudas?
+            Need help? / {"\u00bfTienes dudas?"}
           </span>
 
           <span
+            className="blcs-guide-fab-sub"
             style={{
-              fontSize: "0.74rem",
-              fontWeight: 700,
+              marginTop: 2,
+              fontSize: "0.68rem",
               color: "#6d28d9",
+              fontWeight: 700,
             }}
           >
-            Visita aquÃ­
+            Open guide / {"Visita aqu\u00ed"}
           </span>
         </span>
       </button>
