@@ -88,8 +88,11 @@ export default function CarryOnSummaryPage({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [quickRange, setQuickRange] = useState("ALL");
   const [showDeleted, setShowDeleted] = useState(false);
   const [expandedFlightId, setExpandedFlightId] = useState("");
+  const [assignmentsExpanded, setAssignmentsExpanded] = useState(false);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [processingId, setProcessingId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -125,7 +128,7 @@ export default function CarryOnSummaryPage({
   }, []);
 
   useEffect(() => {
-    const targetId = expandedFlightId || selectedCarryOnFlightId;
+    const targetId = expandedFlightId;
 
     if (!targetId) {
       setAssignments([]);
@@ -177,7 +180,53 @@ export default function CarryOnSummaryPage({
       unsubAssignments();
       unsubEvents();
     };
-  }, [expandedFlightId, selectedCarryOnFlightId]);
+  }, [expandedFlightId]);
+
+
+  const applyQuickRange = (range) => {
+    setQuickRange(range);
+
+    if (range === "ALL") {
+      setDateFrom("");
+      setDateTo("");
+      return;
+    }
+
+    const today = new Date();
+    const toDate = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate()
+    );
+
+    const fromDate = new Date(toDate);
+
+    if (range === "TODAY") {
+      // Same day.
+    } else if (range === "7D") {
+      fromDate.setDate(fromDate.getDate() - 6);
+    } else if (range === "30D") {
+      fromDate.setDate(fromDate.getDate() - 29);
+    }
+
+    const formatDate = (date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
+    setDateFrom(formatDate(fromDate));
+    setDateTo(formatDate(toDate));
+  };
+
+  const clearFilters = () => {
+    setSearch("");
+    setDateFrom("");
+    setDateTo("");
+    setStatusFilter("ALL");
+    setQuickRange("ALL");
+  };
 
   const filteredFlights = useMemo(() => {
     const query = String(search || "").trim().toLowerCase();
@@ -221,10 +270,30 @@ export default function CarryOnSummaryPage({
     });
   }, [flights, search, dateFrom, dateTo, statusFilter, showDeleted]);
 
+  const filteredTotals = useMemo(() => {
+    return filteredFlights.reduce(
+      (totals, flight) => {
+        totals.flights += 1;
+        totals.gateChecks += Number(flight?.gateCheckNumberCount || 0);
+
+        if (cleanUpper(flight?.status) === "CLOSED") {
+          totals.closed += 1;
+        }
+
+        return totals;
+      },
+      {
+        flights: 0,
+        gateChecks: 0,
+        closed: 0,
+      }
+    );
+  }, [filteredFlights]);
+
   const detailFlight = useMemo(() => {
-    const targetId = expandedFlightId || selectedCarryOnFlightId;
-    return flights.find((item) => item.id === targetId) || null;
-  }, [flights, expandedFlightId, selectedCarryOnFlightId]);
+    if (!expandedFlightId) return null;
+    return flights.find((item) => item.id === expandedFlightId) || null;
+  }, [flights, expandedFlightId]);
 
   const counts = useMemo(() => {
     const result = {
@@ -370,6 +439,44 @@ export default function CarryOnSummaryPage({
         </button>
       </div>
 
+      <div
+        style={{
+          display: "flex",
+          gap: 7,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {[
+          ["ALL", "All"],
+          ["TODAY", "Today"],
+          ["7D", "Last 7 Days"],
+          ["30D", "Last 30 Days"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => applyQuickRange(value)}
+            style={{
+              ...quickFilterButton,
+              ...(quickRange === value
+                ? quickFilterButtonActive
+                : {}),
+            }}
+          >
+            {label}
+          </button>
+        ))}
+
+        <button
+          type="button"
+          onClick={clearFilters}
+          style={secondaryButton}
+        >
+          Clear Filters
+        </button>
+      </div>
+
       <div className="carry-on-summary-filters" style={filterPanelStyle}>
         <label style={fieldWrapStyle}>
           <span style={fieldLabelStyle}>Search</span>
@@ -387,7 +494,10 @@ export default function CarryOnSummaryPage({
           <input
             type="date"
             value={dateFrom}
-            onChange={(event) => setDateFrom(event.target.value)}
+            onChange={(event) => {
+              setDateFrom(event.target.value);
+              setQuickRange("CUSTOM");
+            }}
             style={inputStyle}
           />
         </label>
@@ -397,7 +507,10 @@ export default function CarryOnSummaryPage({
           <input
             type="date"
             value={dateTo}
-            onChange={(event) => setDateTo(event.target.value)}
+            onChange={(event) => {
+              setDateTo(event.target.value);
+              setQuickRange("CUSTOM");
+            }}
             style={inputStyle}
           />
         </label>
@@ -416,6 +529,25 @@ export default function CarryOnSummaryPage({
             <option value="CLOSED">Closed</option>
           </select>
         </label>
+      </div>
+
+      <div style={summaryMetricsGridStyle}>
+        <MiniMetric
+          label="Flights"
+          value={filteredTotals.flights}
+        />
+        <MiniMetric
+          label="Gate Checks"
+          value={filteredTotals.gateChecks}
+        />
+        <MiniMetric
+          label="Closed Flights"
+          value={filteredTotals.closed}
+        />
+        <MiniMetric
+          label={showDeleted ? "Deleted View" : "Active View"}
+          value={filteredFlights.length}
+        />
       </div>
 
       <div
@@ -460,8 +592,11 @@ export default function CarryOnSummaryPage({
                 <button
                   type="button"
                   onClick={() => {
+                    const nextId = expanded ? "" : flight.id;
                     onSelectCarryOnFlight?.(flight.id);
-                    setExpandedFlightId(expanded ? "" : flight.id);
+                    setExpandedFlightId(nextId);
+                    setAssignmentsExpanded(false);
+                    setTimelineExpanded(false);
                   }}
                   style={{
                     width: "100%",
@@ -505,7 +640,7 @@ export default function CarryOnSummaryPage({
                       </div>
 
                       <div style={{ marginTop: 3, color: "#64748b", fontSize: "0.74rem" }}>
-                        Tail: {flight.tailNumber || "-"} | Required: {Number(flight.requiredCarryOns || 0)} | Passengers: {Number(flight.passengerCount || 0)}
+                        Tail: {flight.tailNumber || "-"} | Required: {Number(flight.requiredCarryOns || 0)} | Gate Checks: {Number(flight.gateCheckNumberCount || 0)}
                       </div>
                     </div>
 
@@ -582,64 +717,132 @@ export default function CarryOnSummaryPage({
                       )}
                     </div>
 
-                    <div style={detailPanelStyle}>
-                      <strong>Gate Check Assignments</strong>
+                    <div
+                      style={{
+                        ...detailPanelStyle,
+                        padding: 0,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAssignmentsExpanded(
+                            (previous) => !previous
+                          )
+                        }
+                        style={collapsibleHeaderButton}
+                      >
+                        <div>
+                          <strong>Gate Check Assignments</strong>
+                          <div style={rowSubStyle}>
+                            {assignments.length} item(s) - Tap to {assignmentsExpanded ? "hide" : "view"}
+                          </div>
+                        </div>
 
-                      {assignments.length === 0 ? (
-                        <div style={emptyInlineStyle}>No assignments recorded.</div>
-                      ) : (
-                        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                          {assignments.map((item) => (
-                            <div key={item.id} style={assignmentRowStyle}>
-                              <div>
-                                <strong>{item.gateCheckNumber || "-"}</strong>
-                                <div style={rowSubStyle}>
-                                  {item.passengerName || "-"} | Seat {item.assignedSeat || "-"}
-                                </div>
-                                <div style={rowSubStyle}>
-                                  {item.carryOnDescription || "Not classified"}
-                                  {item.carryOnCode ? ` | ${item.carryOnCode}` : ""}
-                                </div>
-                              </div>
+                        <span style={countBadgeStyle}>
+                          {assignments.length}
+                        </span>
+                      </button>
 
-                              <div style={{ textAlign: "right" }}>
-                                <strong style={{ color: "#6d28d9", fontSize: "0.76rem" }}>
-                                  {statusLabel(item.status)}
-                                </strong>
-                                <div style={rowSubStyle}>
-                                  Compartment: {item.compartment || "-"}
+                      {assignmentsExpanded && (
+                        <div
+                          style={{
+                            padding: "0 10px 10px",
+                            borderTop: "1px solid #f1f5f9",
+                          }}
+                        >
+                          {assignments.length === 0 ? (
+                            <div style={emptyInlineStyle}>No assignments recorded.</div>
+                          ) : (
+                            <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                              {assignments.map((item) => (
+                                <div key={item.id} style={assignmentRowStyle}>
+                                  <div>
+                                    <strong>{item.gateCheckNumber || "-"}</strong>
+                                    <div style={rowSubStyle}>
+                                      {item.passengerName || "-"} | Seat {item.assignedSeat || "-"}
+                                    </div>
+                                    <div style={rowSubStyle}>
+                                      {item.carryOnDescription || "Not classified"}
+                                      {item.carryOnCode ? ` | ${item.carryOnCode}` : ""}
+                                    </div>
+                                  </div>
+
+                                  <div style={{ textAlign: "right" }}>
+                                    <strong style={{ color: "#6d28d9", fontSize: "0.76rem" }}>
+                                      {statusLabel(item.status)}
+                                    </strong>
+                                    <div style={rowSubStyle}>
+                                      Compartment: {item.compartment || "-"}
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
                       )}
                     </div>
 
-                    <div style={detailPanelStyle}>
-                      <strong>Operational Timeline</strong>
+                    <div
+                      style={{
+                        ...detailPanelStyle,
+                        padding: 0,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTimelineExpanded(
+                            (previous) => !previous
+                          )
+                        }
+                        style={collapsibleHeaderButton}
+                      >
+                        <div>
+                          <strong>Operational Timeline</strong>
+                          <div style={rowSubStyle}>
+                            {events.length} event(s) - Tap to {timelineExpanded ? "hide" : "view"}
+                          </div>
+                        </div>
 
-                      {events.length === 0 ? (
-                        <div style={emptyInlineStyle}>No events recorded.</div>
-                      ) : (
-                        <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                          {events.map((event) => (
-                            <div key={event.id} style={eventRowStyle}>
-                              <div>
-                                <strong style={{ fontSize: "0.78rem" }}>
-                                  {statusLabel(event.type || event.status)}
-                                </strong>
-                                <div style={rowSubStyle}>
-                                  {event.message || event.gateCheckNumber || "Operational event"}
+                        <span style={countBadgeStyle}>
+                          {events.length}
+                        </span>
+                      </button>
+
+                      {timelineExpanded && (
+                        <div
+                          style={{
+                            padding: "0 10px 10px",
+                            borderTop: "1px solid #f1f5f9",
+                          }}
+                        >
+                          {events.length === 0 ? (
+                            <div style={emptyInlineStyle}>No events recorded.</div>
+                          ) : (
+                            <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                              {events.map((event) => (
+                                <div key={event.id} style={eventRowStyle}>
+                                  <div>
+                                    <strong style={{ fontSize: "0.78rem" }}>
+                                      {statusLabel(event.type || event.status)}
+                                    </strong>
+                                    <div style={rowSubStyle}>
+                                      {event.message || event.gateCheckNumber || "Operational event"}
+                                    </div>
+                                  </div>
+
+                                  <div style={{ textAlign: "right", color: "#64748b", fontSize: "0.7rem" }}>
+                                    <div>{formatTimestamp(event.createdAt)}</div>
+                                    <div>{actorName(event.createdBy)}</div>
+                                  </div>
                                 </div>
-                              </div>
-
-                              <div style={{ textAlign: "right", color: "#64748b", fontSize: "0.7rem" }}>
-                                <div>{formatTimestamp(event.createdAt)}</div>
-                                <div>{actorName(event.createdBy)}</div>
-                              </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
                       )}
                     </div>
@@ -703,6 +906,58 @@ const smallText = {
   fontSize: "0.8rem",
   lineHeight: 1.45,
   maxWidth: 760,
+};
+
+const quickFilterButton = {
+  padding: "8px 11px",
+  borderRadius: 999,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  color: "#475569",
+  fontWeight: 900,
+  cursor: "pointer",
+  fontSize: "0.76rem",
+};
+
+const quickFilterButtonActive = {
+  border: "1px solid #7c3aed",
+  background: "#7c3aed",
+  color: "white",
+};
+
+const summaryMetricsGridStyle = {
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+  gap: 7,
+};
+
+const collapsibleHeaderButton = {
+  width: "100%",
+  border: "none",
+  background: "white",
+  padding: 10,
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 10,
+  textAlign: "left",
+  cursor: "pointer",
+  font: "inherit",
+};
+
+const countBadgeStyle = {
+  minWidth: 32,
+  height: 32,
+  padding: "0 8px",
+  borderRadius: 999,
+  background: "#f5f3ff",
+  border: "1px solid #ddd6fe",
+  color: "#6d28d9",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: "0.74rem",
+  fontWeight: 900,
 };
 
 const filterPanelStyle = {
