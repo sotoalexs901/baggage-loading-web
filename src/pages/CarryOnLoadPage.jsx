@@ -94,6 +94,9 @@ export default function CarryOnLoadPage({
   const [compartmentByAssignment, setCompartmentByAssignment] =
     useState({});
   const [searchTerm, setSearchTerm] = useState("");
+  const [activeCompartment, setActiveCompartment] = useState("");
+  const [selectedReadyIds, setSelectedReadyIds] = useState([]);
+  const [readyExpanded, setReadyExpanded] = useState(true);
   const [loadedExpanded, setLoadedExpanded] = useState(false);
   const [offloadedExpanded, setOffloadedExpanded] = useState(false);
   const [expandedLoadedId, setExpandedLoadedId] = useState("");
@@ -965,6 +968,153 @@ export default function CarryOnLoadPage({
     }
   };
 
+
+  const toggleReadySelection = (assignmentId) => {
+    setSelectedReadyIds((current) =>
+      current.includes(assignmentId)
+        ? current.filter((id) => id !== assignmentId)
+        : [...current, assignmentId]
+    );
+  };
+
+  const clearReadySelection = () => {
+    setSelectedReadyIds([]);
+  };
+
+  const loadSelectedIntoCompartment = async () => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateLoad) {
+      setError("You do not have permission to confirm Aircraft loading.");
+      return;
+    }
+
+    const compartment = cleanUpper(activeCompartment);
+
+    if (!["FORWARD", "MIDDLE", "AFT"].includes(compartment)) {
+      setError("Select FORWARD, MIDDLE or AFT first.");
+      return;
+    }
+
+    const selectedItems = readyToLoad.filter((item) =>
+      selectedReadyIds.includes(item.id)
+    );
+
+    if (!selectedItems.length) {
+      setError("Select at least one Gate Check number to load.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `Load ${selectedItems.length} Carry-On item(s) into ${compartment}?\n\n` +
+        selectedItems
+          .map((item) => item.gateCheckNumber || item.id)
+          .join(", ")
+    );
+
+    if (!ok) return;
+
+    try {
+      setLoadingId("BATCH");
+
+      for (const assignment of selectedItems) {
+        const assignmentRef = doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "assignments",
+          assignment.id
+        );
+
+        const gateCheckRef = doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "gateCheckNumbers",
+          assignment.id
+        );
+
+        await runTransaction(db, async (transaction) => {
+          const assignmentSnap = await transaction.get(assignmentRef);
+
+          if (!assignmentSnap.exists()) {
+            throw new Error("Carry-On assignment no longer exists.");
+          }
+
+          const currentStatus = cleanUpper(assignmentSnap.data()?.status);
+
+          if (currentStatus !== "RAMP_RECEIVED") {
+            throw new Error(
+              `Carry-On ${assignment.gateCheckNumber || assignment.id} cannot be loaded from status ${currentStatus || "UNKNOWN"}.`
+            );
+          }
+
+          transaction.set(
+            assignmentRef,
+            {
+              status: "AIRCRAFT_LOADED",
+              compartment,
+              aircraftLoadedAt: serverTimestamp(),
+              aircraftLoadedBy: actor,
+              updatedAt: serverTimestamp(),
+              updatedBy: actor,
+            },
+            { merge: true }
+          );
+
+          transaction.set(
+            gateCheckRef,
+            {
+              status: "AIRCRAFT_LOADED",
+              compartment,
+              aircraftLoadedAt: serverTimestamp(),
+              aircraftLoadedBy: actor,
+            },
+            { merge: true }
+          );
+        });
+
+        try {
+          await setDoc(
+            doc(
+              db,
+              "carryOnFlights",
+              selectedFlight.id,
+              "events",
+              `aircraft_loaded_${assignment.id}_${Date.now()}`
+            ),
+            {
+              type: "AIRCRAFT_LOADED",
+              status: "AIRCRAFT_LOADED",
+              assignmentId: assignment.id,
+              passengerId: assignment.passengerId || null,
+              passengerName: assignment.passengerName || null,
+              assignedSeat: assignment.assignedSeat || null,
+              gateCheckNumber: assignment.gateCheckNumber || null,
+              compartment,
+              message: `Carry-On ${assignment.gateCheckNumber || assignment.id} loaded in ${compartment}.`,
+              createdAt: serverTimestamp(),
+              createdBy: actor,
+            }
+          );
+        } catch (eventError) {
+          console.error("Carry-On Load event write error:", eventError);
+        }
+      }
+
+      setMessage(
+        `${selectedItems.length} Carry-On item(s) loaded in ${compartment}.`
+      );
+      clearReadySelection();
+    } catch (loadError) {
+      console.error("Carry-On batch load error:", loadError);
+      setError(loadError?.message || "Unable to load selected Carry-Ons.");
+    } finally {
+      setLoadingId("");
+    }
+  };
+
   return (
     <div
       style={{
@@ -993,7 +1143,7 @@ export default function CarryOnLoadPage({
               fontSize: "0.82rem",
             }}
           >
-            Load Carry-On items, edit compartment placement, Unload back to Ramp, or Offload when required.
+            Choose the aircraft compartment first, then select the Gate Check numbers that will be loaded there.
           </p>
         </div>
 
@@ -1157,172 +1307,287 @@ export default function CarryOnLoadPage({
             />
           )}
 
-          <div style={panelStyle}>
-            <h4 style={{ margin: 0 }}>
-              Ready to Load
-            </h4>
-
-            <p
+          <div
+            style={{
+              ...panelStyle,
+              padding: 0,
+              overflow: "hidden",
+              background: "white",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setReadyExpanded((current) => !current)}
               style={{
-                margin: "5px 0 0",
-                color: "#64748b",
-                fontSize: "0.74rem",
+                width: "100%",
+                border: "none",
+                background: "white",
+                padding: 14,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 10,
+                cursor: "pointer",
+                textAlign: "left",
+                font: "inherit",
               }}
             >
-              Select the Gate Check number and aircraft compartment.
-            </p>
+              <div>
+                <strong>Ready to Load</strong>
+                <div
+                  style={{
+                    marginTop: 3,
+                    color: "#64748b",
+                    fontSize: "0.74rem",
+                  }}
+                >
+                  {readyToLoad.length} ready - Tap to {readyExpanded ? "hide" : "view"}
+                </div>
+              </div>
 
-            {filteredReadyToLoad.length === 0 ? (
-              <p
+              <span
                 style={{
-                  color: "#64748b",
-                  fontSize: "0.82rem",
+                  minWidth: 34,
+                  height: 34,
+                  padding: "0 8px",
+                  borderRadius: 999,
+                  background: "#dbeafe",
+                  color: "#1d4ed8",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 900,
+                  fontSize: "0.8rem",
                 }}
               >
-                No Gate Check numbers are currently ready to load.
-              </p>
-            ) : (
+                {readyToLoad.length}
+              </span>
+            </button>
+
+            {readyExpanded && (
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns:
-                    "repeat(auto-fit, minmax(145px, 1fr))",
-                  gap: 8,
-                  marginTop: 10,
+                  padding: "0 12px 12px",
+                  borderTop: "1px solid #f1f5f9",
                 }}
               >
-                {filteredReadyToLoad.map((item) => (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: 11,
+                    borderRadius: 12,
+                    border: "1px solid #c4b5fd",
+                    background: "#faf5ff",
+                  }}
+                >
                   <div
-                    key={item.id}
                     style={{
-                      padding: 11,
-                      borderRadius: 12,
-                      border: "1px solid #bfdbfe",
-                      background: "white",
-                      textAlign: "center",
+                      color: "#5b21b6",
+                      fontSize: "0.7rem",
+                      fontWeight: 900,
+                      marginBottom: 7,
                     }}
                   >
+                    1. SELECT COMPARTMENT
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                      gap: 8,
+                    }}
+                  >
+                    {["FORWARD", "MIDDLE", "AFT"].map((compartment) => {
+                      const active = activeCompartment === compartment;
+
+                      return (
+                        <button
+                          key={compartment}
+                          type="button"
+                          onClick={() => {
+                            setActiveCompartment(compartment);
+                            clearReadySelection();
+                          }}
+                          style={{
+                            padding: "12px 8px",
+                            borderRadius: 10,
+                            border: active
+                              ? "2px solid #7c3aed"
+                              : "1px solid #d1d5db",
+                            background: active ? "#ede9fe" : "white",
+                            color: active ? "#5b21b6" : "#334155",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {compartment}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 10,
+                      color: "#64748b",
+                      fontSize: "0.74rem",
+                    }}
+                  >
+                    Select one compartment first, then choose all Gate Checks that will be loaded there. Change the compartment and continue with the next group.
+                  </div>
+                </div>
+
+                {activeCompartment ? (
+                  <>
                     <div
                       style={{
-                        color: "#1d4ed8",
-                        fontSize: "1rem",
-                        fontWeight: 900,
-                        overflowWrap: "anywhere",
+                        marginTop: 12,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: 10,
+                        flexWrap: "wrap",
                       }}
                     >
-                      {item.gateCheckNumber || "-"}
+                      <div>
+                        <div
+                          style={{
+                            color: "#64748b",
+                            fontSize: "0.68rem",
+                            fontWeight: 800,
+                          }}
+                        >
+                          2. SELECT GATE CHECKS
+                        </div>
+                        <strong style={{ color: "#0f172a" }}>
+                          Loading into {activeCompartment}
+                        </strong>
+                      </div>
+
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 7,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSelectedReadyIds(
+                              filteredReadyToLoad.map((item) => item.id)
+                            )
+                          }
+                          style={secondaryButton}
+                        >
+                          Select All
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={clearReadySelection}
+                          style={secondaryButton}
+                        >
+                          Clear
+                        </button>
+                      </div>
                     </div>
 
-                    <select
-                      value={
-                        compartmentByAssignment[
-                          item.id
-                        ] || ""
-                      }
-                      onChange={(event) =>
-                        setCompartmentByAssignment(
-                          (previous) => ({
-                            ...previous,
-                            [item.id]:
-                              event.target.value,
-                          })
-                        )
-                      }
-                      style={{
-                        ...inputStyle,
-                        marginTop: 9,
-                      }}
-                    >
-                      <option value="">
-                        Compartment
-                      </option>
-                      <option value="FORWARD">
-                        FORWARD
-                      </option>
-                      <option value="MIDDLE">
-                        MIDDLE
-                      </option>
-                      <option value="AFT">
-                        AFT
-                      </option>
-                    </select>
+                    {filteredReadyToLoad.length === 0 ? (
+                      <p style={{ color: "#64748b", fontSize: "0.82rem" }}>
+                        No Gate Check numbers are currently ready to load.
+                      </p>
+                    ) : (
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            "repeat(auto-fit, minmax(120px, 1fr))",
+                          gap: 8,
+                          marginTop: 10,
+                        }}
+                      >
+                        {filteredReadyToLoad.map((item) => {
+                          const selected = selectedReadyIds.includes(item.id);
+
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => toggleReadySelection(item.id)}
+                              style={{
+                                padding: 12,
+                                borderRadius: 12,
+                                border: selected
+                                  ? "2px solid #16a34a"
+                                  : "1px solid #bfdbfe",
+                                background: selected ? "#f0fdf4" : "white",
+                                color: selected ? "#166534" : "#1d4ed8",
+                                fontWeight: 900,
+                                cursor: "pointer",
+                                textAlign: "center",
+                              }}
+                            >
+                              <div style={{ fontSize: "1rem" }}>
+                                {item.gateCheckNumber || "-"}
+                              </div>
+                              <div
+                                style={{
+                                  marginTop: 4,
+                                  fontSize: "0.66rem",
+                                  color: selected ? "#166534" : "#64748b",
+                                }}
+                              >
+                                {selected ? "SELECTED" : "Tap to select"}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     <button
                       type="button"
-                      onClick={() =>
-                        markLoaded(item)
-                      }
+                      onClick={loadSelectedIntoCompartment}
                       disabled={
-                        loadingId === item.id ||
-                        offloadingId === item.id ||
+                        loadingId === "BATCH" ||
+                        selectedReadyIds.length === 0 ||
                         !canOperateLoad
                       }
                       style={{
                         ...primaryButton,
                         width: "100%",
-                        marginTop: 8,
+                        marginTop: 12,
                         opacity:
-                          loadingId === item.id ||
-                          offloadingId === item.id ||
+                          loadingId === "BATCH" ||
+                          selectedReadyIds.length === 0 ||
                           !canOperateLoad
                             ? 0.55
                             : 1,
                       }}
                     >
-                      {loadingId === item.id
-                        ? "Loading..."
-                        : "Load"}
+                      {loadingId === "BATCH"
+                        ? "Loading Selected..."
+                        : `Load ${selectedReadyIds.length} to ${activeCompartment}`}
                     </button>
-
-                    <input
-                      type="text"
-                      value={
-                        offloadReasonById[item.id] || ""
-                      }
-                      placeholder="Offload reason"
-                      onChange={(event) =>
-                        setOffloadReasonById(
-                          (previous) => ({
-                            ...previous,
-                            [item.id]:
-                              event.target.value,
-                          })
-                        )
-                      }
-                      style={{
-                        ...inputStyle,
-                        marginTop: 8,
-                      }}
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        offloadCarryOn(item)
-                      }
-                      disabled={
-                        offloadingId === item.id ||
-                        loadingId === item.id ||
-                        !canOperateLoad
-                      }
-                      style={{
-                        ...dangerButton,
-                        width: "100%",
-                        marginTop: 7,
-                        opacity:
-                          offloadingId === item.id ||
-                          loadingId === item.id ||
-                          !canOperateLoad
-                            ? 0.55
-                            : 1,
-                      }}
-                    >
-                      {offloadingId === item.id
-                        ? "Offloading..."
-                        : "Offload"}
-                    </button>
+                  </>
+                ) : (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      padding: 12,
+                      borderRadius: 10,
+                      background: "#eff6ff",
+                      border: "1px solid #bfdbfe",
+                      color: "#1e3a8a",
+                      fontSize: "0.78rem",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Choose FORWARD, MIDDLE or AFT to begin loading.
                   </div>
-                ))}
+                )}
               </div>
             )}
           </div>
