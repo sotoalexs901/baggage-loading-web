@@ -96,6 +96,8 @@ function buildCarryOnReportHtml({
       <td>${escapeHtml(item.passengerName || "-")}</td>
       <td>${escapeHtml(item.assignedSeat || "-")}</td>
       <td><strong>${escapeHtml(item.gateCheckNumber || "-")}</strong></td>
+      <td>${escapeHtml(item.carryOnDescription || "-")}</td>
+      <td>${escapeHtml(item.carryOnCode || "-")}</td>
       <td>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</td>
       <td>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</td>
       <td>${escapeHtml(item.status || "-")}</td>
@@ -174,11 +176,11 @@ function buildCarryOnReportHtml({
 
       <table>
         <thead><tr>
-          <th>Passenger</th><th>Seat</th><th>Gate Check</th><th>Counter Wt</th><th>Gate Wt</th><th>Status</th>
+          <th>Passenger</th><th>Seat</th><th>Gate Check</th><th>Gate Check Description</th><th>Code</th><th>Counter Wt</th><th>Gate Wt</th><th>Status</th>
           <th>Counter Time</th><th>Counter By</th><th>Gate Time</th><th>Gate By</th><th>Ramp Time</th><th>Ramp By</th>
           <th>Loaded Time</th><th>Loaded By</th><th>Compartment</th><th>Gate Notes</th><th>Offload Reason</th><th>Offloaded At</th><th>Offloaded By</th>
         </tr></thead>
-        <tbody>${bodyRows || '<tr><td colspan="19">No Carry-On assignments.</td></tr>'}</tbody>
+        <tbody>${bodyRows || '<tr><td colspan="21">No Carry-On assignments.</td></tr>'}</tbody>
       </table>
 
       <div class="footer">BLCS &middot; Baggage Loading Control System</div>
@@ -688,7 +690,7 @@ export default function CarryOnReportPage({
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                minWidth: 2050,
+                minWidth: 2280,
                 fontSize: "0.76rem",
               }}
             >
@@ -701,6 +703,8 @@ export default function CarryOnReportPage({
                   <Th>Passenger</Th>
                   <Th>Seat</Th>
                   <Th>Gate Check</Th>
+                  <Th>Gate Check Description</Th>
+                  <Th>Code</Th>
                   <Th>Source</Th>
                   <Th>Counter Weight</Th>
                   <Th>Gate Weight</Th>
@@ -725,7 +729,7 @@ export default function CarryOnReportPage({
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan="20"
+                      colSpan="22"
                       style={{
                         padding: 14,
                         textAlign: "center",
@@ -748,6 +752,14 @@ export default function CarryOnReportPage({
 
                       <Td strong>
                         {item.gateCheckNumber || "-"}
+                      </Td>
+
+                      <Td>
+                        {item.carryOnDescription || "-"}
+                      </Td>
+
+                      <Td>
+                        {item.carryOnCode || "-"}
                       </Td>
 
                       <Td>
