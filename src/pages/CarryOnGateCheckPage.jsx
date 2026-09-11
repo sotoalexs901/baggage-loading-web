@@ -954,6 +954,12 @@ export default function CarryOnGateCheckPage({
     role ===
       "supervisor";
 
+  const operationalPosition =
+    cleanUpper(
+      operationalContext
+        ?.operationalPosition
+    );
+
   const canUploadDocuments =
     canCreateFlight;
 
@@ -963,6 +969,17 @@ export default function CarryOnGateCheckPage({
     role ===
       "supervisor";
 
+  /*
+   * Gate Check numbers are intentionally separated from
+   * the office document setup.
+   *
+   * Office:
+   *   Load Manifest + Empty Seats Report + Required target
+   *
+   * Counter:
+   *   Gate Check numbers can be added after document setup
+   *   has been saved.
+   */
   const canManageGateChecks =
     role ===
       "station_manager" ||
@@ -971,7 +988,9 @@ export default function CarryOnGateCheckPage({
     role ===
       "duty_managers" ||
     role ===
-      "supervisor";
+      "supervisor" ||
+    operationalPosition ===
+      "COUNTER_SCAN";
 
   const [
     activeTab,
@@ -1308,6 +1327,29 @@ export default function CarryOnGateCheckPage({
     ) &&
     requiredNumber >=
       0;
+
+  const documentSetupSaved =
+    Boolean(
+      selectedFlight &&
+      Number(
+        selectedFlight
+          ?.passengerCount ||
+        0
+      ) >
+        0 &&
+      Number(
+        selectedFlight
+          ?.availableSeatCount ||
+        0
+      ) >
+        0 &&
+      selectedFlight
+        ?.documents
+        ?.loadManifest &&
+      selectedFlight
+        ?.documents
+        ?.emptySeatsReport
+    );
 
   /* =========================
      CARRY-ON NAVIGATION STATE
@@ -2177,6 +2219,13 @@ export default function CarryOnGateCheckPage({
       return;
     }
 
+    if (!documentSetupSaved) {
+      setError(
+        "Save the Load Manifest and Empty Seats setup first. Gate Check numbers can be added after passenger and seat data are saved."
+      );
+      return;
+    }
+
     const seen = new Set();
     const requested = String(gateCheckManagerText || "")
       .split(/[\s,;\n]+/)
@@ -2249,6 +2298,13 @@ export default function CarryOnGateCheckPage({
 
     if (!selectedFlight || !canManageGateChecks || !item) return;
 
+    if (!documentSetupSaved) {
+      setError(
+        "Gate Check numbers cannot be changed until the document setup has been saved."
+      );
+      return;
+    }
+
     if (cleanUpper(item.status) !== "AVAILABLE") {
       setError("Only AVAILABLE Gate Check numbers can be removed from Setup.");
       return;
@@ -2295,6 +2351,13 @@ export default function CarryOnGateCheckPage({
     setMessage("");
 
     if (!selectedFlight || !canManageGateChecks || !item) return;
+
+    if (!documentSetupSaved) {
+      setError(
+        "Gate Check numbers cannot be changed until the document setup has been saved."
+      );
+      return;
+    }
 
     if (cleanUpper(item.status) !== "AVAILABLE") {
       setError("Only AVAILABLE Gate Check numbers can be edited from Setup.");
@@ -2400,10 +2463,10 @@ export default function CarryOnGateCheckPage({
       }
 
       if (
-        !canManageGateChecks
+        !canUploadDocuments
       ) {
         setError(
-          "You do not have permission to save Carry-On setup."
+          "You do not have permission to save the Carry-On document setup."
         );
 
         return;
@@ -2505,7 +2568,7 @@ export default function CarryOnGateCheckPage({
               availableSeats.length,
 
             gateCheckNumberCount:
-              gateCheckNumbers.length,
+              setupGateChecks.length,
 
             status:
               "READY",
@@ -2613,51 +2676,12 @@ export default function CarryOnGateCheckPage({
           });
         }
 
-        for (
-          const gateCheckNumber of
-            gateCheckNumbers
-        ) {
-          operations.push({
-            ref:
-              doc(
-                db,
-                "carryOnFlights",
-                selectedFlight.id,
-                "gateCheckNumbers",
-                safeDocId(
-                  gateCheckNumber
-                )
-              ),
-
-            data: {
-              gateCheckNumber,
-
-              status:
-                "AVAILABLE",
-
-              source:
-                "PRELOADED",
-
-              addedAt:
-                serverTimestamp(),
-
-              addedBy:
-                actor,
-            },
-
-            options: {
-              merge:
-                true,
-            },
-          });
-        }
-
         await commitWrites(
           operations
         );
 
         setMessage(
-          `Carry-On setup saved for ${selectedFlight.flightNumber}.`
+          `Passenger and seat setup saved for ${selectedFlight.flightNumber}. Gate Check numbers can now be added from Counter.`
         );
       } catch (
         saveError
@@ -2939,13 +2963,13 @@ export default function CarryOnGateCheckPage({
                   smallText
                 }
               >
-                Create the flight from the main Flights page. Then open the Carry-On flight here and upload the Load Manifest and Empty Seats Report for that exact flight.
+                Step 1: upload the Load Manifest and Empty Seats Report from the office and save passenger/seat setup. Step 2: Gate Check numbers can be added later from Counter.
               </p>
             </div>
 
             <Notice
               tone="warning"
-              text="Create flights from the main Flights page. Choose Carry-On Check Only, then return here for document setup."
+              text="Office setup first: upload Load Manifest + Empty Seats Report and save. Gate Check numbers remain locked until passenger and seat data are saved."
             />
 
             <div
@@ -3484,7 +3508,7 @@ export default function CarryOnGateCheckPage({
                   <Stat
                     label="Gate Checks"
                     value={
-                      gateCheckNumbers.length ||
+                      setupGateChecks.length ||
                       selectedFlight.gateCheckNumberCount ||
                       0
                     }
@@ -3495,10 +3519,6 @@ export default function CarryOnGateCheckPage({
                   style={{
                     display:
                       "grid",
-
-                    gridTemplateColumns:
-                      "repeat(auto-fit, minmax(280px, 1fr))",
-
                     gap:
                       12,
                   }}
@@ -3522,7 +3542,7 @@ export default function CarryOnGateCheckPage({
                         smallText
                       }
                     >
-                      Supervisor sets this manually. It is an operational target, not a hard limit.
+                      Supervisor sets this operational target during office setup. It does not require Gate Check numbers to be entered yet.
                     </p>
 
                     <input
@@ -3555,80 +3575,22 @@ export default function CarryOnGateCheckPage({
                     />
                   </div>
 
-                  <div
-                    style={
-                      panelStyle
+                  <Notice
+                    tone={
+                      documentSetupSaved
+                        ? "success"
+                        : "warning"
                     }
-                  >
-                    <h4
-                      style={{
-                        margin:
-                          0,
-                      }}
-                    >
-                      Gate Check Numbers
-                    </h4>
-
-                    <p
-                      style={
-                        smallText
-                      }
-                    >
-                      Duty Manager / Supervisor can paste numbers separated by spaces, commas or new lines.
-                    </p>
-
-                    <textarea
-                      rows={5}
-
-                      value={
-                        gateCheckText
-                      }
-
-                      onChange={(
-                        event
-                      ) =>
-                        setGateCheckText(
-                          event.target
-                            .value
-                        )
-                      }
-
-                      disabled={
-                        !canManageGateChecks
-                      }
-
-                      placeholder={
-                        "Example:\nGC823001\nGC823002\nGC823003"
-                      }
-
-                      style={{
-                        ...inputStyle,
-
-                        resize:
-                          "vertical",
-                      }}
-                    />
-
-                    <div
-                      style={{
-                        marginTop:
-                          7,
-
-                        color:
-                          "#475569",
-
-                        fontSize:
-                          "0.78rem",
-
-                        fontWeight:
-                          800,
-                      }}
-                    >
-                      Unique Gate Check Numbers: {gateCheckNumbers.length}
-                    </div>
-                  </div>
+                    text={
+                      documentSetupSaved
+                        ? "Passenger and seat setup is saved. Gate Check numbers are now available for Counter entry."
+                        : "Gate Check numbers will unlock only after Load Manifest + Empty Seats Report are saved."
+                    }
+                  />
                 </div>
 
+                {documentSetupSaved && (
+                  <>
                 <div style={panelStyle}>
                   <div
                     style={{
@@ -3644,7 +3606,7 @@ export default function CarryOnGateCheckPage({
                         Manage Gate Check Numbers
                       </h4>
                       <p style={smallText}>
-                        Add, edit or remove Gate Check numbers directly from Setup. Assigned numbers are protected from deletion or renaming.
+                        Counter can add Gate Check numbers after the office document setup is saved. Assigned numbers remain protected from deletion or renaming.
                       </p>
                     </div>
 
@@ -3665,7 +3627,7 @@ export default function CarryOnGateCheckPage({
                       rows={3}
                       value={gateCheckManagerText}
                       onChange={(event) => setGateCheckManagerText(event.target.value)}
-                      disabled={!canManageGateChecks || savingGateCheckManager}
+                      disabled={!documentSetupSaved || !canManageGateChecks || savingGateCheckManager}
                       placeholder={"Add numbers:\nGC823010\nGC823011"}
                       style={{ ...inputStyle, resize: "vertical" }}
                     />
@@ -3673,7 +3635,7 @@ export default function CarryOnGateCheckPage({
                     <button
                       type="button"
                       onClick={addManagedGateChecks}
-                      disabled={!canManageGateChecks || savingGateCheckManager}
+                      disabled={!documentSetupSaved || !canManageGateChecks || savingGateCheckManager}
                       style={{
                         ...primaryButton,
                         opacity: !canManageGateChecks || savingGateCheckManager ? 0.55 : 1,
@@ -3785,6 +3747,9 @@ export default function CarryOnGateCheckPage({
                   </div>
                 </div>
 
+                  </>
+                )}
+
                 <button
                   type="button"
 
@@ -3794,7 +3759,7 @@ export default function CarryOnGateCheckPage({
 
                   disabled={
                     savingSetup ||
-                    !canManageGateChecks ||
+                    !canUploadDocuments ||
                     passengers.length ===
                       0 ||
                     availableSeats.length ===
@@ -3807,7 +3772,7 @@ export default function CarryOnGateCheckPage({
 
                     opacity:
                       savingSetup ||
-                      !canManageGateChecks ||
+                      !canUploadDocuments ||
                       passengers.length ===
                         0 ||
                       availableSeats.length ===
@@ -3818,13 +3783,13 @@ export default function CarryOnGateCheckPage({
                   }}
                 >
                   {savingSetup
-                    ? "Saving Setup..."
-                    : "Save Flight Setup"}
+                    ? "Saving Passenger / Seat Setup..."
+                    : "Save Passenger & Seat Setup"}
                 </button>
 
                 <Notice
                   tone="warning"
-                  text="Last-minute passenger and last-minute Gate Check creation will be available in COUNTER. Extra assignments will not be blocked if they exceed the Required target."
+                  text="After passenger/seat setup is saved, Counter can add the physical Gate Check numbers. Last-minute passengers and Gate Checks remain available in COUNTER, and extra assignments are still allowed above the Required target."
                 />
               </>
             )}
