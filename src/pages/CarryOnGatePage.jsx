@@ -115,6 +115,8 @@ export default function CarryOnGatePage({
   const [searchTerm, setSearchTerm] = useState("");
   const [dashboardFilter, setDashboardFilter] =
     useState("WAITING_GATE");
+  const [waitingSectionOpen, setWaitingSectionOpen] = useState(false);
+  const [collectedSectionOpen, setCollectedSectionOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -1655,250 +1657,271 @@ export default function CarryOnGatePage({
           )}
 
           <div style={panelStyle}>
-            <h4 style={{ margin: 0 }}>
-              Waiting for Gate Collection
-            </h4>
+            <button
+              type="button"
+              onClick={() =>
+                setWaitingSectionOpen((previous) => !previous)
+              }
+              style={collapsibleHeaderButton}
+            >
+              <span>Waiting for Gate Collection</span>
+              <span style={collapsibleCountBadge}>
+                {waitingAtGate.length}
+              </span>
+            </button>
 
-            {waitingAtGate.length === 0 ? (
-              <p style={emptyText}>
-                No Carry-On items are currently waiting for Gate collection.
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 10,
-                  marginTop: 10,
-                }}
-              >
-                {filteredWaitingAtGate.map((item) => (
-                  <GateActionCard
-                    key={item.id}
-                    item={item}
-                    noteType={
-                      noteTypeById[item.id] || ""
-                    }
-                    noteText={
-                      noteTextById[item.id] || ""
-                    }
-                    weight={
-                      weightById[item.id] || ""
-                    }
-                    setWeight={(value) =>
-                      setWeightById(
-                        (previous) => ({
-                          ...previous,
-                          [item.id]: value,
-                        })
-                      )
-                    }
-                    setNoteType={(value) =>
-                      setNoteTypeById(
-                        (previous) => ({
-                          ...previous,
-                          [item.id]: value,
-                        })
-                      )
-                    }
-                    setNoteText={(value) =>
-                      setNoteTextById(
-                        (previous) => ({
-                          ...previous,
-                          [item.id]: value,
-                        })
-                      )
-                    }
-                    onCollect={() =>
-                      markCollectedAtGate(item)
-                    }
-                    onOffload={() =>
-                      offloadCarryOn(item)
-                    }
-                    collecting={
-                      processingId === item.id
-                    }
-                    offloading={
-                      offloadingId === item.id
-                    }
-                    canOperate={
-                      canOperateGate &&
-                      !flightClosed
-                    }
-                  />
-                ))}
-              </div>
+            {waitingSectionOpen && (
+              waitingAtGate.length === 0 ? (
+                <p style={emptyText}>
+                  No Carry-On items are currently waiting for Gate collection.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 10,
+                    marginTop: 10,
+                  }}
+                >
+                  {filteredWaitingAtGate.map((item) => (
+                    <GateActionCard
+                      key={item.id}
+                      item={item}
+                      noteType={
+                        noteTypeById[item.id] || ""
+                      }
+                      noteText={
+                        noteTextById[item.id] || ""
+                      }
+                      weight={
+                        weightById[item.id] || ""
+                      }
+                      setWeight={(value) =>
+                        setWeightById(
+                          (previous) => ({
+                            ...previous,
+                            [item.id]: value,
+                          })
+                        )
+                      }
+                      setNoteType={(value) =>
+                        setNoteTypeById(
+                          (previous) => ({
+                            ...previous,
+                            [item.id]: value,
+                          })
+                        )
+                      }
+                      setNoteText={(value) =>
+                        setNoteTextById(
+                          (previous) => ({
+                            ...previous,
+                            [item.id]: value,
+                          })
+                        )
+                      }
+                      onCollect={() =>
+                        markCollectedAtGate(item)
+                      }
+                      onOffload={() =>
+                        offloadCarryOn(item)
+                      }
+                      collecting={
+                        processingId === item.id
+                      }
+                      offloading={
+                        offloadingId === item.id
+                      }
+                      canOperate={
+                        canOperateGate &&
+                        !flightClosed
+                      }
+                    />
+                  ))}
+                </div>
+              )
             )}
           </div>
 
           <div style={panelStyle}>
-            <h4 style={{ margin: 0 }}>
-              Collected at Gate
-            </h4>
+            <button
+              type="button"
+              onClick={() =>
+                setCollectedSectionOpen((previous) => !previous)
+              }
+              style={collapsibleHeaderButton}
+            >
+              <span>Collected at Gate</span>
+              <span style={collapsibleCountBadge}>
+                {collectedAtGate.length}
+              </span>
+            </button>
 
-            {collectedAtGate.length === 0 ? (
-              <p style={emptyText}>
-                No Carry-On items collected yet.
-              </p>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  marginTop: 9,
-                }}
-              >
-                {filteredCollectedAtGate.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      padding: 11,
-                      borderRadius: 10,
-                      border: "1px solid #bbf7d0",
-                      background: "#f0fdf4",
-                    }}
-                  >
+            {collectedSectionOpen && (
+              collectedAtGate.length === 0 ? (
+                <p style={emptyText}>
+                  No Carry-On items collected yet.
+                </p>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    gap: 8,
+                    marginTop: 9,
+                  }}
+                >
+                  {filteredCollectedAtGate.map((item) => (
                     <div
+                      key={item.id}
                       style={{
-                        display: "flex",
-                        justifyContent:
-                          "space-between",
-                        gap: 10,
-                        flexWrap: "wrap",
-                        alignItems: "center",
+                        padding: 11,
+                        borderRadius: 10,
+                        border: "1px solid #bbf7d0",
+                        background: "#f0fdf4",
                       }}
                     >
-                      <div>
-                        <strong>
-                          {item.passengerName}
-                        </strong>
-                        <div
-                          style={{
-                            marginTop: 4,
-                            color: "#64748b",
-                            fontSize: "0.78rem",
-                          }}
-                        >
-                          Seat: {item.assignedSeat || "-"}
-                          {" - "}
-                          Gate Check Description: {item.carryOnDescription || "Not classified"}
-                          {" - "}
-                          Counter: {item.counterRecordedWeightLbs || "-"} lb
-                          {" - "}
-                          Gate Verified: {item.gateVerifiedWeightLbs || "-"} lb
-                          {" - "}
-                          Collected: {formatTimestamp(item.gateCollectedAt)}
-                        </div>
-
-                        {item.gateCollectionNoteCombined && (
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div>
+                          <strong>
+                            {item.passengerName}
+                          </strong>
                           <div
                             style={{
-                              marginTop: 5,
-                              color: "#92400e",
-                              fontSize: "0.76rem",
-                              fontWeight: 800,
+                              marginTop: 4,
+                              color: "#64748b",
+                              fontSize: "0.78rem",
                             }}
                           >
-                            Gate Note: {item.gateCollectionNoteCombined}
+                            Seat: {item.assignedSeat || "-"}
+                            {" - "}
+                            Gate Check Description: {item.carryOnDescription || "Not classified"}
+                            {" - "}
+                            Counter: {item.counterRecordedWeightLbs || "-"} lb
+                            {" - "}
+                            Gate Verified: {item.gateVerifiedWeightLbs || "-"} lb
+                            {" - "}
+                            Collected: {formatTimestamp(item.gateCollectedAt)}
                           </div>
-                        )}
+
+                          {item.gateCollectionNoteCombined && (
+                            <div
+                              style={{
+                                marginTop: 5,
+                                color: "#92400e",
+                                fontSize: "0.76rem",
+                                fontWeight: 800,
+                              }}
+                            >
+                              Gate Note: {item.gateCollectionNoteCombined}
+                            </div>
+                          )}
+                        </div>
+
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: 7,
+                            justifyItems: "end",
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: "#166534",
+                              fontWeight: 900,
+                            }}
+                          >
+                            {item.gateCheckNumber}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              offloadCarryOn(item)
+                            }
+                            disabled={
+                              offloadingId === item.id ||
+                              !canOperateGate
+                            }
+                            style={{
+                              ...dangerButton,
+                              opacity:
+                                offloadingId === item.id ||
+                                !canOperateGate
+                                  ? 0.55
+                                  : 1,
+                            }}
+                          >
+                            {offloadingId === item.id
+                              ? "Offloading..."
+                              : "Offload"}
+                          </button>
+                        </div>
                       </div>
 
                       <div
                         style={{
                           display: "grid",
-                          gap: 7,
-                          justifyItems: "end",
+                          gridTemplateColumns:
+                            "minmax(180px, 240px) minmax(220px, 1fr)",
+                          gap: 8,
+                          marginTop: 10,
                         }}
                       >
-                        <span
-                          style={{
-                            color: "#166534",
-                            fontWeight: 900,
-                          }}
+                        <select
+                          value={
+                            noteTypeById[item.id] || ""
+                          }
+                          onChange={(event) =>
+                            setNoteTypeById(
+                              (previous) => ({
+                                ...previous,
+                                [item.id]:
+                                  event.target.value,
+                              })
+                            )
+                          }
+                          style={inputStyle}
                         >
-                          {item.gateCheckNumber}
-                        </span>
+                          {NOTE_OPTIONS.map((option) => (
+                            <option
+                              key={option || "NONE"}
+                              value={option}
+                            >
+                              {option || "Offload reason / note type"}
+                            </option>
+                          ))}
+                        </select>
 
-                        <button
-                          type="button"
-                          onClick={() =>
-                            offloadCarryOn(item)
+                        <input
+                          type="text"
+                          value={
+                            noteTextById[item.id] || ""
                           }
-                          disabled={
-                            offloadingId === item.id ||
-                            !canOperateGate
+                          placeholder="Offload note / reason..."
+                          onChange={(event) =>
+                            setNoteTextById(
+                              (previous) => ({
+                                ...previous,
+                                [item.id]:
+                                  event.target.value,
+                              })
+                            )
                           }
-                          style={{
-                            ...dangerButton,
-                            opacity:
-                              offloadingId === item.id ||
-                              !canOperateGate
-                                ? 0.55
-                                : 1,
-                          }}
-                        >
-                          {offloadingId === item.id
-                            ? "Offloading..."
-                            : "Offload"}
-                        </button>
+                          style={inputStyle}
+                        />
                       </div>
                     </div>
-
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns:
-                          "minmax(180px, 240px) minmax(220px, 1fr)",
-                        gap: 8,
-                        marginTop: 10,
-                      }}
-                    >
-                      <select
-                        value={
-                          noteTypeById[item.id] || ""
-                        }
-                        onChange={(event) =>
-                          setNoteTypeById(
-                            (previous) => ({
-                              ...previous,
-                              [item.id]:
-                                event.target.value,
-                            })
-                          )
-                        }
-                        style={inputStyle}
-                      >
-                        {NOTE_OPTIONS.map((option) => (
-                          <option
-                            key={option || "NONE"}
-                            value={option}
-                          >
-                            {option || "Offload reason / note type"}
-                          </option>
-                        ))}
-                      </select>
-
-                      <input
-                        type="text"
-                        value={
-                          noteTextById[item.id] || ""
-                        }
-                        placeholder="Offload note / reason..."
-                        onChange={(event) =>
-                          setNoteTextById(
-                            (previous) => ({
-                              ...previous,
-                              [item.id]:
-                                event.target.value,
-                            })
-                          )
-                        }
-                        style={inputStyle}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )
             )}
           </div>
 
@@ -2423,6 +2446,7 @@ function GateDashboardDetail({
   assignments,
   searchTerm,
 }) {
+  const [open, setOpen] = useState(false);
   const rows = assignments
     .filter((item) => {
       const status = cleanUpper(item?.status);
@@ -2471,95 +2495,102 @@ function GateDashboardDetail({
         background: "#faf5ff",
       }}
     >
-      <h4 style={{ margin: 0 }}>
-        {labels[filter] || "Operational Detail"}
-      </h4>
+      <button
+        type="button"
+        onClick={() => setOpen((previous) => !previous)}
+        style={collapsibleHeaderButton}
+      >
+        <span>{labels[filter] || "Operational Detail"}</span>
+        <span style={collapsibleCountBadge}>{rows.length}</span>
+      </button>
 
-      {rows.length === 0 ? (
-        <p
-          style={{
-            margin: "8px 0 0",
-            color: "#64748b",
-            fontSize: "0.8rem",
-          }}
-        >
-          No Carry-On items in this status.
-        </p>
-      ) : (
-        <div
-          style={{
-            display: "grid",
-            gap: 7,
-            marginTop: 9,
-          }}
-        >
-          {rows.map((item) => (
-            <div
-              key={item.id}
-              style={{
-                padding: 9,
-                borderRadius: 9,
-                border: "1px solid #e2e8f0",
-                background: "white",
-              }}
-            >
+      {open && (
+        rows.length === 0 ? (
+          <p
+            style={{
+              margin: "8px 0 0",
+              color: "#64748b",
+              fontSize: "0.8rem",
+            }}
+          >
+            No Carry-On items in this status.
+          </p>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gap: 7,
+              marginTop: 9,
+            }}
+          >
+            {rows.map((item) => (
               <div
+                key={item.id}
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  flexWrap: "wrap",
+                  padding: 9,
+                  borderRadius: 9,
+                  border: "1px solid #e2e8f0",
+                  background: "white",
                 }}
               >
-                <strong>
-                  {item.passengerName || "-"}
-                </strong>
-
-                <span
+                <div
                   style={{
-                    color: "#6d28d9",
-                    fontWeight: 900,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    flexWrap: "wrap",
                   }}
                 >
-                  {item.gateCheckNumber || "-"}
-                </span>
-              </div>
+                  <strong>
+                    {item.passengerName || "-"}
+                  </strong>
 
-              <div
-                style={{
-                  marginTop: 4,
-                  color: "#64748b",
-                  fontSize: "0.75rem",
-                }}
-              >
-                Seat: {item.assignedSeat || "-"}
-                {" - "}
-                Gate Check Description: {item.carryOnDescription || "Not classified"}
-                {" - "}
-                Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
-                {item.gateVerifiedWeightLbs
-                  ? ` - Gate Verified: ${item.gateVerifiedWeightLbs} lb`
-                  : ""}
-                {item.compartment
-                  ? ` - Compartment: ${item.compartment}`
-                  : ""}
-              </div>
+                  <span
+                    style={{
+                      color: "#6d28d9",
+                      fontWeight: 900,
+                    }}
+                  >
+                    {item.gateCheckNumber || "-"}
+                  </span>
+                </div>
 
-              {item.offloadReason && (
                 <div
                   style={{
                     marginTop: 4,
-                    color: "#991b1b",
-                    fontSize: "0.74rem",
-                    fontWeight: 800,
+                    color: "#64748b",
+                    fontSize: "0.75rem",
                   }}
                 >
-                  Offload Reason: {item.offloadReason}
+                  Seat: {item.assignedSeat || "-"}
+                  {" - "}
+                  Gate Check Description: {item.carryOnDescription || "Not classified"}
+                  {" - "}
+                  Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
+                  {item.gateVerifiedWeightLbs
+                    ? ` - Gate Verified: ${item.gateVerifiedWeightLbs} lb`
+                    : ""}
+                  {item.compartment
+                    ? ` - Compartment: ${item.compartment}`
+                    : ""}
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
+
+                {item.offloadReason && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      color: "#991b1b",
+                      fontSize: "0.74rem",
+                      fontWeight: 800,
+                    }}
+                  >
+                    Offload Reason: {item.offloadReason}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )
       )}
     </div>
   );
@@ -2638,6 +2669,38 @@ function Notice({
     </div>
   );
 }
+
+const collapsibleHeaderButton = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 10,
+  padding: 0,
+  border: "none",
+  background: "transparent",
+  color: "#0f172a",
+  fontSize: "1rem",
+  fontWeight: 900,
+  textAlign: "left",
+  cursor: "pointer",
+};
+
+const collapsibleCountBadge = {
+  minWidth: 34,
+  height: 30,
+  padding: "0 10px",
+  borderRadius: 999,
+  border: "1px solid #c4b5fd",
+  background: "white",
+  color: "#6d28d9",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: "0.82rem",
+  fontWeight: 900,
+  flex: "0 0 auto",
+};
 
 const panelStyle = {
   padding: 13,
