@@ -344,7 +344,12 @@ export default function CarryOnGatePage({
   const matchesSearch = (item) => {
     const query = String(searchTerm || "").trim().toLowerCase();
     if (!query) return true;
-    return [item?.assignedSeat, item?.gateCheckNumber]
+    return [
+      item?.assignedSeat,
+      item?.gateCheckNumber,
+      item?.carryOnDescription,
+      item?.carryOnCode,
+    ]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -411,6 +416,7 @@ export default function CarryOnGatePage({
         `Passenger: ${assignment.passengerName || "-"}\n` +
         `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
         `Seat: ${assignment.assignedSeat || "-"}\n` +
+        `Gate Check Description: ${assignment.carryOnDescription || "-"}\n` +
         `Weight: ${verifiedWeightLbs} lb\n` +
         `Note: ${note.combined || "None"}`
     );
@@ -521,6 +527,10 @@ export default function CarryOnGatePage({
             assignedSeat: assignment.assignedSeat || null,
             gateCheckNumber:
               assignment.gateCheckNumber || null,
+            carryOnDescription:
+              assignment.carryOnDescription || null,
+            carryOnCode:
+              assignment.carryOnCode || null,
             gateCollectionNoteType:
               note.type || null,
             gateCollectionNote:
@@ -1596,6 +1606,17 @@ export default function CarryOnGatePage({
                       Received at Ramp without Gate
                     </div>
 
+                    <div
+                      style={{
+                        marginTop: 4,
+                        color: "#5b21b6",
+                        fontSize: "0.68rem",
+                        fontWeight: 800,
+                      }}
+                    >
+                      {item.carryOnDescription || "Not classified"}
+                    </div>
+
                     <button
                       type="button"
                       onClick={() =>
@@ -1758,6 +1779,8 @@ export default function CarryOnGatePage({
                           }}
                         >
                           Seat: {item.assignedSeat || "-"}
+                          {" - "}
+                          Gate Check Description: {item.carryOnDescription || "Not classified"}
                           {" - "}
                           Counter: {item.counterRecordedWeightLbs || "-"} lb
                           {" - "}
@@ -1949,6 +1972,8 @@ export default function CarryOnGatePage({
                     >
                       Seat: {item.assignedSeat || "-"}
                       {" - "}
+                      Gate Check Description: {item.carryOnDescription || "Not classified"}
+                      {" - "}
                       Previous: {item.statusBeforeOffload || "-"}
                       {" - "}
                       Offloaded: {formatTimestamp(item.offloadedAt)}
@@ -2086,6 +2111,25 @@ function GateActionCard({
             Seat: {item.assignedSeat || "-"}
             {" - "}
             Status: COUNTER ASSIGNED
+          </div>
+
+          <div
+            style={{
+              marginTop: 5,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 8px",
+              borderRadius: 999,
+              background: "#f5f3ff",
+              border: "1px solid #ddd6fe",
+              color: "#5b21b6",
+              fontSize: "0.72rem",
+              fontWeight: 900,
+            }}
+          >
+            Gate Check Description: {item.carryOnDescription || "Not classified"}
+            {item.carryOnCode ? ` (${item.carryOnCode})` : ""}
           </div>
         </div>
       </div>
@@ -2489,6 +2533,8 @@ function GateDashboardDetail({
                 }}
               >
                 Seat: {item.assignedSeat || "-"}
+                {" - "}
+                Gate Check Description: {item.carryOnDescription || "Not classified"}
                 {" - "}
                 Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
                 {item.gateVerifiedWeightLbs
