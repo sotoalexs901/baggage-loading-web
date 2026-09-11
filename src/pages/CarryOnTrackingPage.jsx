@@ -144,6 +144,8 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
           <div><span>Gate Verified Weight</span><strong>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</strong></div>
           <div><span>Compartment</span><strong>${escapeHtml(item.compartment || "-")}</strong></div>
           <div><span>Source</span><strong>${escapeHtml(item.passengerSource || "-")}</strong></div>
+          <div><span>Gate Check Description</span><strong>${escapeHtml(item.carryOnDescription || "-")}</strong></div>
+          <div><span>Classification Code</span><strong>${escapeHtml(item.carryOnCode || "-")}</strong></div>
         </div>
 
         ${item.gateCollectionNoteCombined ? `<div class="note"><strong>Gate Note:</strong> ${escapeHtml(item.gateCollectionNoteCombined)}</div>` : ""}
@@ -181,7 +183,7 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
         .passenger-meta { margin-top:4px; color:#64748b; font-size:12px; font-weight:700; }
         .status { padding:6px 9px; border-radius:999px; background:#ecfdf5; color:#166534; border:1px solid #86efac; font-size:10px; font-weight:900; }
         .status.offloaded { background:#fef2f2; color:#991b1b; border-color:#fecaca; }
-        .facts { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:12px; }
+        .facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin-top:12px; }
         .facts div { background:#f8fbff; border:1px solid #dbeafe; border-radius:10px; padding:9px; }
         .facts span { display:block; font-size:8px; color:#64748b; font-weight:800; text-transform:uppercase; letter-spacing:.05em; }
         .facts strong { display:block; margin-top:4px; font-size:12px; }
@@ -390,6 +392,11 @@ export default function CarryOnTrackingPage({
             item?.offloadReason,
             item?.counterRecordedWeightLbs,
             item?.gateVerifiedWeightLbs,
+            item?.carryOnDescription,
+            item?.carryOnCode,
+            item?.carryOnColor,
+            item?.carryOnSize,
+            item?.carryOnType,
           ]
             .filter(Boolean)
             .join(" ")
@@ -689,7 +696,7 @@ export default function CarryOnTrackingPage({
                 <input
                   type="text"
                   value={search}
-                  placeholder="Passenger, Gate Check, Seat..."
+                  placeholder="Passenger, Gate Check, Seat, Description..."
                   onChange={(event) =>
                     setSearch(
                       event.target.value
@@ -1025,6 +1032,25 @@ function TrackingCard({
             Gate Verified: {item.gateVerifiedWeightLbs || "-"} lb
           </div>
 
+          <div
+            style={{
+              marginTop: 5,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 8px",
+              borderRadius: 999,
+              background: "#f5f3ff",
+              border: "1px solid #ddd6fe",
+              color: "#5b21b6",
+              fontSize: "0.72rem",
+              fontWeight: 900,
+            }}
+          >
+            Gate Check Description: {item.carryOnDescription || "Not classified"}
+            {item.carryOnCode ? ` (${item.carryOnCode})` : ""}
+          </div>
+
           {item.gateCollectionNoteCombined && (
             <div
               style={{
@@ -1221,6 +1247,31 @@ function PassengerFullDetail({
           <Info
             label="Gate Check"
             value={item.gateCheckNumber || "-"}
+          />
+
+          <Info
+            label="Gate Check Description"
+            value={item.carryOnDescription || "-"}
+          />
+
+          <Info
+            label="Classification Code"
+            value={item.carryOnCode || "-"}
+          />
+
+          <Info
+            label="Color"
+            value={item.carryOnColor || "-"}
+          />
+
+          <Info
+            label="Size"
+            value={item.carryOnSize || "-"}
+          />
+
+          <Info
+            label="Type"
+            value={item.carryOnType || "-"}
           />
 
           <Info
