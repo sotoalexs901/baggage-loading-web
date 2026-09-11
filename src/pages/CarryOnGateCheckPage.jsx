@@ -24,6 +24,7 @@ import CarryOnRampPage from "./CarryOnRampPage.jsx";
 import CarryOnLoadPage from "./CarryOnLoadPage.jsx";
 import CarryOnReportPage from "./CarryOnReportPage.jsx";
 import CarryOnTrackingPage from "./CarryOnTrackingPage.jsx";
+import CarryOnSummaryPage from "./CarryOnSummaryPage.jsx";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
@@ -43,6 +44,7 @@ const TABS = [
   "LOAD",
   "TRACKING",
   "REPORT",
+  "SUMMARY",
 ];
 
 const MAX_BATCH_WRITES = 400;
@@ -1356,16 +1358,21 @@ export default function CarryOnGateCheckPage({
           snap
         ) => {
           const list =
-            snap.docs.map(
-              (
-                item
-              ) => ({
-                id:
-                  item.id,
+            snap.docs
+              .map(
+                (
+                  item
+                ) => ({
+                  id:
+                    item.id,
 
-                ...item.data(),
-              })
-            );
+                  ...item.data(),
+                })
+              )
+              .filter(
+                (item) =>
+                  item?.isDeleted !== true
+              );
 
           list.sort(
             (
@@ -2821,14 +2828,12 @@ export default function CarryOnGateCheckPage({
       >
         <div
           style={{
-            display:
-              "flex",
-
-            gap:
-              8,
-
-            flexWrap:
-              "wrap",
+            display: "flex",
+            gap: 7,
+            flexWrap: "nowrap",
+            overflowX: "auto",
+            WebkitOverflowScrolling: "touch",
+            paddingBottom: 2,
           }}
         >
           {TABS.map(
@@ -2855,7 +2860,10 @@ export default function CarryOnGateCheckPage({
 
                   style={{
                     padding:
-                      "8px 12px",
+                      "9px 12px",
+
+                    minWidth:
+                      "max-content",
 
                     borderRadius:
                       999,
@@ -2941,143 +2949,110 @@ export default function CarryOnGateCheckPage({
             />
 
             <div
-              style={
-                panelStyle
-              }
+              style={{
+                ...panelStyle,
+                background:
+                  selectedFlight
+                    ? "#f8fafc"
+                    : "#fffbeb",
+              }}
             >
-              <h4
+              <div
                 style={{
-                  margin:
-                    0,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
                 }}
               >
-                Carry-On Flight List
-              </h4>
+                <div>
+                  <h4 style={{ margin: 0 }}>
+                    Current Carry-On Flight
+                  </h4>
+                  <p style={smallText}>
+                    Setup now shows only the selected flight. Use Carry Ons Resumen to search or open another flight.
+                  </p>
+                </div>
 
-              {carryOnFlights.length ===
-              0 ? (
-                <p
-                  style={
-                    smallText
+                <button
+                  type="button"
+                  onClick={() =>
+                    setActiveTab("SUMMARY")
                   }
+                  style={smallSecondaryButton}
                 >
-                  No Carry-On flights created yet.
-                </p>
+                  Carry Ons Resumen
+                </button>
+              </div>
+
+              {selectedFlight ? (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: 11,
+                    borderRadius: 11,
+                    border: "1px solid #c4b5fd",
+                    background: "white",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <strong>
+                      {selectedFlight.flightNumber || "-"}
+                      {" - "}
+                      {selectedFlight.flightDate || "-"}
+                    </strong>
+
+                    <span
+                      style={{
+                        color: "#6d28d9",
+                        fontWeight: 900,
+                        fontSize: "0.76rem",
+                      }}
+                    >
+                      {selectedFlight.status || "SETUP"}
+                    </span>
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 4,
+                      color: "#64748b",
+                      fontSize: "0.78rem",
+                    }}
+                  >
+                    {selectedFlight.origin || "-"}
+                    {" -> "}
+                    {selectedFlight.destination || "-"}
+                    {selectedFlight.gate
+                      ? ` - Gate ${selectedFlight.gate}`
+                      : ""}
+                    {selectedFlight.tailNumber
+                      ? ` - Tail ${selectedFlight.tailNumber}`
+                      : ""}
+                  </div>
+                </div>
               ) : (
                 <div
                   style={{
-                    display:
-                      "grid",
-
-                    gap:
-                      7,
-
-                    marginTop:
-                      10,
+                    marginTop: 8,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: "1px dashed #f59e0b",
+                    background: "white",
+                    color: "#92400e",
+                    fontSize: "0.8rem",
+                    fontWeight: 800,
                   }}
                 >
-                  {carryOnFlights.map(
-                    (
-                      item
-                    ) => {
-                      const selected =
-                        item.id ===
-                        selectedCarryOnFlightId;
-
-                      return (
-                        <button
-                          key={
-                            item.id
-                          }
-
-                          type="button"
-
-                          onClick={() =>
-                            setSelectedCarryOnFlightId(
-                              item.id
-                            )
-                          }
-
-                          style={{
-                            width:
-                              "100%",
-
-                            padding:
-                              10,
-
-                            textAlign:
-                              "left",
-
-                            borderRadius:
-                              10,
-
-                            border:
-                              selected
-                                ? "2px solid #7c3aed"
-                                : "1px solid #dbe2ea",
-
-                            background:
-                              selected
-                                ? "#f5f3ff"
-                                : "white",
-
-                            cursor:
-                              "pointer",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display:
-                                "flex",
-
-                              justifyContent:
-                                "space-between",
-
-                              gap:
-                                10,
-
-                              flexWrap:
-                                "wrap",
-                            }}
-                          >
-                            <strong>
-                              {item.flightNumber}
-                              {" - "}
-                              {item.flightDate}
-                            </strong>
-
-                            <span>
-                              {item.status ||
-                                "SETUP"}
-                            </span>
-                          </div>
-
-                          <div
-                            style={{
-                              marginTop:
-                                4,
-
-                              color:
-                                "#64748b",
-
-                              fontSize:
-                                "0.78rem",
-                            }}
-                          >
-                            {item.origin}
-                            {" \u2192 "}
-                            {item.destination}
-                            {item.gate
-                              ? ` - Gate ${item.gate}`
-                              : ""}
-                            {item.tailNumber
-                              ? ` - Tail ${item.tailNumber}`
-                              : ""}
-                          </div>
-                        </button>
-                      );
-                    }
-                  )}
+                  No flight selected. Open Carry Ons Resumen and choose a flight.
                 </div>
               )}
             </div>
@@ -3966,6 +3941,27 @@ export default function CarryOnGateCheckPage({
             }
             onSelectCarryOnFlight={
               setSelectedCarryOnFlightId
+            }
+          />
+        )}
+
+        {activeTab ===
+          "SUMMARY" && (
+          <CarryOnSummaryPage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+            onSelectCarryOnFlight={
+              setSelectedCarryOnFlightId
+            }
+            onOpenTab={(tab) =>
+              setActiveTab(tab)
             }
           />
         )}
