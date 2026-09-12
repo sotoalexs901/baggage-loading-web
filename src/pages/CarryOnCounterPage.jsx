@@ -134,6 +134,8 @@ const SPECIAL_CARRY_ON_ITEMS = [
   { description: "Car Seat", code: "CAR_SEAT", type: "Car Seat", icon: "CAR_SEAT" },
   { description: "Booster Seat", code: "BOOSTER_SEAT", type: "Booster Seat", icon: "BOOSTER_SEAT" },
   { description: "Gift Item", code: "GIFT_ITEM", type: "Gift Item", icon: "GIFT_ITEM" },
+  { description: "Backpack", code: "BACKPACK", type: "Backpack", icon: "BACKPACK" },
+  { description: "Small Soft Bag / Duffel Bag", code: "SMALL_SOFT_BAG", type: "Small Soft Bag / Duffel Bag", icon: "SMALL_SOFT_BAG" },
 ];
 
 function makeCarryOnSelection({ color, size, type, typeCode }) {
@@ -405,6 +407,12 @@ export default function CarryOnCounterPage({
   ] = useState(
     false
   );
+
+  const [reassignmentReason, setReassignmentReason] = useState("");
+  const [pendingReassignment, setPendingReassignment] = useState(null);
+  const [pendingRemoval, setPendingRemoval] = useState(null);
+  const [removalReason, setRemovalReason] = useState("");
+  const [removingAssignment, setRemovingAssignment] = useState(false);
 
   const [
     assigning,
@@ -1380,6 +1388,8 @@ export default function CarryOnCounterPage({
     setEditGateCheckId("");
     setEditWeight("");
     setEditCarryOnSelection(null);
+    setReassignmentReason("");
+    setPendingReassignment(null);
   };
 
   const saveAssignmentEdit = async (assignment) => {
@@ -1414,6 +1424,14 @@ export default function CarryOnCounterPage({
 
     if (!editCarryOnSelection?.code) {
       setError("Select the Gate Check description before saving changes.");
+      return;
+    }
+
+    if (
+      newGateCheckId !== oldGateCheckId &&
+      !String(reassignmentReason || "").trim()
+    ) {
+      setPendingReassignment({ assignment });
       return;
     }
 
@@ -1502,6 +1520,16 @@ export default function CarryOnCounterPage({
           carryOnSize: editCarryOnSelection.size || null,
           carryOnType: editCarryOnSelection.type || null,
           carryOnCode: editCarryOnSelection.code,
+          ...(newGateCheckId !== oldGateCheckId
+            ? {
+                gateCheckReassignmentReason:
+                  String(reassignmentReason || "").trim(),
+                gateCheckReassignedAt: serverTimestamp(),
+                gateCheckReassignedBy: actor,
+                previousGateCheckNumber:
+                  assignment.gateCheckNumber || null,
+              }
+            : {}),
           editedAt: serverTimestamp(),
           editedBy: actor,
           updatedAt: serverTimestamp(),
@@ -1596,6 +1624,10 @@ export default function CarryOnCounterPage({
             previousSeat: assignment.assignedSeat || null,
             gateCheckNumber: newGateCheck.gateCheckNumber,
             previousGateCheckNumber: assignment.gateCheckNumber || null,
+            gateCheckReassignmentReason:
+              newGateCheckId !== oldGateCheckId
+                ? String(reassignmentReason || "").trim()
+                : null,
             counterRecordedWeightLbs: Math.round(newWeight * 10) / 10,
             carryOnDescription: editCarryOnSelection.description,
             carryOnColor: editCarryOnSelection.color || null,
@@ -1611,7 +1643,13 @@ export default function CarryOnCounterPage({
       }
 
       cancelAssignmentEdit();
-      setMessage("Counter assignment updated successfully.");
+      setReassignmentReason("");
+      setPendingReassignment(null);
+      setMessage(
+        newGateCheckId !== oldGateCheckId
+          ? `Gate Check reassigned from ${assignment.gateCheckNumber || oldGateCheckId} to ${newGateCheck.gateCheckNumber}.`
+          : "Counter assignment updated successfully."
+      );
     } catch (editError) {
       console.error("Carry-On Counter assignment edit error:", editError);
       setError(editError?.message || "Unable to update Counter assignment.");
@@ -1619,6 +1657,195 @@ export default function CarryOnCounterPage({
       setSavingAssignmentEdit(false);
     }
   };
+
+
+  const removeCounterAssignment =
+    async (assignment) => {
+      setMessage("");
+      setError("");
+
+      if (!canOperateCounter || !selectedFlight || !assignment) {
+        return;
+      }
+
+      if (cleanUpper(assignment.status) !== "COUNTER_ASSIGNED") {
+        setError(
+          "Only Carry-Ons still at Counter can be removed or reassigned here."
+        );
+        return;
+      }
+
+      const reason = String(removalReason || "")
+        .trim()
+        .replace(/\s+/g, " ");
+
+      if (!reason) {
+        setPendingRemoval(assignment);
+        return;
+      }
+
+      try {
+        setRemovingAssignment(true);
+
+        const assignmentRef = doc(
+          db, "carryOnFlights", selectedFlight.id, "assignments", assignment.id
+        );
+        const passengerRef = doc(
+          db, "carryOnFlights", selectedFlight.id, "passengers", assignment.passengerId
+        );
+        const seatRef = doc(
+          db,
+          "carryOnFlights",
+          selectedFlight.id,
+          "availableSeats",
+          safeDocId(assignment.assignedSeat || "")
+        );
+        const gateCheckRef = doc(
+          db, "carryOnFlights", selectedFlight.id, "gateCheckNumbers", assignment.id
+        );
+        const flightRef = doc(
+          db, "carryOnFlights", selectedFlight.id
+        );
+
+        await runTransaction(db, async (transaction) => {
+          const assignmentSnap = await transaction.get(assignmentRef);
+          const flightSnap = await transaction.get(flightRef);
+
+          if (!assignmentSnap.exists()) {
+            throw new Error("Carry-On assignment no longer exists.");
+          }
+
+          if (
+            cleanUpper(assignmentSnap.data()?.status) !==
+            "COUNTER_ASSIGNED"
+          ) {
+            throw new Error(
+              "This Carry-On already moved beyond Counter and cannot be removed here."
+            );
+          }
+
+          transaction.set(
+            passengerRef,
+            {
+              assigned: false,
+              assignedSeat: null,
+              gateCheckNumber: null,
+              assignmentId: null,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+
+          transaction.set(
+            seatRef,
+            {
+              status: "AVAILABLE",
+              assignmentId: null,
+              passengerId: null,
+              passengerName: null,
+              gateCheckNumber: null,
+              assignedAt: null,
+              assignedBy: null,
+            },
+            { merge: true }
+          );
+
+          transaction.set(
+            gateCheckRef,
+            {
+              status: "AVAILABLE",
+              assignmentId: null,
+              passengerId: null,
+              passengerName: null,
+              assignedSeat: null,
+              counterRecordedWeightLbs: null,
+              carryOnDescription: null,
+              carryOnColor: null,
+              carryOnColorCode: null,
+              carryOnSize: null,
+              carryOnType: null,
+              carryOnCode: null,
+              assignedAt: null,
+              assignedBy: null,
+              lastReleasedAt: serverTimestamp(),
+              lastReleasedBy: actor,
+              lastReleaseReason: reason,
+            },
+            { merge: true }
+          );
+
+          transaction.delete(assignmentRef);
+
+          const currentCount = Number(
+            flightSnap.data()?.assignmentCount ||
+            assignments.length ||
+            0
+          );
+
+          transaction.set(
+            flightRef,
+            {
+              assignmentCount: Math.max(0, currentCount - 1),
+              updatedAt: serverTimestamp(),
+              updatedBy: actor,
+            },
+            { merge: true }
+          );
+        });
+
+        try {
+          await setDoc(
+            doc(
+              db,
+              "carryOnFlights",
+              selectedFlight.id,
+              "events",
+              `counter_removed_${assignment.id}_${Date.now()}`
+            ),
+            {
+              type: "COUNTER_ASSIGNMENT_REMOVED",
+              status: "AVAILABLE",
+              assignmentId: assignment.id,
+              passengerId: assignment.passengerId || null,
+              passengerName: assignment.passengerName || null,
+              assignedSeat: assignment.assignedSeat || null,
+              gateCheckNumber: assignment.gateCheckNumber || null,
+              removalReason: reason,
+              message:
+                `Gate Check ${assignment.gateCheckNumber || assignment.id} removed from Counter assignment and released for reuse.`,
+              createdAt: serverTimestamp(),
+              createdBy: actor,
+            }
+          );
+        } catch (eventError) {
+          console.error(
+            "Carry-On Counter removal event error:",
+            eventError
+          );
+        }
+
+        if (editingAssignmentId === assignment.id) {
+          cancelAssignmentEdit();
+        }
+
+        setPendingRemoval(null);
+        setRemovalReason("");
+        setMessage(
+          `Gate Check ${assignment.gateCheckNumber || assignment.id} removed and returned to Available.`
+        );
+      } catch (removeError) {
+        console.error(
+          "Carry-On Counter removal error:",
+          removeError
+        );
+        setError(
+          removeError?.message ||
+          "Unable to remove Counter assignment."
+        );
+      } finally {
+        setRemovingAssignment(false);
+      }
+    };
 
   const assignCarryOn =
     async () => {
@@ -3012,6 +3239,15 @@ export default function CarryOnCounterPage({
                                       ))}
                                   </SelectField>
 
+                                  {editGateCheckId !== item.id && (
+                                    <TextField
+                                      label="Reason for Gate Check Reassignment"
+                                      value={reassignmentReason}
+                                      onChange={setReassignmentReason}
+                                      placeholder="Explain why the Gate Check number is being changed"
+                                    />
+                                  )}
+
                                   <TextField
                                     label="Carry-On Weight (lb)"
                                     value={editWeight}
@@ -3068,18 +3304,42 @@ export default function CarryOnCounterPage({
                                   </div>
                                 </div>
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    beginAssignmentEdit(item)
-                                  }
+                                <div
                                   style={{
-                                    ...secondaryButton,
-                                    width: "100%",
+                                    display: "grid",
+                                    gridTemplateColumns: "1fr 1fr",
+                                    gap: 7,
                                   }}
                                 >
-                                  Edit Assignment
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      beginAssignmentEdit(item)
+                                    }
+                                    style={{
+                                      ...secondaryButton,
+                                      width: "100%",
+                                    }}
+                                  >
+                                    Edit / Reassign
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPendingRemoval(item);
+                                      setRemovalReason("");
+                                      setMessage("");
+                                      setError("");
+                                    }}
+                                    style={{
+                                      ...dangerButton,
+                                      width: "100%",
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
                               )}
                             </div>
                           )}
@@ -3090,6 +3350,53 @@ export default function CarryOnCounterPage({
               </div>
             )}
           </div>
+
+          {pendingReassignment && (
+            <ReasonModal
+              title="Gate Check Reassignment"
+              description="Explain why this Gate Check number is being reassigned. The explanation will be saved in the operational history."
+              value={reassignmentReason}
+              onChange={setReassignmentReason}
+              confirmLabel="Continue Reassignment"
+              busy={savingAssignmentEdit}
+              onCancel={() => {
+                setPendingReassignment(null);
+                setReassignmentReason("");
+              }}
+              onConfirm={() => {
+                if (!String(reassignmentReason || "").trim()) {
+                  setError("A reassignment explanation is required.");
+                  return;
+                }
+                const assignment = pendingReassignment.assignment;
+                setPendingReassignment(null);
+                void saveAssignmentEdit(assignment);
+              }}
+            />
+          )}
+
+          {pendingRemoval && (
+            <ReasonModal
+              title="Remove Gate Check Assignment"
+              description={`Gate Check ${pendingRemoval.gateCheckNumber || pendingRemoval.id} will be released and returned to Available. Enter the reason for removing this assignment.`}
+              value={removalReason}
+              onChange={setRemovalReason}
+              confirmLabel="Remove & Release"
+              danger
+              busy={removingAssignment}
+              onCancel={() => {
+                setPendingRemoval(null);
+                setRemovalReason("");
+              }}
+              onConfirm={() => {
+                if (!String(removalReason || "").trim()) {
+                  setError("A removal explanation is required.");
+                  return;
+                }
+                void removeCounterAssignment(pendingRemoval);
+              }}
+            />
+          )}
 
           {visualSelectorTarget && (
             <CarryOnVisualSelector
@@ -3133,21 +3440,15 @@ export default function CarryOnCounterPage({
             />
           )}
 
-          {message && (
-            <Notice
-              tone="success"
-              text={
-                message
-              }
-            />
-          )}
-
-          {error && (
-            <Notice
-              tone="error"
-              text={
-                error
-              }
+          {(message || error) && (
+            <CenterAlertModal
+              tone={error ? "error" : "success"}
+              title={error ? "Action Required" : "Completed"}
+              text={error || message}
+              onClose={() => {
+                setError("");
+                setMessage("");
+              }}
             />
           )}
         </>
@@ -3161,6 +3462,186 @@ export default function CarryOnCounterPage({
   );
 }
 
+
+function CenterAlertModal({
+  tone,
+  title,
+  text,
+  onClose,
+}) {
+  const success = tone === "success";
+
+  return (
+    <div style={centerAlertOverlay}>
+      <div
+        style={{
+          ...centerAlertCard,
+          border: success
+            ? "2px solid #22c55e"
+            : "2px solid #ef4444",
+        }}
+      >
+        <div
+          style={{
+            width: 52,
+            height: 52,
+            margin: "0 auto",
+            borderRadius: 999,
+            display: "grid",
+            placeItems: "center",
+            background: success ? "#dcfce7" : "#fee2e2",
+            color: success ? "#166534" : "#991b1b",
+            fontSize: "1.5rem",
+            fontWeight: 900,
+          }}
+        >
+          {success ? "OK" : "!"}
+        </div>
+
+        <h3
+          style={{
+            margin: "10px 0 0",
+            color: "#0f172a",
+            textAlign: "center",
+          }}
+        >
+          {title}
+        </h3>
+
+        <div
+          style={{
+            marginTop: 8,
+            color: success ? "#166534" : "#991b1b",
+            fontSize: "0.88rem",
+            fontWeight: 800,
+            lineHeight: 1.45,
+            textAlign: "center",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {text}
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            ...primaryButton,
+            width: "100%",
+            marginTop: 14,
+            background: success ? "#16a34a" : "#dc2626",
+            border: success
+              ? "1px solid #16a34a"
+              : "1px solid #dc2626",
+          }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReasonModal({
+  title,
+  description,
+  value,
+  onChange,
+  onConfirm,
+  onCancel,
+  confirmLabel,
+  danger = false,
+  busy = false,
+}) {
+  return (
+    <div style={centerAlertOverlay}>
+      <div style={reasonModalCard}>
+        <h3 style={{ margin: 0, color: "#0f172a" }}>
+          {title}
+        </h3>
+
+        <p
+          style={{
+            margin: "7px 0 0",
+            color: "#64748b",
+            fontSize: "0.82rem",
+            lineHeight: 1.45,
+          }}
+        >
+          {description}
+        </p>
+
+        <label
+          style={{
+            display: "grid",
+            gap: 6,
+            marginTop: 12,
+          }}
+        >
+          <span
+            style={{
+              color: "#475569",
+              fontSize: "0.74rem",
+              fontWeight: 900,
+            }}
+          >
+            Explanation / Reason
+          </span>
+
+          <textarea
+            rows={4}
+            autoFocus
+            value={value}
+            onChange={(event) =>
+              onChange(event.target.value)
+            }
+            placeholder="Enter a clear operational explanation..."
+            style={{
+              ...inputStyle,
+              resize: "vertical",
+            }}
+          />
+        </label>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            style={secondaryButton}
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={
+              busy ||
+              !String(value || "").trim()
+            }
+            style={{
+              ...(danger ? dangerButton : primaryButton),
+              opacity:
+                busy || !String(value || "").trim()
+                  ? 0.5
+                  : 1,
+            }}
+          >
+            {busy ? "Saving..." : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function CarryOnDescriptionField({
   label,
@@ -3761,6 +4242,74 @@ function SpecialCarryOnIcon({ kind }) {
     );
   }
 
+  if (kind === "BACKPACK") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <path
+          d="M34 18 C34 9 61 9 61 18 L68 29 L68 65 L27 65 L27 29 Z"
+          fill="#2563eb"
+          stroke="#172554"
+          strokeWidth="3"
+        />
+        <path
+          d="M38 18 C38 12 57 12 57 18"
+          fill="none"
+          stroke="#172554"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+        <rect
+          x="34"
+          y="39"
+          width="27"
+          height="17"
+          rx="6"
+          fill="#60a5fa"
+          stroke="#172554"
+          strokeWidth="2"
+        />
+        <path
+          d="M27 31 C17 34 17 54 24 60 M68 31 C78 34 78 54 71 60"
+          fill="none"
+          stroke="#334155"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  if (kind === "SMALL_SOFT_BAG") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <rect
+          x="15"
+          y="31"
+          width="65"
+          height="32"
+          rx="12"
+          fill="#475569"
+          stroke="#1f2937"
+          strokeWidth="3"
+        />
+        <path
+          d="M30 32 C31 12 63 12 65 32"
+          fill="none"
+          stroke="#1f2937"
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M27 43 L67 43"
+          stroke="#94a3b8"
+          strokeWidth="2"
+        />
+        <circle cx="24" cy="65" r="4" fill="#111827" />
+        <circle cx="71" cy="65" r="4" fill="#111827" />
+      </svg>
+    );
+  }
+
   return null;
 }
 
@@ -4038,6 +4587,34 @@ function Notice({
 }
 
 
+const centerAlertOverlay = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 12000,
+  background: "rgba(15,23,42,0.62)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 14,
+};
+
+const centerAlertCard = {
+  width: "min(430px, 100%)",
+  borderRadius: 18,
+  background: "white",
+  padding: 18,
+  boxShadow: "0 24px 70px rgba(15,23,42,0.36)",
+};
+
+const reasonModalCard = {
+  width: "min(520px, 100%)",
+  borderRadius: 18,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  padding: 18,
+  boxShadow: "0 24px 70px rgba(15,23,42,0.36)",
+};
+
 const carryOnModalOverlay = {
   position: "fixed",
   inset: 0,
@@ -4159,6 +4736,16 @@ const inputStyle = {
 
   fontSize:
     "0.9rem",
+};
+
+const dangerButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #dc2626",
+  background: "#dc2626",
+  color: "white",
+  fontWeight: 900,
+  cursor: "pointer",
 };
 
 const secondaryButton = {
