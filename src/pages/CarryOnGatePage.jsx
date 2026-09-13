@@ -124,18 +124,7 @@ const GATE_ITEM_OPTIONS = [
   "Other",
 ];
 
-const NOTE_OPTIONS = [
-  "",
-  "BAG DAMAGED",
-  "PASSENGER UPSET",
-  "PASSENGER REFUSED GATE CHECK",
-  "OVERSIZE / SPECIAL HANDLING",
-  "TAG ISSUE",
-  "WEIGHT ISSUE",
-  "OTHER",
-];
-
-const CARRY_ON_COLORS = [
+const GATE_BAG_COLORS = [
   { name: "Black", code: "BLK", swatch: "#111827" },
   { name: "Blue", code: "BLU", swatch: "#2563eb" },
   { name: "Silver", code: "SLV", swatch: "#cbd5e1" },
@@ -148,41 +137,49 @@ const CARRY_ON_COLORS = [
   { name: "Tan", code: "TAN", swatch: "#c9a77c" },
   { name: "Orange", code: "ORG", swatch: "#f97316" },
   { name: "Yellow", code: "YLW", swatch: "#eab308" },
-  { name: "Multi Color", code: "MUL", swatch: "linear-gradient(135deg,#ef4444 0 20%,#f59e0b 20% 40%,#22c55e 40% 60%,#3b82f6 60% 80%,#a855f7 80%)" },
 ];
 
-const CARRY_ON_GROUPS = [
+const GATE_BAG_GROUPS = [
   { size: "22", type: "Hard Case", typeCode: "HC" },
   { size: "24", type: "Hard Case", typeCode: "HC" },
   { size: "22", type: "Soft Case", typeCode: "SC" },
   { size: "24", type: "Soft Case", typeCode: "SC" },
 ];
 
-const SPECIAL_CARRY_ON_ITEMS = [
-  { description: "Walker", code: "WALKER", type: "Walker", icon: "WALKER" },
-  { description: "Stroller", code: "STROLLER", type: "Stroller", icon: "STROLLER" },
-  { description: "WCHR", code: "WCHR", type: "WCHR", icon: "WCHR" },
-  { description: "Musical Instrument", code: "MUSICAL_INSTRUMENT", type: "Musical Instrument", icon: "MUSICAL_INSTRUMENT" },
-  { description: "Car Seat", code: "CAR_SEAT", type: "Car Seat", icon: "CAR_SEAT" },
-  { description: "Booster Seat", code: "BOOSTER_SEAT", type: "Booster Seat", icon: "BOOSTER_SEAT" },
-  { description: "Gift Item", code: "GIFT_ITEM", type: "Gift Item", icon: "GIFT_ITEM" },
-  { description: "Backpack", code: "BACKPACK", type: "Backpack", icon: "BACKPACK" },
-  { description: "Small Soft Bag / Duffel Bag", code: "SMALL_SOFT_BAG", type: "Small Soft Bag / Duffel Bag", icon: "SMALL_SOFT_BAG" },
-  { description: "Wagon", code: "WAGON", type: "Wagon", icon: "WAGON" },
+const GATE_SPECIAL_ITEMS = [
+  { description: "Stroller", code: "STROLLER", short: "ST" },
+  { description: "Car Seat", code: "CAR_SEAT", short: "CS" },
+  { description: "Booster Seat", code: "BOOSTER_SEAT", short: "BS" },
+  { description: "WCHR", code: "WCHR", short: "WC" },
+  { description: "Walker", code: "WALKER", short: "WK" },
+  { description: "Musical Instrument", code: "MUSICAL_INSTRUMENT", short: "MI" },
+  { description: "Gift Item", code: "GIFT_ITEM", short: "GI" },
+  { description: "Backpack", code: "BACKPACK", short: "BP" },
+  { description: "Small Soft Bag / Duffel Bag", code: "SMALL_SOFT_BAG", short: "SB" },
+  { description: "Wagon", code: "WAGON", short: "WG" },
 ];
 
-function makeCarryOnSelection({ color, size, type, typeCode }) {
+function makeGateBagSelection(group, color) {
   return {
+    description: `${color.name} ${group.size} ${group.type}`,
     color: color.name,
     colorCode: color.code,
-    size,
-    type,
-    code: `${color.code}-${size}-${typeCode}`,
-    description: `${color.name} ${size} ${type}`,
+    size: group.size,
+    type: group.type,
+    code: `${color.code}-${group.size}-${group.typeCode}`,
   };
 }
 
-
+const NOTE_OPTIONS = [
+  "",
+  "BAG DAMAGED",
+  "PASSENGER UPSET",
+  "PASSENGER REFUSED GATE CHECK",
+  "OVERSIZE / SPECIAL HANDLING",
+  "TAG ISSUE",
+  "WEIGHT ISSUE",
+  "OTHER",
+];
 
 export default function CarryOnGatePage({
   user,
@@ -234,8 +231,8 @@ export default function CarryOnGatePage({
   const [gateEntryGateCheck, setGateEntryGateCheck] = useState("");
   const [gateEntryWeight, setGateEntryWeight] = useState("");
   const [gateEntryDescription, setGateEntryDescription] = useState("Carry-On");
-  const [gateEntryCarryOnSelection, setGateEntryCarryOnSelection] = useState(null);
-  const [gateVisualSelectorOpen, setGateVisualSelectorOpen] = useState(false);
+  const [gateEntrySelection, setGateEntrySelection] = useState(null);
+  const [gateDescriptionChartOpen, setGateDescriptionChartOpen] = useState(false);
   const [addingGateEntry, setAddingGateEntry] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -531,9 +528,9 @@ export default function CarryOnGatePage({
     const seatNumber = normalizeSeat(gateEntrySeat);
     const gateCheckNumber = normalizeGateCheckNumber(gateEntryGateCheck);
     const verifiedWeightLbs = Math.round(Number(gateEntryWeight) * 10) / 10;
-    const description = gateEntryCarryOnSelection?.description || cleanText(gateEntryDescription);
+    const description = gateEntrySelection?.description || cleanText(gateEntryDescription);
 
-    if (!passengerName || !seatNumber || !gateCheckNumber || !gateEntryCarryOnSelection?.code || !description || !Number.isFinite(verifiedWeightLbs) || verifiedWeightLbs <= 0) {
+    if (!passengerName || !seatNumber || !gateCheckNumber || !gateEntrySelection?.code || !description || !Number.isFinite(verifiedWeightLbs) || verifiedWeightLbs <= 0) {
       setError("Passenger Name, Seat, Gate Check Number, Gate Check Description and valid Weight are required.");
       return;
     }
@@ -699,7 +696,7 @@ export default function CarryOnGatePage({
           type: "GATE_GOSHOW_ADDED",
           status: "GATE_COLLECTED",
           assignmentId, passengerId, passengerName, assignedSeat: seatNumber, gateCheckNumber,
-          carryOnDescription: description, carryOnCode: gateEntryCarryOnSelection?.code || null, carryOnColor: gateEntryCarryOnSelection?.color || null, carryOnSize: gateEntryCarryOnSelection?.size || null, carryOnType: gateEntryCarryOnSelection?.type || description, gateVerifiedWeightLbs: verifiedWeightLbs,
+          carryOnDescription: description, carryOnCode: gateEntrySelection?.code || null, carryOnColor: gateEntrySelection?.color || null, carryOnSize: gateEntrySelection?.size || null, carryOnType: gateEntrySelection?.type || description, gateVerifiedWeightLbs: verifiedWeightLbs,
           message: `Gate Check ${gateCheckNumber} added and collected directly at Gate.`,
           createdAt: serverTimestamp(), createdBy: actor,
         });
@@ -712,8 +709,8 @@ export default function CarryOnGatePage({
       setGateEntryGateCheck("");
       setGateEntryWeight("");
       setGateEntryDescription("Carry-On");
-      setGateEntryCarryOnSelection(null);
-      setGateVisualSelectorOpen(false);
+      setGateEntrySelection(null);
+      setGateDescriptionChartOpen(false);
       setMessage(`${gateCheckNumber} added and collected directly at Gate.`);
       setDashboardFilter("GATE_COLLECTED");
     } catch (gateEntryError) {
@@ -1835,13 +1832,40 @@ export default function CarryOnGatePage({
                     <span style={fieldLabel}>Weight (lb)</span>
                     <input type="number" min="0.1" step="0.1" inputMode="decimal" value={gateEntryWeight} onChange={(event) => setGateEntryWeight(event.target.value)} placeholder="Example: 22.5" style={inputStyle} />
                   </label>
-                  <CarryOnDescriptionField
-                    label="Gate Check Description"
-                    selection={gateEntryCarryOnSelection}
-                    onClick={() =>
-                      setGateVisualSelectorOpen(true)
-                    }
-                  />
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={fieldLabel}>
+                      Gate Check Description
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGateDescriptionChartOpen(true)
+                      }
+                      style={{
+                        ...inputStyle,
+                        minHeight: 44,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        color: gateEntrySelection
+                          ? "#5b21b6"
+                          : "#64748b",
+                        fontWeight: 900,
+                        border: gateEntrySelection
+                          ? "1px solid #7c3aed"
+                          : "1px dashed #94a3b8",
+                        background: gateEntrySelection
+                          ? "#faf5ff"
+                          : "white",
+                      }}
+                    >
+                      {gateEntrySelection?.description ||
+                        "Tap to select Gate Check description"}
+                      {gateEntrySelection?.code
+                        ? ` (${gateEntrySelection.code})`
+                        : ""}
+                    </button>
+                  </label>
                 </div>
 
                 <button type="button" onClick={addGateCheckAtGate} disabled={addingGateEntry || !canOperateGate || flightClosed} style={{ ...primaryButton, marginTop: 10, width: "100%", opacity: addingGateEntry || !canOperateGate || flightClosed ? 0.55 : 1 }}>
@@ -2445,18 +2469,18 @@ export default function CarryOnGatePage({
             )}
           </div>
 
-          {gateVisualSelectorOpen && (
-            <CarryOnVisualSelector
-              currentSelection={gateEntryCarryOnSelection}
+          {gateDescriptionChartOpen && (
+            <GateDescriptionChart
+              currentSelection={gateEntrySelection}
               onClose={() =>
-                setGateVisualSelectorOpen(false)
+                setGateDescriptionChartOpen(false)
               }
               onSelect={(selection) => {
-                setGateEntryCarryOnSelection(selection);
+                setGateEntrySelection(selection);
                 setGateEntryDescription(
                   selection?.description || ""
                 );
-                setGateVisualSelectorOpen(false);
+                setGateDescriptionChartOpen(false);
               }}
             />
           )}
@@ -2485,80 +2509,13 @@ export default function CarryOnGatePage({
   );
 }
 
-function CarryOnDescriptionField({
-  label,
-  selection,
-  onClick,
-}) {
-  return (
-    <label
-      style={{
-        display: "grid",
-        gap: 5,
-      }}
-    >
-      <span
-        style={{
-          color: "#475569",
-          fontSize: "0.75rem",
-          fontWeight: 800,
-        }}
-      >
-        {label}
-      </span>
-
-      <button
-        type="button"
-        onClick={onClick}
-        style={{
-          minHeight: 44,
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "9px 11px",
-          borderRadius: 10,
-          border: selection
-            ? "1px solid #7c3aed"
-            : "1px dashed #94a3b8",
-          background: selection
-            ? "#faf5ff"
-            : "white",
-          color: selection
-            ? "#5b21b6"
-            : "#64748b",
-          fontWeight: 900,
-          textAlign: "left",
-          cursor: "pointer",
-        }}
-      >
-        {selection?.description ||
-          "Tap to select Gate Check description"}
-        {selection?.code
-          ? ` (${selection.code})`
-          : ""}
-      </button>
-    </label>
-  );
-}
-
-function CarryOnVisualSelector({
+function GateDescriptionChart({
   currentSelection,
   onClose,
   onSelect,
 }) {
-  const [pending, setPending] = useState(
-    currentSelection || null
-  );
-
-  const selectBag = (group, color) => {
-    setPending(
-      makeCarryOnSelection({
-        color,
-        size: group.size,
-        type: group.type,
-        typeCode: group.typeCode,
-      })
-    );
-  };
+  const [pending, setPending] =
+    useState(currentSelection || null);
 
   const selectSpecial = (item) => {
     setPending({
@@ -2566,24 +2523,21 @@ function CarryOnVisualSelector({
       color: null,
       colorCode: null,
       size: null,
-      type: item.type,
+      type: item.description,
       code: item.code,
     });
   };
 
   return (
     <div
-      style={carryOnModalOverlay}
+      style={gateChartOverlay}
       onMouseDown={(event) => {
-        if (
-          event.target ===
-          event.currentTarget
-        ) {
+        if (event.target === event.currentTarget) {
           onClose();
         }
       }}
     >
-      <div style={carryOnModalCard}>
+      <div style={gateChartCard}>
         <div
           style={{
             display: "flex",
@@ -2593,12 +2547,7 @@ function CarryOnVisualSelector({
           }}
         >
           <div>
-            <h3
-              style={{
-                margin: 0,
-                color: "#0f172a",
-              }}
-            >
+            <h3 style={{ margin: 0 }}>
               Select Gate Check Item
             </h3>
             <div
@@ -2608,14 +2557,14 @@ function CarryOnVisualSelector({
                 fontSize: "0.78rem",
               }}
             >
-              Tap the item that best matches the passenger's Gate Check item.
+              Choose the item that best matches the Gate Check.
             </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            style={carryOnModalClose}
+            style={gateChartCloseButton}
           >
             X
           </button>
@@ -2624,14 +2573,14 @@ function CarryOnVisualSelector({
         <div
           style={{
             display: "grid",
-            gap: 12,
+            gap: 10,
             marginTop: 12,
           }}
         >
-          {CARRY_ON_GROUPS.map((group) => (
+          {GATE_BAG_GROUPS.map((group) => (
             <div
               key={`${group.size}-${group.typeCode}`}
-              style={carryOnGroupCard}
+              style={gateChartSection}
             >
               <div
                 style={{
@@ -2644,80 +2593,79 @@ function CarryOnVisualSelector({
                 {group.size}&quot; {group.type}
               </div>
 
-              <div style={carryOnChoiceGrid}>
-                {CARRY_ON_COLORS.filter((color) => {
-                  if (
-                    group.typeCode === "HC" &&
-                    color.name === "Gray"
-                  ) {
-                    return false;
-                  }
+              <div style={gateColorGrid}>
+                {GATE_BAG_COLORS
+                  .filter((color) => {
+                    if (
+                      group.typeCode === "HC" &&
+                      color.name === "Gray"
+                    ) {
+                      return false;
+                    }
 
-                  if (
-                    group.typeCode === "SC" &&
-                    color.name === "Silver"
-                  ) {
-                    return false;
-                  }
+                    if (
+                      group.typeCode === "SC" &&
+                      color.name === "Silver"
+                    ) {
+                      return false;
+                    }
 
-                  return true;
-                }).map((color) => {
-                  const candidate =
-                    makeCarryOnSelection({
-                      color,
-                      size: group.size,
-                      type: group.type,
-                      typeCode: group.typeCode,
-                    });
+                    return true;
+                  })
+                  .map((color) => {
+                    const candidate =
+                      makeGateBagSelection(
+                        group,
+                        color
+                      );
 
-                  const active =
-                    pending?.code ===
-                    candidate.code;
+                    const active =
+                      pending?.code ===
+                      candidate.code;
 
-                  return (
-                    <button
-                      key={candidate.code}
-                      type="button"
-                      onClick={() =>
-                        selectBag(group, color)
-                      }
-                      style={{
-                        ...carryOnChoiceButton,
-                        border: active
-                          ? "2px solid #2563eb"
-                          : "1px solid #dbeafe",
-                        background: active
-                          ? "#eff6ff"
-                          : "white",
-                      }}
-                    >
-                      <CarryOnSuitcaseIcon
-                        swatch={color.swatch}
-                        soft={
-                          group.typeCode ===
-                          "SC"
+                    return (
+                      <button
+                        key={candidate.code}
+                        type="button"
+                        onClick={() =>
+                          setPending(candidate)
                         }
-                      />
-
-                      <span
                         style={{
-                          marginTop: 5,
-                          color: "#0f172a",
-                          fontSize: "0.68rem",
-                          fontWeight: 900,
-                          lineHeight: 1.15,
+                          ...gateColorChoice,
+                          border: active
+                            ? "2px solid #2563eb"
+                            : "1px solid #dbeafe",
+                          background: active
+                            ? "#eff6ff"
+                            : "white",
                         }}
                       >
-                        {color.name}
-                      </span>
-                    </button>
-                  );
-                })}
+                        <GateMiniBag
+                          swatch={color.swatch}
+                          soft={
+                            group.typeCode ===
+                            "SC"
+                          }
+                        />
+
+                        <span
+                          style={{
+                            marginTop: 4,
+                            color: "#0f172a",
+                            fontSize: "0.66rem",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {color.name}
+                        </span>
+                      </button>
+                    );
+                  })}
               </div>
             </div>
           ))}
 
-          <div style={carryOnGroupCard}>
+          <div style={gateChartSection}>
             <div
               style={{
                 color: "#1e3a8a",
@@ -2729,11 +2677,10 @@ function CarryOnVisualSelector({
               Special Items
             </div>
 
-            <div style={carryOnSpecialGrid}>
-              {SPECIAL_CARRY_ON_ITEMS.map((item) => {
+            <div style={gateSpecialGrid}>
+              {GATE_SPECIAL_ITEMS.map((item) => {
                 const active =
-                  pending?.code ===
-                  item.code;
+                  pending?.code === item.code;
 
                 return (
                   <button
@@ -2743,7 +2690,7 @@ function CarryOnVisualSelector({
                       selectSpecial(item)
                     }
                     style={{
-                      ...carryOnSpecialButton,
+                      ...gateSpecialChoice,
                       border: active
                         ? "2px solid #2563eb"
                         : "1px solid #dbeafe",
@@ -2752,14 +2699,16 @@ function CarryOnVisualSelector({
                         : "white",
                     }}
                   >
-                    <SpecialCarryOnIcon
-                      kind={item.icon}
-                    />
+                    <div style={gateSpecialIcon}>
+                      {item.short}
+                    </div>
                     <span
                       style={{
                         marginTop: 6,
+                        fontSize: "0.72rem",
                         fontWeight: 900,
                         color: "#0f172a",
+                        lineHeight: 1.15,
                       }}
                     >
                       {item.description}
@@ -2800,18 +2749,6 @@ function CarryOnVisualSelector({
             {pending?.description ||
               "No item selected"}
           </div>
-
-          {pending?.code && (
-            <div
-              style={{
-                marginTop: 3,
-                color: "#64748b",
-                fontSize: "0.72rem",
-              }}
-            >
-              Code: {pending.code}
-            </div>
-          )}
         </div>
 
         <div
@@ -2825,7 +2762,7 @@ function CarryOnVisualSelector({
           <button
             type="button"
             onClick={onClose}
-            style={secondaryButton}
+            style={gateSecondaryButton}
           >
             Cancel
           </button>
@@ -2833,14 +2770,14 @@ function CarryOnVisualSelector({
           <button
             type="button"
             disabled={!pending?.code}
-            onClick={() =>
-              pending && onSelect(pending)
-            }
+            onClick={() => {
+              if (pending?.code) {
+                onSelect(pending);
+              }
+            }}
             style={{
               ...primaryButton,
-              opacity: pending?.code
-                ? 1
-                : 0.5,
+              opacity: pending?.code ? 1 : 0.5,
             }}
           >
             Confirm Selection
@@ -2851,323 +2788,86 @@ function CarryOnVisualSelector({
   );
 }
 
-function CarryOnSuitcaseIcon({
+function GateMiniBag({
   swatch,
   soft,
 }) {
-  const isGradient =
-    String(swatch).includes(
-      "gradient"
-    );
-
-  const shellBackground =
-    isGradient
-      ? swatch
-      : `linear-gradient(90deg, rgba(255,255,255,0.18), transparent 18%, transparent 82%, rgba(0,0,0,0.12)), ${swatch}`;
-
   return (
     <div
       style={{
-        width: 58,
-        height: 72,
+        width: 42,
+        height: 52,
         position: "relative",
         margin: "0 auto",
-        filter: "drop-shadow(0 4px 5px rgba(15,23,42,0.18))",
       }}
     >
       <div
         style={{
           position: "absolute",
           top: 0,
-          left: 20,
-          width: 18,
-          height: 16,
-          border: "3px solid #1f2937",
+          left: 14,
+          width: 14,
+          height: 12,
+          border: "2px solid #1f2937",
           borderBottom: "none",
-          borderRadius: "5px 5px 0 0",
-          boxSizing: "border-box",
-          background: "#e5e7eb",
+          borderRadius: "4px 4px 0 0",
         }}
       />
 
       <div
         style={{
           position: "absolute",
-          top: 13,
-          left: 5,
-          right: 5,
-          bottom: 7,
-          borderRadius: soft ? 10 : 7,
+          top: 10,
+          left: 4,
+          right: 4,
+          bottom: 5,
           border: "2px solid #1f2937",
-          background: shellBackground,
-          overflow: "hidden",
+          borderRadius: soft ? 8 : 5,
+          background: swatch,
+          boxShadow:
+            "inset 4px 0 rgba(255,255,255,0.12), inset -4px 0 rgba(0,0,0,0.08)",
         }}
       >
-        {soft ? (
-          <>
-            <div
-              style={{
-                position: "absolute",
-                left: 8,
-                right: 8,
-                top: 13,
-                height: 18,
-                border: "1px solid rgba(15,23,42,0.45)",
-                borderRadius: 5,
-                background: "rgba(255,255,255,0.08)",
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                left: 8,
-                right: 8,
-                bottom: 8,
-                height: 15,
-                border: "1px solid rgba(15,23,42,0.45)",
-                borderRadius: 5,
-                background: "rgba(255,255,255,0.06)",
-              }}
-            />
-            <div
-              style={{
-                position: "absolute",
-                top: 4,
-                left: "50%",
-                width: 12,
-                height: 2,
-                marginLeft: -6,
-                background: "rgba(15,23,42,0.7)",
-                borderRadius: 999,
-              }}
-            />
-          </>
-        ) : (
-          [11, 19, 27, 35, 43].map((top) => (
-            <div
-              key={top}
-              style={{
-                position: "absolute",
-                left: 6,
-                right: 6,
-                top,
-                borderTop: "1px solid rgba(15,23,42,0.28)",
-                boxShadow: "0 1px 0 rgba(255,255,255,0.12)",
-              }}
-            />
-          ))
+        {soft && (
+          <div
+            style={{
+              position: "absolute",
+              left: 6,
+              right: 6,
+              top: 11,
+              height: 10,
+              border: "1px solid rgba(15,23,42,0.45)",
+              borderRadius: 4,
+            }}
+          />
         )}
       </div>
 
       <div
         style={{
           position: "absolute",
-          left: 8,
-          bottom: 1,
-          width: 7,
-          height: 7,
+          left: 7,
+          bottom: 0,
+          width: 5,
+          height: 5,
           borderRadius: 999,
           background: "#111827",
-          border: "1px solid #64748b",
         }}
       />
       <div
         style={{
           position: "absolute",
-          right: 8,
-          bottom: 1,
-          width: 7,
-          height: 7,
+          right: 7,
+          bottom: 0,
+          width: 5,
+          height: 5,
           borderRadius: 999,
           background: "#111827",
-          border: "1px solid #64748b",
         }}
       />
     </div>
   );
 }
-
-function SpecialCarryOnIcon({ kind }) {
-  if (kind === "WALKER") {
-    return (
-      <svg viewBox="0 0 90 76" width="74" height="62" aria-hidden="true">
-        <defs>
-          <linearGradient id="walkerMetal" x1="0" x2="1">
-            <stop offset="0" stopColor="#cbd5e1" />
-            <stop offset="0.5" stopColor="#f8fafc" />
-            <stop offset="1" stopColor="#94a3b8" />
-          </linearGradient>
-        </defs>
-        <path d="M24 10 L16 58 M66 10 L74 58 M24 10 L66 10 M21 30 L69 30 M16 58 L31 58 M74 58 L59 58" fill="none" stroke="url(#walkerMetal)" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="16" cy="63" r="5" fill="#111827" />
-        <circle cx="74" cy="63" r="5" fill="#111827" />
-      </svg>
-    );
-  }
-
-  if (kind === "STROLLER") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <defs>
-          <linearGradient id="strollerFabric" x1="0" x2="1">
-            <stop offset="0" stopColor="#111827" />
-            <stop offset="1" stopColor="#475569" />
-          </linearGradient>
-        </defs>
-        <path d="M27 20 C44 8 64 14 71 31 L62 48 L29 48 Z" fill="url(#strollerFabric)" />
-        <path d="M68 20 L80 8" fill="none" stroke="#374151" strokeWidth="5" strokeLinecap="round" />
-        <path d="M30 48 L22 61 M61 48 L70 61" fill="none" stroke="#4b5563" strokeWidth="4" strokeLinecap="round" />
-        <circle cx="20" cy="64" r="8" fill="#111827" />
-        <circle cx="72" cy="64" r="8" fill="#111827" />
-      </svg>
-    );
-  }
-
-  if (kind === "WCHR") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <circle cx="56" cy="48" r="21" fill="none" stroke="#374151" strokeWidth="5" />
-        <circle cx="38" cy="14" r="8" fill="#475569" />
-        <path d="M40 25 L45 40 L64 40 M45 31 L28 31 M48 40 L34 58 L21 58 M64 40 L74 61" fill="none" stroke="#475569" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "MUSICAL_INSTRUMENT") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <defs>
-          <linearGradient id="guitarWood" x1="0" x2="1">
-            <stop offset="0" stopColor="#a16207" />
-            <stop offset="1" stopColor="#d97706" />
-          </linearGradient>
-        </defs>
-        <ellipse cx="42" cy="52" rx="20" ry="17" fill="url(#guitarWood)" stroke="#78350f" strokeWidth="2" />
-        <ellipse cx="48" cy="36" rx="14" ry="12" fill="url(#guitarWood)" stroke="#78350f" strokeWidth="2" />
-        <rect x="54" y="10" width="8" height="28" rx="3" transform="rotate(25 58 24)" fill="#78350f" />
-        <circle cx="46" cy="45" r="4" fill="#111827" />
-        <path d="M34 20 C55 9 78 15 82 28 L67 66 C51 71 34 65 26 52 Z" fill="none" stroke="#1f2937" strokeWidth="5" opacity="0.35" />
-      </svg>
-    );
-  }
-
-  if (kind === "CAR_SEAT") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <path d="M29 15 C22 31 23 51 31 63 L69 63 C75 48 72 25 62 14 Z" fill="#1f2937" stroke="#111827" strokeWidth="3" />
-        <path d="M38 22 L56 22 L63 52 L33 52 Z" fill="#374151" />
-        <path d="M47 26 L47 50 M37 37 L57 37" stroke="#dc2626" strokeWidth="3" strokeLinecap="round" />
-        <rect x="24" y="62" width="50" height="6" rx="3" fill="#111827" />
-      </svg>
-    );
-  }
-
-  if (kind === "BOOSTER_SEAT") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <path d="M24 42 C28 30 39 26 48 34 C58 25 70 31 74 42 L70 57 L28 57 Z" fill="#374151" stroke="#111827" strokeWidth="3" />
-        <path d="M34 43 C40 48 56 48 64 43" fill="none" stroke="#64748b" strokeWidth="3" />
-        <rect x="29" y="56" width="40" height="6" rx="3" fill="#111827" />
-      </svg>
-    );
-  }
-
-  if (kind === "GIFT_ITEM") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <rect x="24" y="29" width="48" height="36" rx="3" fill="#f5e7c8" stroke="#b45309" strokeWidth="2" />
-        <rect x="44" y="29" width="8" height="36" fill="#dc2626" />
-        <rect x="24" y="41" width="48" height="8" fill="#dc2626" />
-        <path d="M48 28 C37 19 34 13 40 10 C45 8 49 16 48 28 Z" fill="#ef4444" stroke="#b91c1c" strokeWidth="2" />
-        <path d="M48 28 C59 19 62 13 56 10 C51 8 47 16 48 28 Z" fill="#ef4444" stroke="#b91c1c" strokeWidth="2" />
-      </svg>
-    );
-  }
-
-  if (kind === "BACKPACK") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <path
-          d="M34 18 C34 9 61 9 61 18 L68 29 L68 65 L27 65 L27 29 Z"
-          fill="#2563eb"
-          stroke="#172554"
-          strokeWidth="3"
-        />
-        <path
-          d="M38 18 C38 12 57 12 57 18"
-          fill="none"
-          stroke="#172554"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
-        <rect
-          x="34"
-          y="39"
-          width="27"
-          height="17"
-          rx="6"
-          fill="#60a5fa"
-          stroke="#172554"
-          strokeWidth="2"
-        />
-        <path
-          d="M27 31 C17 34 17 54 24 60 M68 31 C78 34 78 54 71 60"
-          fill="none"
-          stroke="#334155"
-          strokeWidth="4"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
-
-  if (kind === "SMALL_SOFT_BAG") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <rect
-          x="15"
-          y="31"
-          width="65"
-          height="32"
-          rx="12"
-          fill="#475569"
-          stroke="#1f2937"
-          strokeWidth="3"
-        />
-        <path
-          d="M30 32 C31 12 63 12 65 32"
-          fill="none"
-          stroke="#1f2937"
-          strokeWidth="5"
-          strokeLinecap="round"
-        />
-        <path
-          d="M27 43 L67 43"
-          stroke="#94a3b8"
-          strokeWidth="2"
-        />
-        <circle cx="24" cy="65" r="4" fill="#111827" />
-        <circle cx="71" cy="65" r="4" fill="#111827" />
-      </svg>
-    );
-  }
-
-  if (kind === "WAGON") {
-    return (
-      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
-        <rect x="17" y="29" width="58" height="29" rx="6" fill="#2563eb" stroke="#1e3a8a" strokeWidth="3" />
-        <path d="M75 31 L86 14" fill="none" stroke="#334155" strokeWidth="5" strokeLinecap="round" />
-        <path d="M25 29 L31 20 L61 20 L68 29" fill="#93c5fd" stroke="#1e3a8a" strokeWidth="3" strokeLinejoin="round" />
-        <circle cx="29" cy="63" r="7" fill="#111827" />
-        <circle cx="65" cy="63" r="7" fill="#111827" />
-      </svg>
-    );
-  }
-
-  return null;
-}
-
-
 
 function GateActionCard({
   item,
@@ -3802,10 +3502,10 @@ const collapsibleCountBadge = {
   flex: "0 0 auto",
 };
 
-const carryOnModalOverlay = {
+const gateChartOverlay = {
   position: "fixed",
   inset: 0,
-  zIndex: 9999,
+  zIndex: 14000,
   background: "rgba(15,23,42,0.68)",
   display: "flex",
   alignItems: "center",
@@ -3813,9 +3513,9 @@ const carryOnModalOverlay = {
   padding: 10,
 };
 
-const carryOnModalCard = {
-  width: "min(1050px, 100%)",
-  maxHeight: "94dvh",
+const gateChartCard = {
+  width: "min(940px, 100%)",
+  maxHeight: "92vh",
   overflowY: "auto",
   background: "white",
   borderRadius: 16,
@@ -3824,7 +3524,7 @@ const carryOnModalCard = {
   boxShadow: "0 24px 70px rgba(15,23,42,0.32)",
 };
 
-const carryOnModalClose = {
+const gateChartCloseButton = {
   width: 36,
   height: 36,
   borderRadius: 10,
@@ -3835,23 +3535,24 @@ const carryOnModalClose = {
   cursor: "pointer",
 };
 
-const carryOnGroupCard = {
+const gateChartSection = {
   padding: 10,
   borderRadius: 12,
   border: "1px solid #dbeafe",
   background: "#f8fbff",
 };
 
-const carryOnChoiceGrid = {
+const gateColorGrid = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(72px, 1fr))",
+  gridTemplateColumns:
+    "repeat(auto-fit, minmax(68px, 1fr))",
   gap: 7,
 };
 
-const carryOnChoiceButton = {
-  minHeight: 92,
+const gateColorChoice = {
+  minHeight: 82,
   borderRadius: 10,
-  padding: "7px 5px",
+  padding: "6px 4px",
   cursor: "pointer",
   display: "grid",
   alignContent: "center",
@@ -3859,14 +3560,15 @@ const carryOnChoiceButton = {
   font: "inherit",
 };
 
-const carryOnSpecialGrid = {
+const gateSpecialGrid = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+  gridTemplateColumns:
+    "repeat(auto-fit, minmax(118px, 1fr))",
   gap: 8,
 };
 
-const carryOnSpecialButton = {
-  minHeight: 102,
+const gateSpecialChoice = {
+  minHeight: 92,
   borderRadius: 10,
   padding: 8,
   cursor: "pointer",
@@ -3874,6 +3576,28 @@ const carryOnSpecialButton = {
   alignContent: "center",
   justifyItems: "center",
   font: "inherit",
+};
+
+const gateSpecialIcon = {
+  width: 44,
+  height: 44,
+  borderRadius: 12,
+  background: "#dbeafe",
+  color: "#1e3a8a",
+  display: "grid",
+  placeItems: "center",
+  fontWeight: 900,
+  fontSize: "0.78rem",
+};
+
+const gateSecondaryButton = {
+  padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  color: "#334155",
+  fontWeight: 900,
+  cursor: "pointer",
 };
 
 const panelStyle = {
