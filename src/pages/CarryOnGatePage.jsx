@@ -146,17 +146,17 @@ const GATE_BAG_GROUPS = [
   { size: "24", type: "Soft Case", typeCode: "SC" },
 ];
 
-const GATE_SPECIAL_ITEMS = [
-  { description: "Stroller", code: "STROLLER", short: "ST" },
-  { description: "Car Seat", code: "CAR_SEAT", short: "CS" },
-  { description: "Booster Seat", code: "BOOSTER_SEAT", short: "BS" },
-  { description: "WCHR", code: "WCHR", short: "WC" },
-  { description: "Walker", code: "WALKER", short: "WK" },
-  { description: "Musical Instrument", code: "MUSICAL_INSTRUMENT", short: "MI" },
-  { description: "Gift Item", code: "GIFT_ITEM", short: "GI" },
-  { description: "Backpack", code: "BACKPACK", short: "BP" },
-  { description: "Small Soft Bag / Duffel Bag", code: "SMALL_SOFT_BAG", short: "SB" },
-  { description: "Wagon", code: "WAGON", short: "WG" },
+const SPECIAL_CARRY_ON_ITEMS = [
+  { description: "Walker", code: "WALKER", type: "Walker", icon: "WALKER" },
+  { description: "Stroller", code: "STROLLER", type: "Stroller", icon: "STROLLER" },
+  { description: "WCHR", code: "WCHR", type: "WCHR", icon: "WCHR" },
+  { description: "Musical Instrument", code: "MUSICAL_INSTRUMENT", type: "Musical Instrument", icon: "MUSICAL_INSTRUMENT" },
+  { description: "Car Seat", code: "CAR_SEAT", type: "Car Seat", icon: "CAR_SEAT" },
+  { description: "Booster Seat", code: "BOOSTER_SEAT", type: "Booster Seat", icon: "BOOSTER_SEAT" },
+  { description: "Gift Item", code: "GIFT_ITEM", type: "Gift Item", icon: "GIFT_ITEM" },
+  { description: "Backpack", code: "BACKPACK", type: "Backpack", icon: "BACKPACK" },
+  { description: "Small Soft Bag / Duffel Bag", code: "SMALL_SOFT_BAG", type: "Small Soft Bag / Duffel Bag", icon: "SMALL_SOFT_BAG" },
+  { description: "Wagon", code: "WAGON", type: "Wagon", icon: "WAGON" },
 ];
 
 function makeGateBagSelection(group, color) {
@@ -2678,7 +2678,7 @@ function GateDescriptionChart({
             </div>
 
             <div style={gateSpecialGrid}>
-              {GATE_SPECIAL_ITEMS.map((item) => {
+              {SPECIAL_CARRY_ON_ITEMS.map((item) => {
                 const active =
                   pending?.code === item.code;
 
@@ -2699,9 +2699,9 @@ function GateDescriptionChart({
                         : "white",
                     }}
                   >
-                    <div style={gateSpecialIcon}>
-                      {item.short}
-                    </div>
+                    <SpecialCarryOnIcon
+                      kind={item.icon}
+                    />
                     <span
                       style={{
                         marginTop: 6,
@@ -2867,6 +2867,186 @@ function GateMiniBag({
       />
     </div>
   );
+}
+
+function SpecialCarryOnIcon({ kind }) {
+  if (kind === "WALKER") {
+    return (
+      <svg viewBox="0 0 90 76" width="74" height="62" aria-hidden="true">
+        <defs>
+          <linearGradient id="walkerMetal" x1="0" x2="1">
+            <stop offset="0" stopColor="#cbd5e1" />
+            <stop offset="0.5" stopColor="#f8fafc" />
+            <stop offset="1" stopColor="#94a3b8" />
+          </linearGradient>
+        </defs>
+        <path d="M24 10 L16 58 M66 10 L74 58 M24 10 L66 10 M21 30 L69 30 M16 58 L31 58 M74 58 L59 58" fill="none" stroke="url(#walkerMetal)" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="16" cy="63" r="5" fill="#111827" />
+        <circle cx="74" cy="63" r="5" fill="#111827" />
+      </svg>
+    );
+  }
+
+  if (kind === "STROLLER") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <defs>
+          <linearGradient id="strollerFabric" x1="0" x2="1">
+            <stop offset="0" stopColor="#111827" />
+            <stop offset="1" stopColor="#475569" />
+          </linearGradient>
+        </defs>
+        <path d="M27 20 C44 8 64 14 71 31 L62 48 L29 48 Z" fill="url(#strollerFabric)" />
+        <path d="M68 20 L80 8" fill="none" stroke="#374151" strokeWidth="5" strokeLinecap="round" />
+        <path d="M30 48 L22 61 M61 48 L70 61" fill="none" stroke="#4b5563" strokeWidth="4" strokeLinecap="round" />
+        <circle cx="20" cy="64" r="8" fill="#111827" />
+        <circle cx="72" cy="64" r="8" fill="#111827" />
+      </svg>
+    );
+  }
+
+  if (kind === "WCHR") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <circle cx="56" cy="48" r="21" fill="none" stroke="#374151" strokeWidth="5" />
+        <circle cx="38" cy="14" r="8" fill="#475569" />
+        <path d="M40 25 L45 40 L64 40 M45 31 L28 31 M48 40 L34 58 L21 58 M64 40 L74 61" fill="none" stroke="#475569" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "MUSICAL_INSTRUMENT") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <defs>
+          <linearGradient id="guitarWood" x1="0" x2="1">
+            <stop offset="0" stopColor="#a16207" />
+            <stop offset="1" stopColor="#d97706" />
+          </linearGradient>
+        </defs>
+        <ellipse cx="42" cy="52" rx="20" ry="17" fill="url(#guitarWood)" stroke="#78350f" strokeWidth="2" />
+        <ellipse cx="48" cy="36" rx="14" ry="12" fill="url(#guitarWood)" stroke="#78350f" strokeWidth="2" />
+        <rect x="54" y="10" width="8" height="28" rx="3" transform="rotate(25 58 24)" fill="#78350f" />
+        <circle cx="46" cy="45" r="4" fill="#111827" />
+        <path d="M34 20 C55 9 78 15 82 28 L67 66 C51 71 34 65 26 52 Z" fill="none" stroke="#1f2937" strokeWidth="5" opacity="0.35" />
+      </svg>
+    );
+  }
+
+  if (kind === "CAR_SEAT") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <path d="M29 15 C22 31 23 51 31 63 L69 63 C75 48 72 25 62 14 Z" fill="#1f2937" stroke="#111827" strokeWidth="3" />
+        <path d="M38 22 L56 22 L63 52 L33 52 Z" fill="#374151" />
+        <path d="M47 26 L47 50 M37 37 L57 37" stroke="#dc2626" strokeWidth="3" strokeLinecap="round" />
+        <rect x="24" y="62" width="50" height="6" rx="3" fill="#111827" />
+      </svg>
+    );
+  }
+
+  if (kind === "BOOSTER_SEAT") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <path d="M24 42 C28 30 39 26 48 34 C58 25 70 31 74 42 L70 57 L28 57 Z" fill="#374151" stroke="#111827" strokeWidth="3" />
+        <path d="M34 43 C40 48 56 48 64 43" fill="none" stroke="#64748b" strokeWidth="3" />
+        <rect x="29" y="56" width="40" height="6" rx="3" fill="#111827" />
+      </svg>
+    );
+  }
+
+  if (kind === "GIFT_ITEM") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <rect x="24" y="29" width="48" height="36" rx="3" fill="#f5e7c8" stroke="#b45309" strokeWidth="2" />
+        <rect x="44" y="29" width="8" height="36" fill="#dc2626" />
+        <rect x="24" y="41" width="48" height="8" fill="#dc2626" />
+        <path d="M48 28 C37 19 34 13 40 10 C45 8 49 16 48 28 Z" fill="#ef4444" stroke="#b91c1c" strokeWidth="2" />
+        <path d="M48 28 C59 19 62 13 56 10 C51 8 47 16 48 28 Z" fill="#ef4444" stroke="#b91c1c" strokeWidth="2" />
+      </svg>
+    );
+  }
+
+  if (kind === "BACKPACK") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <path
+          d="M34 18 C34 9 61 9 61 18 L68 29 L68 65 L27 65 L27 29 Z"
+          fill="#2563eb"
+          stroke="#172554"
+          strokeWidth="3"
+        />
+        <path
+          d="M38 18 C38 12 57 12 57 18"
+          fill="none"
+          stroke="#172554"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+        <rect
+          x="34"
+          y="39"
+          width="27"
+          height="17"
+          rx="6"
+          fill="#60a5fa"
+          stroke="#172554"
+          strokeWidth="2"
+        />
+        <path
+          d="M27 31 C17 34 17 54 24 60 M68 31 C78 34 78 54 71 60"
+          fill="none"
+          stroke="#334155"
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  if (kind === "SMALL_SOFT_BAG") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <rect
+          x="15"
+          y="31"
+          width="65"
+          height="32"
+          rx="12"
+          fill="#475569"
+          stroke="#1f2937"
+          strokeWidth="3"
+        />
+        <path
+          d="M30 32 C31 12 63 12 65 32"
+          fill="none"
+          stroke="#1f2937"
+          strokeWidth="5"
+          strokeLinecap="round"
+        />
+        <path
+          d="M27 43 L67 43"
+          stroke="#94a3b8"
+          strokeWidth="2"
+        />
+        <circle cx="24" cy="65" r="4" fill="#111827" />
+        <circle cx="71" cy="65" r="4" fill="#111827" />
+      </svg>
+    );
+  }
+
+  if (kind === "WAGON") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <rect x="17" y="29" width="58" height="29" rx="6" fill="#2563eb" stroke="#1e3a8a" strokeWidth="3" />
+        <path d="M75 31 L86 14" fill="none" stroke="#334155" strokeWidth="5" strokeLinecap="round" />
+        <path d="M25 29 L31 20 L61 20 L68 29" fill="#93c5fd" stroke="#1e3a8a" strokeWidth="3" strokeLinejoin="round" />
+        <circle cx="29" cy="63" r="7" fill="#111827" />
+        <circle cx="65" cy="63" r="7" fill="#111827" />
+      </svg>
+    );
+  }
+
+  return null;
 }
 
 function GateActionCard({
@@ -3562,13 +3742,12 @@ const gateColorChoice = {
 
 const gateSpecialGrid = {
   display: "grid",
-  gridTemplateColumns:
-    "repeat(auto-fit, minmax(118px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
   gap: 8,
 };
 
 const gateSpecialChoice = {
-  minHeight: 92,
+  minHeight: 102,
   borderRadius: 10,
   padding: 8,
   cursor: "pointer",
