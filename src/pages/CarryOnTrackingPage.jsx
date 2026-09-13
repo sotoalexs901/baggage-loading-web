@@ -146,14 +146,26 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
           <div><span>Source</span><strong>${escapeHtml(item.passengerSource || "-")}</strong></div>
           <div><span>Gate Check Description</span><strong>${escapeHtml(item.carryOnDescription || "-")}</strong></div>
           <div><span>Classification Code</span><strong>${escapeHtml(item.carryOnCode || "-")}</strong></div>
+          <div><span>Zip Tie Secured</span><strong>${escapeHtml(item.gateZipTieConfirmed === true ? "YES" : "-")}</strong></div>
+          <div><span>Valuables / Meds / Laptop Advised</span><strong>${escapeHtml(item.gateHighValueRemovalAdvised === true ? "YES" : "-")}</strong></div>
+          <div><span>Safety Confirmed At</span><strong>${escapeHtml(formatTimestamp(item.gatePassengerSafetyConfirmedAt))}</strong></div>
+          <div><span>Safety Confirmed By</span><strong>${escapeHtml(actorName(item.gatePassengerSafetyConfirmedBy))}</strong></div>
         </div>
 
+        ${item.gatePassengerSafetyConfirmed === true ? `<div class="safety-note"><strong>Passenger Safety Confirmation:</strong> Zip tie secured / passenger informed and passenger advised to remove high-value items, medications, laptops and other valuables.</div>` : ""}
         ${item.gateCollectionNoteCombined ? `<div class="note"><strong>Gate Note:</strong> ${escapeHtml(item.gateCollectionNoteCombined)}</div>` : ""}
         ${item.offloadReason ? `<div class="offload-note"><strong>Offload:</strong> ${escapeHtml(item.offloadReason)} &middot; ${escapeHtml(formatTimestamp(item.offloadedAt))} &middot; ${escapeHtml(actorName(item.offloadedBy))}</div>` : ""}
 
         <div class="steps">
           ${trackingStepHtml("Counter Assigned", item.counterAssignedAt, item.counterAssignedBy)}
-          ${trackingStepHtml("Gate Collected", item.gateCollectedAt, item.gateCollectedBy)}
+          ${trackingStepHtml(
+            "Gate Collected",
+            item.gateCollectedAt,
+            item.gateCollectedBy,
+            item.gatePassengerSafetyConfirmed === true
+              ? "Passenger Safety Confirmed - Zip Tie secured / passenger informed - Valuables, medications and laptops removal advised"
+              : ""
+          )}
           ${trackingStepHtml("Ramp Received", item.rampReceivedAt, item.rampReceivedBy)}
           ${trackingStepHtml("Aircraft Loaded", item.aircraftLoadedAt, item.aircraftLoadedBy, item.compartment ? `Compartment: ${item.compartment}` : "")}
         </div>
@@ -193,6 +205,7 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
         .step-line { font-size:9px; line-height:1.5; color:#475569; }
         .step-extra { margin-top:4px; font-size:9px; font-weight:800; color:#166534; }
         .note { margin-top:10px; padding:9px; border-radius:9px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; font-size:10px; }
+        .safety-note { margin-top:10px; padding:9px; border-radius:9px; background:#ecfdf5; border:1px solid #86efac; color:#166534; font-size:10px; font-weight:700; }
         .offload-note { margin-top:10px; padding:9px; border-radius:9px; background:#fef2f2; border:1px solid #fecaca; color:#991b1b; font-size:10px; }
         .footer { margin-top:24px; padding-top:10px; border-top:1px solid #e2e8f0; color:#94a3b8; text-align:center; font-size:9px; }
         @page { size: landscape; margin:10mm; }
@@ -397,6 +410,9 @@ export default function CarryOnTrackingPage({
             item?.carryOnColor,
             item?.carryOnSize,
             item?.carryOnType,
+            item?.gatePassengerSafetyConfirmed,
+            item?.gateZipTieConfirmed,
+            item?.gateHighValueRemovalAdvised,
           ]
             .filter(Boolean)
             .join(" ")
@@ -926,6 +942,8 @@ function TrackingCard({
         item.gateCollectedAt,
       actor:
         item.gateCollectedBy,
+      safetyConfirmed:
+        item.gatePassengerSafetyConfirmed === true,
     },
     {
       key: "RAMP_RECEIVED",
@@ -1051,6 +1069,49 @@ function TrackingCard({
             {item.carryOnCode ? ` (${item.carryOnCode})` : ""}
           </div>
 
+          {item.gatePassengerSafetyConfirmed === true && (
+            <div
+              style={{
+                marginTop: 6,
+                display: "flex",
+                gap: 6,
+                flexWrap: "wrap",
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "5px 8px",
+                  borderRadius: 999,
+                  background: "#ecfdf5",
+                  border: "1px solid #86efac",
+                  color: "#166534",
+                  fontSize: "0.7rem",
+                  fontWeight: 900,
+                }}
+              >
+                Zip Tie: YES
+              </span>
+
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  padding: "5px 8px",
+                  borderRadius: 999,
+                  background: "#ecfdf5",
+                  border: "1px solid #86efac",
+                  color: "#166534",
+                  fontSize: "0.7rem",
+                  fontWeight: 900,
+                }}
+              >
+                Valuables / Meds / Laptop: ADVISED
+              </span>
+            </div>
+          )}
+
           {item.gateCollectionNoteCombined && (
             <div
               style={{
@@ -1159,6 +1220,22 @@ function TrackingCard({
                   )
                 : "-"}
             </div>
+
+            {step.safetyConfirmed && (
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: "5px 7px",
+                  borderRadius: 7,
+                  background: "#dcfce7",
+                  color: "#166534",
+                  fontSize: "0.66rem",
+                  fontWeight: 900,
+                }}
+              >
+                Passenger Safety Confirmed
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1303,6 +1380,38 @@ function PassengerFullDetail({
           />
 
           <Info
+            label="Zip Tie Secured"
+            value={
+              item.gateZipTieConfirmed === true
+                ? "YES"
+                : "-"
+            }
+          />
+
+          <Info
+            label="Valuables / Meds / Laptop Advised"
+            value={
+              item.gateHighValueRemovalAdvised === true
+                ? "YES"
+                : "-"
+            }
+          />
+
+          <Info
+            label="Safety Confirmed At"
+            value={formatTimestamp(
+              item.gatePassengerSafetyConfirmedAt
+            )}
+          />
+
+          <Info
+            label="Safety Confirmed By"
+            value={actorName(
+              item.gatePassengerSafetyConfirmedBy
+            )}
+          />
+
+          <Info
             label="Offload Reason"
             value={item.offloadReason || "-"}
           />
@@ -1354,6 +1463,11 @@ function PassengerFullDetail({
         title="2. Gate Collected"
         time={item.gateCollectedAt}
         actor={item.gateCollectedBy}
+        extra={
+          item.gatePassengerSafetyConfirmed === true
+            ? `Passenger Safety Confirmed - Zip Tie: YES - Valuables / Meds / Laptop Advised: YES - ${formatTimestamp(item.gatePassengerSafetyConfirmedAt)} - ${actorName(item.gatePassengerSafetyConfirmedBy)}`
+            : null
+        }
       />
 
       <DetailStep
