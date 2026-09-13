@@ -236,6 +236,9 @@ export default function CarryOnGatePage({
   const [addingGateEntry, setAddingGateEntry] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [pendingGateSafety, setPendingGateSafety] = useState(null);
+  const [zipTieConfirmed, setZipTieConfirmed] = useState(false);
+  const [highValueRemovalAdvised, setHighValueRemovalAdvised] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -721,7 +724,47 @@ export default function CarryOnGatePage({
     }
   };
 
-  const markCollectedAtGate = async (assignment) => {
+  const markCollectedAtGate = (assignment) => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateGate) {
+      setError(
+        "You do not have permission to confirm Gate collection."
+      );
+      return;
+    }
+
+    if (!selectedFlight || !assignment) return;
+
+    if (flightClosed) {
+      setError("This Carry-On flight is closed.");
+      return;
+    }
+
+    const verifiedWeightLbs =
+      getDraftWeight(assignment.id);
+
+    if (
+      verifiedWeightLbs === null ||
+      Number.isNaN(verifiedWeightLbs)
+    ) {
+      setError(
+        "Enter the verified Gate weight in pounds before confirming collection."
+      );
+      return;
+    }
+
+    setZipTieConfirmed(false);
+    setHighValueRemovalAdvised(false);
+    setPendingGateSafety({
+      assignment,
+      verifiedWeightLbs,
+      note: getDraftNote(assignment.id),
+    });
+  };
+
+  const completeCollectedAtGate = async (assignment, gateSafety) => {
     setMessage("");
     setError("");
 
@@ -741,9 +784,9 @@ export default function CarryOnGatePage({
       return;
     }
 
-    const note = getDraftNote(assignment.id);
+    const note = gateSafety?.note || getDraftNote(assignment.id);
     const verifiedWeightLbs =
-      getDraftWeight(assignment.id);
+      gateSafety?.verifiedWeightLbs ?? getDraftWeight(assignment.id);
 
     if (
       verifiedWeightLbs === null ||
@@ -755,17 +798,15 @@ export default function CarryOnGatePage({
       return;
     }
 
-    const ok = window.confirm(
-      `Confirm Collected at Gate?\n\n` +
-        `Passenger: ${assignment.passengerName || "-"}\n` +
-        `Gate Check: ${assignment.gateCheckNumber || "-"}\n` +
-        `Seat: ${assignment.assignedSeat || "-"}\n` +
-        `Gate Check Description: ${assignment.carryOnDescription || "-"}\n` +
-        `Weight: ${verifiedWeightLbs} lb\n` +
-        `Note: ${note.combined || "None"}`
-    );
-
-    if (!ok) return;
+    if (
+      gateSafety?.zipTieConfirmed !== true ||
+      gateSafety?.highValueRemovalAdvised !== true
+    ) {
+      setError(
+        "Both passenger safety confirmations are required before Gate collection."
+      );
+      return;
+    }
 
     try {
       setProcessingId(assignment.id);
@@ -784,6 +825,14 @@ export default function CarryOnGatePage({
         selectedFlight.id,
         "gateCheckNumbers",
         assignment.id
+      );
+
+      const passengerRef = doc(
+        db,
+        "carryOnFlights",
+        selectedFlight.id,
+        "passengers",
+        assignment.passengerId
       );
 
       await runTransaction(db, async (transaction) => {
@@ -824,6 +873,15 @@ export default function CarryOnGatePage({
               serverTimestamp(),
             gateWeightVerifiedBy:
               actor,
+            gateZipTieConfirmed: true,
+            gateZipTieConfirmedAt: serverTimestamp(),
+            gateZipTieConfirmedBy: actor,
+            gateHighValueRemovalAdvised: true,
+            gateHighValueRemovalAdvisedAt: serverTimestamp(),
+            gateHighValueRemovalAdvisedBy: actor,
+            gatePassengerSafetyConfirmed: true,
+            gatePassengerSafetyConfirmedAt: serverTimestamp(),
+            gatePassengerSafetyConfirmedBy: actor,
             updatedAt: serverTimestamp(),
             updatedBy: actor,
           },
@@ -848,6 +906,34 @@ export default function CarryOnGatePage({
               serverTimestamp(),
             gateWeightVerifiedBy:
               actor,
+            gateZipTieConfirmed: true,
+            gateZipTieConfirmedAt: serverTimestamp(),
+            gateZipTieConfirmedBy: actor,
+            gateHighValueRemovalAdvised: true,
+            gateHighValueRemovalAdvisedAt: serverTimestamp(),
+            gateHighValueRemovalAdvisedBy: actor,
+            gatePassengerSafetyConfirmed: true,
+            gatePassengerSafetyConfirmedAt: serverTimestamp(),
+            gatePassengerSafetyConfirmedBy: actor,
+          },
+          { merge: true }
+        );
+
+        transaction.set(
+          passengerRef,
+          {
+            gateZipTieConfirmed: true,
+            gateZipTieConfirmedAt: serverTimestamp(),
+            gateZipTieConfirmedBy: actor,
+            gateHighValueRemovalAdvised: true,
+            gateHighValueRemovalAdvisedAt: serverTimestamp(),
+            gateHighValueRemovalAdvisedBy: actor,
+            gatePassengerSafetyConfirmed: true,
+            gatePassengerSafetyConfirmedAt: serverTimestamp(),
+            gatePassengerSafetyConfirmedBy: actor,
+            lastGateSafetyGateCheckNumber:
+              assignment.gateCheckNumber || null,
+            updatedAt: serverTimestamp(),
           },
           { merge: true }
         );
@@ -883,6 +969,9 @@ export default function CarryOnGatePage({
               note.combined || null,
             gateVerifiedWeightLbs:
               verifiedWeightLbs,
+            gateZipTieConfirmed: true,
+            gateHighValueRemovalAdvised: true,
+            gatePassengerSafetyConfirmed: true,
             message:
               `Carry-On ${assignment.gateCheckNumber || assignment.id} collected at Gate.`,
             createdAt: serverTimestamp(),
@@ -2469,6 +2558,34 @@ export default function CarryOnGatePage({
             )}
           </div>
 
+          {pendingGateSafety && (
+            <GateSafetyConfirmationModal
+              assignment={pendingGateSafety.assignment}
+              zipTieConfirmed={zipTieConfirmed}
+              setZipTieConfirmed={setZipTieConfirmed}
+              highValueRemovalAdvised={highValueRemovalAdvised}
+              setHighValueRemovalAdvised={setHighValueRemovalAdvised}
+              busy={processingId === pendingGateSafety.assignment?.id}
+              onCancel={() => {
+                setPendingGateSafety(null);
+                setZipTieConfirmed(false);
+                setHighValueRemovalAdvised(false);
+              }}
+              onConfirm={() => {
+                const payload = {
+                  ...pendingGateSafety,
+                  zipTieConfirmed,
+                  highValueRemovalAdvised,
+                };
+                setPendingGateSafety(null);
+                void completeCollectedAtGate(
+                  payload.assignment,
+                  payload
+                );
+              }}
+            />
+          )}
+
           {gateDescriptionChartOpen && (
             <GateDescriptionChart
               currentSelection={gateEntrySelection}
@@ -2505,6 +2622,78 @@ export default function CarryOnGatePage({
           text="Select a Carry-On flight to begin Gate collection."
         />
       )}
+    </div>
+  );
+}
+
+function GateSafetyConfirmationModal({
+  assignment,
+  zipTieConfirmed,
+  setZipTieConfirmed,
+  highValueRemovalAdvised,
+  setHighValueRemovalAdvised,
+  busy,
+  onCancel,
+  onConfirm,
+}) {
+  const ready = zipTieConfirmed && highValueRemovalAdvised;
+
+  return (
+    <div style={gateSafetyOverlay}>
+      <div style={gateSafetyCard}>
+        <div style={{ color: "#0f172a", fontSize: "1.05rem", fontWeight: 900 }}>
+          Passenger Safety Confirmation
+        </div>
+        <div style={{ marginTop: 5, color: "#64748b", fontSize: "0.78rem" }}>
+          {assignment?.passengerName || "Passenger"} - Gate Check {assignment?.gateCheckNumber || "-"}
+        </div>
+
+        <div style={{ display: "grid", gap: 9, marginTop: 14 }}>
+          <label style={gateSafetyCheckRow}>
+            <input
+              type="checkbox"
+              checked={zipTieConfirmed}
+              onChange={(event) => setZipTieConfirmed(event.target.checked)}
+              style={{ width: 20, height: 20 }}
+            />
+            <span>
+              Gate Check item is secured with a zip tie and the passenger was informed.
+            </span>
+          </label>
+
+          <label style={gateSafetyCheckRow}>
+            <input
+              type="checkbox"
+              checked={highValueRemovalAdvised}
+              onChange={(event) => setHighValueRemovalAdvised(event.target.checked)}
+              style={{ width: 20, height: 20 }}
+            />
+            <span>
+              Passenger was advised to remove high-value items, medications, laptops and other valuables before Gate Check.
+            </span>
+          </label>
+        </div>
+
+        {!ready && (
+          <div style={{ marginTop: 10, padding: 9, borderRadius: 10, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: "0.74rem", fontWeight: 800 }}>
+            Both confirmations are required before marking the item Collected at Gate.
+          </div>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 }}>
+          <button type="button" onClick={onCancel} disabled={busy} style={gateSafetySecondaryButton}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={!ready || busy}
+            style={{ ...primaryButton, opacity: !ready || busy ? 0.5 : 1 }}
+          >
+            {busy ? "Saving..." : "Yes - Confirm & Collect"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3771,6 +3960,51 @@ const gateSpecialIcon = {
 
 const gateSecondaryButton = {
   padding: "9px 13px",
+  borderRadius: 10,
+  border: "1px solid #cbd5e1",
+  background: "white",
+  color: "#334155",
+  fontWeight: 900,
+  cursor: "pointer",
+};
+
+const gateSafetyOverlay = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 15000,
+  background: "rgba(15,23,42,0.68)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 14,
+};
+
+const gateSafetyCard = {
+  width: "min(560px, 100%)",
+  borderRadius: 18,
+  background: "white",
+  border: "1px solid #cbd5e1",
+  padding: 18,
+  boxShadow: "0 24px 70px rgba(15,23,42,0.36)",
+};
+
+const gateSafetyCheckRow = {
+  display: "grid",
+  gridTemplateColumns: "24px 1fr",
+  gap: 10,
+  alignItems: "start",
+  padding: 11,
+  borderRadius: 12,
+  border: "1px solid #dbeafe",
+  background: "#f8fbff",
+  color: "#0f172a",
+  fontSize: "0.82rem",
+  fontWeight: 800,
+  lineHeight: 1.4,
+};
+
+const gateSafetySecondaryButton = {
+  padding: "10px 14px",
   borderRadius: 10,
   border: "1px solid #cbd5e1",
   background: "white",
