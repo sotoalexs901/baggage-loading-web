@@ -100,6 +100,8 @@ function buildCarryOnReportHtml({
       <td>${escapeHtml(item.carryOnCode || "-")}</td>
       <td>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</td>
       <td>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</td>
+      <td>${escapeHtml(item.gateZipTieConfirmed === true ? "YES" : "-")}</td>
+      <td>${escapeHtml(item.gateHighValueRemovalAdvised === true ? "YES" : "-")}</td>
       <td>${escapeHtml(item.status || "-")}</td>
       <td>${escapeHtml(formatTimestamp(item.counterAssignedAt))}</td>
       <td>${escapeHtml(actorName(item.counterAssignedBy))}</td>
@@ -176,11 +178,11 @@ function buildCarryOnReportHtml({
 
       <table>
         <thead><tr>
-          <th>Passenger</th><th>Seat</th><th>Gate Check</th><th>Gate Check Description</th><th>Code</th><th>Counter Wt</th><th>Gate Wt</th><th>Status</th>
+          <th>Passenger</th><th>Seat</th><th>Gate Check</th><th>Gate Check Description</th><th>Code</th><th>Counter Wt</th><th>Gate Wt</th><th>Zip Tie</th><th>Valuables / Meds / Laptop Advised</th><th>Status</th>
           <th>Counter Time</th><th>Counter By</th><th>Gate Time</th><th>Gate By</th><th>Ramp Time</th><th>Ramp By</th>
           <th>Loaded Time</th><th>Loaded By</th><th>Compartment</th><th>Gate Notes</th><th>Offload Reason</th><th>Offloaded At</th><th>Offloaded By</th>
         </tr></thead>
-        <tbody>${bodyRows || '<tr><td colspan="21">No Carry-On assignments.</td></tr>'}</tbody>
+        <tbody>${bodyRows || '<tr><td colspan="23">No Carry-On assignments.</td></tr>'}</tbody>
       </table>
 
       <div class="footer">BLCS &middot; Baggage Loading Control System</div>
@@ -690,7 +692,7 @@ export default function CarryOnReportPage({
               style={{
                 width: "100%",
                 borderCollapse: "collapse",
-                minWidth: 2280,
+                minWidth: 2520,
                 fontSize: "0.76rem",
               }}
             >
@@ -708,6 +710,8 @@ export default function CarryOnReportPage({
                   <Th>Source</Th>
                   <Th>Counter Weight</Th>
                   <Th>Gate Weight</Th>
+                  <Th>Zip Tie Secured</Th>
+                  <Th>Valuables / Meds / Laptop Advised</Th>
                   <Th>Status</Th>
                   <Th>Counter Time</Th>
                   <Th>Counter By</Th>
@@ -729,7 +733,7 @@ export default function CarryOnReportPage({
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan="22"
+                      colSpan="24"
                       style={{
                         padding: 14,
                         textAlign: "center",
@@ -775,6 +779,18 @@ export default function CarryOnReportPage({
                       <Td>
                         {item.gateVerifiedWeightLbs
                           ? `${item.gateVerifiedWeightLbs} lb`
+                          : "-"}
+                      </Td>
+
+                      <Td>
+                        {item.gateZipTieConfirmed === true
+                          ? "YES"
+                          : "-"}
+                      </Td>
+
+                      <Td>
+                        {item.gateHighValueRemovalAdvised === true
+                          ? "YES"
                           : "-"}
                       </Td>
 
