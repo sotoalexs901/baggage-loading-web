@@ -102,6 +102,34 @@ function normalizeSeat(
   );
 }
 
+function uniqueStrings(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function existingGateChecksFromRecord(data) {
+  if (!data) return [];
+  const list = Array.isArray(data.gateCheckNumbers)
+    ? [...data.gateCheckNumbers]
+    : [];
+  if (data.gateCheckNumber) list.push(data.gateCheckNumber);
+  return uniqueStrings(list);
+}
+
+function existingAssignmentIdsFromRecord(data) {
+  if (!data) return [];
+  const list = Array.isArray(data.assignmentIds)
+    ? [...data.assignmentIds]
+    : [];
+  if (data.assignmentId) list.push(data.assignmentId);
+  return uniqueStrings(list);
+}
+
 
 const CARRY_ON_COLORS = [
   { name: "Black", code: "BLK", swatch: "#111827" },
@@ -136,6 +164,7 @@ const SPECIAL_CARRY_ON_ITEMS = [
   { description: "Gift Item", code: "GIFT_ITEM", type: "Gift Item", icon: "GIFT_ITEM" },
   { description: "Backpack", code: "BACKPACK", type: "Backpack", icon: "BACKPACK" },
   { description: "Small Soft Bag / Duffel Bag", code: "SMALL_SOFT_BAG", type: "Small Soft Bag / Duffel Bag", icon: "SMALL_SOFT_BAG" },
+  { description: "Wagon", code: "WAGON", type: "Wagon", icon: "WAGON" },
 ];
 
 function makeCarryOnSelection({ color, size, type, typeCode }) {
@@ -686,16 +715,35 @@ export default function CarryOnCounterPage({
       ]
     );
 
+  const passengerAssignmentCounts =
+    useMemo(() => {
+      const counts = new Map();
+      assignments.forEach((item) => {
+        const key = String(item?.passengerId || "");
+        if (!key) return;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+      return counts;
+    }, [assignments]);
+
+  const seatAssignmentCounts =
+    useMemo(() => {
+      const counts = new Map();
+      assignments.forEach((item) => {
+        const key = normalizeSeat(item?.assignedSeat);
+        if (!key) return;
+        counts.set(key, (counts.get(key) || 0) + 1);
+      });
+      return counts;
+    }, [assignments]);
+
   const availablePassengers =
     useMemo(
       () =>
         passengers
           .filter(
-            (
-              item
-            ) =>
-              item?.assigned !==
-              true
+            (item) =>
+              (passengerAssignmentCounts.get(item.id) || 0) < 5
           )
           .sort(
             (
@@ -714,6 +762,7 @@ export default function CarryOnCounterPage({
           ),
       [
         passengers,
+        passengerAssignmentCounts,
       ]
     );
 
@@ -722,13 +771,10 @@ export default function CarryOnCounterPage({
       () =>
         seats
           .filter(
-            (
-              item
-            ) =>
-              cleanUpper(
-                item?.status
-              ) ===
-              "AVAILABLE"
+            (item) =>
+              (seatAssignmentCounts.get(
+                normalizeSeat(item?.seatNumber)
+              ) || 0) < 5
           )
           .sort(
             (
@@ -752,6 +798,7 @@ export default function CarryOnCounterPage({
           ),
       [
         seats,
+        seatAssignmentCounts,
       ]
     );
 
@@ -972,29 +1019,37 @@ export default function CarryOnCounterPage({
             );
           }
 
+          const passengerData = passengerSnap.exists()
+            ? passengerSnap.data()
+            : null;
+          const seatData = seatSnap.exists()
+            ? seatSnap.data()
+            : null;
+
+          const passengerGateChecks =
+            existingGateChecksFromRecord(passengerData);
+          const passengerAssignmentIds =
+            existingAssignmentIdsFromRecord(passengerData);
+          const seatGateChecks =
+            existingGateChecksFromRecord(seatData);
+          const seatAssignmentIds =
+            existingAssignmentIdsFromRecord(seatData);
+
           if (
-            passengerSnap.exists() &&
-            passengerSnap
-              .data()
-              ?.assigned ===
-              true
+            passengerGateChecks.length >= 5 ||
+            passengerAssignmentIds.length >= 5
           ) {
             throw new Error(
-              "This passenger already has a Carry-On assignment."
+              "This passenger already has the maximum of 5 Gate Check items."
             );
           }
 
           if (
-            seatSnap.exists() &&
-            cleanUpper(
-              seatSnap
-                .data()
-                ?.status
-            ) !==
-              "AVAILABLE"
+            seatGateChecks.length >= 5 ||
+            seatAssignmentIds.length >= 5
           ) {
             throw new Error(
-              "This seat is already assigned."
+              "This seat already has the maximum of 5 Gate Check items."
             );
           }
 
@@ -1057,6 +1112,24 @@ export default function CarryOnCounterPage({
 
               assignmentId,
 
+              gateCheckNumbers:
+                uniqueStrings([
+                  ...passengerGateChecks,
+                  gateCheckNumber,
+                ]),
+
+              assignmentIds:
+                uniqueStrings([
+                  ...passengerAssignmentIds,
+                  assignmentId,
+                ]),
+
+              gateCheckCount:
+                uniqueStrings([
+                  ...passengerGateChecks,
+                  gateCheckNumber,
+                ]).length,
+
               updatedAt:
                 serverTimestamp(),
 
@@ -1093,11 +1166,29 @@ export default function CarryOnCounterPage({
 
               assignmentId,
 
+              assignmentIds:
+                uniqueStrings([
+                  ...seatAssignmentIds,
+                  assignmentId,
+                ]),
+
               passengerId,
 
               passengerName,
 
               gateCheckNumber,
+
+              gateCheckNumbers:
+                uniqueStrings([
+                  ...seatGateChecks,
+                  gateCheckNumber,
+                ]),
+
+              gateCheckCount:
+                uniqueStrings([
+                  ...seatGateChecks,
+                  gateCheckNumber,
+                ]).length,
 
               assignedAt:
                 serverTimestamp(),
@@ -2037,7 +2128,7 @@ export default function CarryOnCounterPage({
         !canOperateCounter
       ) {
         setError(
-          "You do not have permission to add last-minute Carry-On assignments."
+          "You do not have permission to add GoShow Gate Check assignments."
         );
 
         return;
@@ -2150,6 +2241,51 @@ export default function CarryOnCounterPage({
               gateCheckNumber
           );
 
+        const gateCheckAlreadyUsed =
+          assignments.some(
+            (item) =>
+              normalizeGateCheckNumber(
+                item?.gateCheckNumber
+              ) === gateCheckNumber
+          ) ||
+          (
+            existingGateCheck &&
+            cleanUpper(existingGateCheck.status) !==
+              "AVAILABLE"
+          );
+
+        if (gateCheckAlreadyUsed) {
+          throw new Error(
+            `Gate Check ${gateCheckNumber} is already in use and cannot be reused.`
+          );
+        }
+
+        const paxCurrentCount =
+          assignments.filter(
+            (item) =>
+              cleanUpper(item?.passengerName) ===
+              cleanUpper(passengerName)
+          ).length;
+
+        const seatCurrentCount =
+          assignments.filter(
+            (item) =>
+              normalizeSeat(item?.assignedSeat) ===
+              seatNumber
+          ).length;
+
+        if (paxCurrentCount >= 5) {
+          throw new Error(
+            "This passenger already has the maximum of 5 Gate Check items."
+          );
+        }
+
+        if (seatCurrentCount >= 5) {
+          throw new Error(
+            "This seat already has the maximum of 5 Gate Check items."
+          );
+        }
+
         await createAssignment({
           passengerId,
 
@@ -2179,7 +2315,7 @@ export default function CarryOnCounterPage({
           gateCheckSource:
             existingGateCheck
               ?.source ||
-            "LAST_MINUTE",
+            "GOSHOW",
 
           createPassenger:
             true,
@@ -2221,7 +2357,7 @@ export default function CarryOnCounterPage({
         });
 
         setMessage(
-          `Last-minute Carry-On assigned to ${passengerName}.`
+          `GoShow Gate Check assigned to ${passengerName}.`
         );
 
         setLastMinuteName(
@@ -2253,7 +2389,7 @@ export default function CarryOnCounterPage({
 
         setError(
           lastMinuteError?.message ||
-          "Unable to create last-minute Carry-On assignment."
+          "Unable to create GoShow Gate Check assignment."
         );
       } finally {
         setAddingLastMinute(
@@ -2563,6 +2699,8 @@ export default function CarryOnCounterPage({
                       }
                     >
                       {item.passengerName}
+                      {" - "}
+                      {passengerAssignmentCounts.get(item.id) || 0}/5 GC
                     </option>
                   )
                 )}
@@ -2598,6 +2736,10 @@ export default function CarryOnCounterPage({
                       {item.seatType
                         ? ` - ${item.seatType}`
                         : ""}
+                      {" - "}
+                      {seatAssignmentCounts.get(
+                        normalizeSeat(item.seatNumber)
+                      ) || 0}/5 GC
                     </option>
                   )
                 )}
@@ -2718,7 +2860,7 @@ export default function CarryOnCounterPage({
                   "#92400e",
               }}
             >
-              Last-Minute Assignment
+              GoShow Assignment
             </h4>
 
             <p
@@ -2733,7 +2875,7 @@ export default function CarryOnCounterPage({
                   "0.8rem",
               }}
             >
-              For passengers or Gate Check numbers not included in the original setup.
+              For GoShow passengers or Gate Check numbers added during live operation. Up to 5 Gate Checks may be assigned to the same passenger / seat.
             </p>
 
             <div
@@ -2849,7 +2991,7 @@ export default function CarryOnCounterPage({
             >
               {addingLastMinute
                 ? "Adding..."
-                : "Add & Assign Last-Minute Carry-On"}
+                : "Add & Assign GoShow Gate Check"}
             </button>
           </div>
 
@@ -4306,6 +4448,18 @@ function SpecialCarryOnIcon({ kind }) {
         />
         <circle cx="24" cy="65" r="4" fill="#111827" />
         <circle cx="71" cy="65" r="4" fill="#111827" />
+      </svg>
+    );
+  }
+
+  if (kind === "WAGON") {
+    return (
+      <svg viewBox="0 0 95 78" width="78" height="64" aria-hidden="true">
+        <rect x="17" y="29" width="58" height="29" rx="6" fill="#2563eb" stroke="#1e3a8a" strokeWidth="3" />
+        <path d="M75 31 L86 14" fill="none" stroke="#334155" strokeWidth="5" strokeLinecap="round" />
+        <path d="M25 29 L31 20 L61 20 L68 29" fill="#93c5fd" stroke="#1e3a8a" strokeWidth="3" strokeLinejoin="round" />
+        <circle cx="29" cy="63" r="7" fill="#111827" />
+        <circle cx="65" cy="63" r="7" fill="#111827" />
       </svg>
     );
   }
