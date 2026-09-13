@@ -31,6 +31,50 @@ function cleanText(value) {
     .replace(/\s+/g, " ");
 }
 
+function safeDocId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+function normalizeGateCheckNumber(value) {
+  return cleanUpper(value)
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9-]/g, "");
+}
+
+function normalizeSeat(value) {
+  return cleanUpper(value).replace(/\s+/g, "");
+}
+
+function uniqueStrings(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function existingGateChecksFromRecord(data) {
+  if (!data) return [];
+  const list = Array.isArray(data.gateCheckNumbers)
+    ? [...data.gateCheckNumbers]
+    : [];
+  if (data.gateCheckNumber) list.push(data.gateCheckNumber);
+  return uniqueStrings(list);
+}
+
+function existingAssignmentIdsFromRecord(data) {
+  if (!data) return [];
+  const list = Array.isArray(data.assignmentIds)
+    ? [...data.assignmentIds]
+    : [];
+  if (data.assignmentId) list.push(data.assignmentId);
+  return uniqueStrings(list);
+}
+
 function getActor(user, operationalContext) {
   return {
     userId: user?.id || null,
@@ -64,6 +108,21 @@ function formatTimestamp(value) {
     return "-";
   }
 }
+
+const GATE_ITEM_OPTIONS = [
+  "Carry-On",
+  "Stroller",
+  "Car Seat",
+  "Booster Seat",
+  "WCHR",
+  "Walker",
+  "Musical Instrument",
+  "Gift Item",
+  "Backpack",
+  "Small Soft Bag / Duffel Bag",
+  "Wagon",
+  "Other",
+];
 
 const NOTE_OPTIONS = [
   "",
@@ -103,6 +162,9 @@ export default function CarryOnGatePage({
 
   const [flights, setFlights] = useState([]);
   const [assignments, setAssignments] = useState([]);
+  const [passengers, setPassengers] = useState([]);
+  const [seats, setSeats] = useState([]);
+  const [gateChecks, setGateChecks] = useState([]);
   const [processingId, setProcessingId] = useState("");
   const [offloadingId, setOffloadingId] = useState("");
   const [restoringId, setRestoringId] = useState("");
@@ -117,6 +179,13 @@ export default function CarryOnGatePage({
     useState("WAITING_GATE");
   const [waitingSectionOpen, setWaitingSectionOpen] = useState(false);
   const [collectedSectionOpen, setCollectedSectionOpen] = useState(false);
+  const [gateEntryOpen, setGateEntryOpen] = useState(false);
+  const [gateEntryPassengerName, setGateEntryPassengerName] = useState("");
+  const [gateEntrySeat, setGateEntrySeat] = useState("");
+  const [gateEntryGateCheck, setGateEntryGateCheck] = useState("");
+  const [gateEntryWeight, setGateEntryWeight] = useState("");
+  const [gateEntryDescription, setGateEntryDescription] = useState("Carry-On");
+  const [addingGateEntry, setAddingGateEntry] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -152,34 +221,48 @@ export default function CarryOnGatePage({
   useEffect(() => {
     if (!selectedCarryOnFlightId) {
       setAssignments([]);
+      setPassengers([]);
+      setSeats([]);
+      setGateChecks([]);
       return undefined;
     }
 
-    const unsub = onSnapshot(
-      collection(
-        db,
-        "carryOnFlights",
-        selectedCarryOnFlightId,
-        "assignments"
-      ),
-      (snap) => {
-        setAssignments(
-          snap.docs.map((item) => ({
-            id: item.id,
-            ...item.data(),
-          }))
-        );
-      },
-      (snapshotError) => {
-        console.error(
-          "Carry-On Gate assignments error:",
-          snapshotError
-        );
-        setError("Unable to load Carry-On assignments.");
-      }
-    );
+    const unsubscribers = [];
 
-    return () => unsub();
+    const subscribe = (subcollection, setter, fallback) => {
+      const unsub = onSnapshot(
+        collection(
+          db,
+          "carryOnFlights",
+          selectedCarryOnFlightId,
+          subcollection
+        ),
+        (snap) => {
+          setter(
+            snap.docs.map((item) => ({
+              id: item.id,
+              ...item.data(),
+            }))
+          );
+        },
+        (snapshotError) => {
+          console.error(fallback, snapshotError);
+          setError(fallback);
+        }
+      );
+      unsubscribers.push(unsub);
+    };
+
+    subscribe("assignments", setAssignments, "Unable to load Carry-On assignments.");
+    subscribe("passengers", setPassengers, "Unable to load Carry-On passengers.");
+    subscribe("availableSeats", setSeats, "Unable to load Carry-On seats.");
+    subscribe("gateCheckNumbers", setGateChecks, "Unable to load Carry-On Gate Check numbers.");
+
+    return () => {
+      unsubscribers.forEach((unsub) => {
+        try { unsub(); } catch { /* Cleanup only. */ }
+      });
+    };
   }, [selectedCarryOnFlightId]);
 
   const selectedFlight = useMemo(
@@ -378,6 +461,215 @@ export default function CarryOnGatePage({
         ),
     [assignments]
   );
+
+  const addGateCheckAtGate = async () => {
+    setMessage("");
+    setError("");
+
+    if (!canOperateGate) {
+      setError("You do not have permission to add Gate Check items at Gate.");
+      return;
+    }
+
+    if (!selectedFlight || flightClosed) {
+      setError(flightClosed ? "This Carry-On flight is closed." : "Select a Carry-On flight first.");
+      return;
+    }
+
+    const passengerName = cleanText(gateEntryPassengerName);
+    const seatNumber = normalizeSeat(gateEntrySeat);
+    const gateCheckNumber = normalizeGateCheckNumber(gateEntryGateCheck);
+    const verifiedWeightLbs = Math.round(Number(gateEntryWeight) * 10) / 10;
+    const description = cleanText(gateEntryDescription);
+
+    if (!passengerName || !seatNumber || !gateCheckNumber || !description || !Number.isFinite(verifiedWeightLbs) || verifiedWeightLbs <= 0) {
+      setError("Passenger Name, Seat, Gate Check Number, Description and valid Weight are required.");
+      return;
+    }
+
+    const alreadyUsed =
+      assignments.some((item) => normalizeGateCheckNumber(item?.gateCheckNumber) === gateCheckNumber) ||
+      gateChecks.some((item) => normalizeGateCheckNumber(item?.gateCheckNumber) === gateCheckNumber && cleanUpper(item?.status) !== "AVAILABLE");
+
+    if (alreadyUsed) {
+      setError(`Gate Check ${gateCheckNumber} is already in use and cannot be reused.`);
+      return;
+    }
+
+    const samePassengerAssignments = assignments.filter((item) => cleanUpper(item?.passengerName) === cleanUpper(passengerName));
+    const sameSeatAssignments = assignments.filter((item) => normalizeSeat(item?.assignedSeat) === seatNumber);
+
+    if (samePassengerAssignments.length >= 5) {
+      setError("This passenger already has the maximum of 5 Gate Check items.");
+      return;
+    }
+    if (sameSeatAssignments.length >= 5) {
+      setError("This seat already has the maximum of 5 Gate Check items.");
+      return;
+    }
+
+    const existingPassenger = passengers.find((item) => cleanUpper(item?.passengerName) === cleanUpper(passengerName));
+    const existingSeat = seats.find((item) => normalizeSeat(item?.seatNumber) === seatNumber);
+    const existingGateCheck = gateChecks.find((item) => normalizeGateCheckNumber(item?.gateCheckNumber) === gateCheckNumber);
+
+    const passengerId = existingPassenger?.id || safeDocId(`GATE_PAX_${passengerName}_${Date.now()}`);
+    const seatId = existingSeat?.id || safeDocId(seatNumber);
+    const gateCheckId = existingGateCheck?.id || safeDocId(gateCheckNumber);
+    const assignmentId = gateCheckId;
+
+    try {
+      setAddingGateEntry(true);
+
+      const flightRef = doc(db, "carryOnFlights", selectedFlight.id);
+      const passengerRef = doc(db, "carryOnFlights", selectedFlight.id, "passengers", passengerId);
+      const seatRef = doc(db, "carryOnFlights", selectedFlight.id, "availableSeats", seatId);
+      const gateCheckRef = doc(db, "carryOnFlights", selectedFlight.id, "gateCheckNumbers", gateCheckId);
+      const assignmentRef = doc(db, "carryOnFlights", selectedFlight.id, "assignments", assignmentId);
+
+      await runTransaction(db, async (transaction) => {
+        const [flightSnap, passengerSnap, seatSnap, gateCheckSnap, assignmentSnap] = await Promise.all([
+          transaction.get(flightRef),
+          transaction.get(passengerRef),
+          transaction.get(seatRef),
+          transaction.get(gateCheckRef),
+          transaction.get(assignmentRef),
+        ]);
+
+        if (assignmentSnap.exists()) throw new Error("This Gate Check number already has an assignment.");
+        if (gateCheckSnap.exists() && cleanUpper(gateCheckSnap.data()?.status) !== "AVAILABLE") {
+          throw new Error("This Gate Check number is already assigned.");
+        }
+
+        const passengerData = passengerSnap.exists() ? passengerSnap.data() : {};
+        const seatData = seatSnap.exists() ? seatSnap.data() : {};
+        const passengerGateChecks = existingGateChecksFromRecord(passengerData);
+        const passengerAssignmentIds = existingAssignmentIdsFromRecord(passengerData);
+        const seatGateChecks = existingGateChecksFromRecord(seatData);
+        const seatAssignmentIds = existingAssignmentIdsFromRecord(seatData);
+
+        if (passengerGateChecks.length >= 5 || passengerAssignmentIds.length >= 5) {
+          throw new Error("This passenger already has the maximum of 5 Gate Check items.");
+        }
+        if (seatGateChecks.length >= 5 || seatAssignmentIds.length >= 5) {
+          throw new Error("This seat already has the maximum of 5 Gate Check items.");
+        }
+
+        transaction.set(passengerRef, {
+          passengerName,
+          source: existingPassenger?.source || "GATE_GOSHOW",
+          assigned: true,
+          assignedSeat: seatNumber,
+          gateCheckNumber,
+          assignmentId,
+          gateCheckNumbers: uniqueStrings([...passengerGateChecks, gateCheckNumber]),
+          assignmentIds: uniqueStrings([...passengerAssignmentIds, assignmentId]),
+          gateCheckCount: uniqueStrings([...passengerGateChecks, gateCheckNumber]).length,
+          updatedAt: serverTimestamp(),
+          ...(!passengerSnap.exists() ? { createdAt: serverTimestamp(), createdBy: actor } : {}),
+        }, { merge: true });
+
+        transaction.set(seatRef, {
+          seatNumber,
+          seatType: existingSeat?.seatType || null,
+          blocked: false,
+          status: "ASSIGNED",
+          assignmentId,
+          assignmentIds: uniqueStrings([...seatAssignmentIds, assignmentId]),
+          passengerId,
+          passengerName,
+          gateCheckNumber,
+          gateCheckNumbers: uniqueStrings([...seatGateChecks, gateCheckNumber]),
+          gateCheckCount: uniqueStrings([...seatGateChecks, gateCheckNumber]).length,
+          assignedAt: serverTimestamp(),
+          assignedBy: actor,
+          ...(!seatSnap.exists() ? { source: "GATE_GOSHOW" } : {}),
+        }, { merge: true });
+
+        const carryOnCode = safeDocId(cleanUpper(description));
+        transaction.set(gateCheckRef, {
+          gateCheckNumber,
+          status: "GATE_COLLECTED",
+          source: existingGateCheck?.source || "GATE_GOSHOW",
+          assignmentId,
+          passengerId,
+          passengerName,
+          assignedSeat: seatNumber,
+          counterRecordedWeightLbs: verifiedWeightLbs,
+          carryOnDescription: description,
+          carryOnType: description,
+          carryOnCode,
+          assignedAt: serverTimestamp(),
+          assignedBy: actor,
+          gateCollectedAt: serverTimestamp(),
+          gateCollectedBy: actor,
+          gateVerifiedWeightLbs: verifiedWeightLbs,
+          gateWeightVerifiedAt: serverTimestamp(),
+          gateWeightVerifiedBy: actor,
+          ...(!gateCheckSnap.exists() ? { addedAt: serverTimestamp(), addedBy: actor } : {}),
+        }, { merge: true });
+
+        transaction.set(assignmentRef, {
+          passengerId,
+          passengerName,
+          passengerSource: existingPassenger?.source || "GATE_GOSHOW",
+          assignedSeat: seatNumber,
+          assignedSeatType: existingSeat?.seatType || null,
+          gateCheckNumber,
+          gateCheckSource: existingGateCheck?.source || "GATE_GOSHOW",
+          counterRecordedWeightLbs: verifiedWeightLbs,
+          carryOnDescription: description,
+          carryOnColor: null,
+          carryOnColorCode: null,
+          carryOnSize: null,
+          carryOnType: description,
+          carryOnCode,
+          counterWeightRecordedAt: serverTimestamp(),
+          counterWeightRecordedBy: actor,
+          status: "GATE_COLLECTED",
+          counterAssignedAt: serverTimestamp(),
+          counterAssignedBy: actor,
+          gateCollectedAt: serverTimestamp(),
+          gateCollectedBy: actor,
+          gateVerifiedWeightLbs: verifiedWeightLbs,
+          gateWeightVerifiedAt: serverTimestamp(),
+          gateWeightVerifiedBy: actor,
+          createdAt: serverTimestamp(),
+          createdBy: actor,
+          updatedAt: serverTimestamp(),
+          updatedBy: actor,
+        });
+
+        const previousCount = Number(flightSnap.data()?.assignmentCount || 0);
+        transaction.set(flightRef, { status: "IN_PROGRESS", assignmentCount: previousCount + 1, updatedAt: serverTimestamp(), updatedBy: actor }, { merge: true });
+      });
+
+      try {
+        await setDoc(doc(db, "carryOnFlights", selectedFlight.id, "events", `gate_goshow_${assignmentId}_${Date.now()}`), {
+          type: "GATE_GOSHOW_ADDED",
+          status: "GATE_COLLECTED",
+          assignmentId, passengerId, passengerName, assignedSeat: seatNumber, gateCheckNumber,
+          carryOnDescription: description, gateVerifiedWeightLbs: verifiedWeightLbs,
+          message: `Gate Check ${gateCheckNumber} added and collected directly at Gate.`,
+          createdAt: serverTimestamp(), createdBy: actor,
+        });
+      } catch (eventError) {
+        console.error("Gate GoShow event error:", eventError);
+      }
+
+      setGateEntryPassengerName("");
+      setGateEntrySeat("");
+      setGateEntryGateCheck("");
+      setGateEntryWeight("");
+      setGateEntryDescription("Carry-On");
+      setMessage(`${gateCheckNumber} added and collected directly at Gate.`);
+      setDashboardFilter("GATE_COLLECTED");
+    } catch (gateEntryError) {
+      console.error("Add Gate Check at Gate error:", gateEntryError);
+      setError(gateEntryError?.message || "Unable to add Gate Check at Gate.");
+    } finally {
+      setAddingGateEntry(false);
+    }
+  };
 
   const markCollectedAtGate = async (assignment) => {
     setMessage("");
@@ -1449,6 +1741,60 @@ export default function CarryOnGatePage({
                 value={loadedCount}
               />
             </div>
+          </div>
+
+          <div
+            style={{
+              ...panelStyle,
+              border: "1px solid #bfdbfe",
+              background: "#eff6ff",
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setGateEntryOpen((previous) => !previous)}
+              style={collapsibleHeaderButton}
+            >
+              <span>Add Gate Check at Gate / GoShow</span>
+              <span style={collapsibleCountBadge}>{gateEntryOpen ? "Hide" : "Add"}</span>
+            </button>
+
+            {gateEntryOpen && (
+              <>
+                <p style={{ margin: "8px 0 0", color: "#475569", fontSize: "0.78rem" }}>
+                  Add a Gate Check directly from Gate without returning to Counter. The Gate Check number must be unique. Up to 5 Gate Checks are allowed for the same passenger / seat.
+                </p>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginTop: 10 }}>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={fieldLabel}>Passenger Name</span>
+                    <input type="text" value={gateEntryPassengerName} onChange={(event) => setGateEntryPassengerName(event.target.value)} placeholder="Passenger Name" style={inputStyle} />
+                  </label>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={fieldLabel}>Seat</span>
+                    <input type="text" value={gateEntrySeat} onChange={(event) => setGateEntrySeat(event.target.value)} placeholder="Example: 18F" style={inputStyle} />
+                  </label>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={fieldLabel}>Gate Check Number</span>
+                    <input type="text" value={gateEntryGateCheck} onChange={(event) => setGateEntryGateCheck(event.target.value)} placeholder="Example: GC823999" style={inputStyle} />
+                  </label>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={fieldLabel}>Weight (lb)</span>
+                    <input type="number" min="0.1" step="0.1" inputMode="decimal" value={gateEntryWeight} onChange={(event) => setGateEntryWeight(event.target.value)} placeholder="Example: 22.5" style={inputStyle} />
+                  </label>
+                  <label style={{ display: "grid", gap: 5 }}>
+                    <span style={fieldLabel}>Gate Check Description</span>
+                    <select value={gateEntryDescription} onChange={(event) => setGateEntryDescription(event.target.value)} style={inputStyle}>
+                      {GATE_ITEM_OPTIONS.map((option) => (<option key={option} value={option}>{option}</option>))}
+                    </select>
+                  </label>
+                </div>
+
+                <button type="button" onClick={addGateCheckAtGate} disabled={addingGateEntry || !canOperateGate || flightClosed} style={{ ...primaryButton, marginTop: 10, width: "100%", opacity: addingGateEntry || !canOperateGate || flightClosed ? 0.55 : 1 }}>
+                  {addingGateEntry ? "Adding..." : "Add & Collect at Gate"}
+                </button>
+              </>
+            )}
           </div>
 
           <div
