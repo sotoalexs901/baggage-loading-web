@@ -165,6 +165,7 @@ function parseCsvGateChecks(text) {
 export default function GateCheckDatabasePage({
   user,
   operationalContext,
+  selectedCarryOnFlightId = "",
 }) {
   const role = normalizeRole(
     user?.role
@@ -206,7 +207,9 @@ export default function GateCheckDatabasePage({
   const [
     selectedFlightId,
     setSelectedFlightId,
-  ] = useState("");
+  ] = useState(
+    selectedCarryOnFlightId || ""
+  );
 
   const [
     allocateQuantity,
@@ -262,6 +265,20 @@ export default function GateCheckDatabasePage({
     error,
     setError,
   ] = useState("");
+
+  useEffect(() => {
+    if (
+      selectedCarryOnFlightId &&
+      selectedCarryOnFlightId !== selectedFlightId
+    ) {
+      setSelectedFlightId(
+        selectedCarryOnFlightId
+      );
+    }
+  }, [
+    selectedCarryOnFlightId,
+    selectedFlightId,
+  ]);
 
   useEffect(() => {
     const unsub =
@@ -753,6 +770,50 @@ export default function GateCheckDatabasePage({
 
           await batch.commit();
         }
+
+        const existingActiveIds =
+          new Set(
+            flightGateChecks
+              .filter(
+                (item) =>
+                  cleanUpper(item?.status) !==
+                  "RETURNED_TO_POOL"
+              )
+              .map((item) => item.id)
+          );
+
+        chosen.forEach(
+          (item) =>
+            existingActiveIds.add(
+              item.id
+            )
+        );
+
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id
+          ),
+          {
+            gateCheckNumberCount:
+              existingActiveIds.size,
+            gateCheckDatabaseAllocatedCount:
+              allocatedToSelectedFlight.length +
+              chosen.length,
+            gateCheckDatabaseUpdatedAt:
+              serverTimestamp(),
+            gateCheckDatabaseUpdatedBy:
+              actor,
+            updatedAt:
+              serverTimestamp(),
+            updatedBy:
+              actor,
+          },
+          {
+            merge: true,
+          }
+        );
 
         await setDoc(
           doc(
@@ -1452,6 +1513,42 @@ export default function GateCheckDatabasePage({
 
         await batch.commit();
 
+        const remainingFlightCount =
+          flightGateChecks.filter(
+            (row) =>
+              row.id !== item.id &&
+              cleanUpper(row?.status) !==
+                "RETURNED_TO_POOL"
+          ).length;
+
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id
+          ),
+          {
+            gateCheckNumberCount:
+              remainingFlightCount,
+            gateCheckDatabaseAllocatedCount:
+              Math.max(
+                0,
+                allocatedToSelectedFlight.length - 1
+              ),
+            gateCheckDatabaseUpdatedAt:
+              serverTimestamp(),
+            gateCheckDatabaseUpdatedBy:
+              actor,
+            updatedAt:
+              serverTimestamp(),
+            updatedBy:
+              actor,
+          },
+          {
+            merge: true,
+          }
+        );
+
         setMessage(
           `${item.gateCheckNumber} returned to the Gate Check Database.`
         );
@@ -1671,6 +1768,46 @@ export default function GateCheckDatabasePage({
 
         await batch.commit();
 
+        const unusedIds =
+          new Set(
+            unused.map(
+              (item) => item.id
+            )
+          );
+
+        const activeAfterClose =
+          flightGateChecks.filter(
+            (item) =>
+              !unusedIds.has(item.id) &&
+              cleanUpper(item?.status) !==
+                "RETURNED_TO_POOL"
+          ).length;
+
+        await setDoc(
+          doc(
+            db,
+            "carryOnFlights",
+            selectedFlight.id
+          ),
+          {
+            gateCheckNumberCount:
+              activeAfterClose,
+            gateCheckDatabaseAllocatedCount:
+              0,
+            gateCheckInventoryClosedAt:
+              serverTimestamp(),
+            gateCheckInventoryClosedBy:
+              actor,
+            updatedAt:
+              serverTimestamp(),
+            updatedBy:
+              actor,
+          },
+          {
+            merge: true,
+          }
+        );
+
         await setDoc(
           doc(
             collection(
@@ -1761,6 +1898,42 @@ export default function GateCheckDatabasePage({
           Master storage for Gate Check numbers. Import, organize, allocate to flights, and return unused numbers for future operations.
         </p>
       </div>
+
+      {selectedFlight && (
+        <div
+          style={{
+            padding: 11,
+            borderRadius: 11,
+            border: "1px solid #c4b5fd",
+            background: "#f5f3ff",
+          }}
+        >
+          <div
+            style={{
+              color: "#6d28d9",
+              fontSize: "0.66rem",
+              fontWeight: 900,
+              letterSpacing: "0.06em",
+            }}
+          >
+            CURRENT SETUP FLIGHT
+          </div>
+
+          <div
+            style={{
+              marginTop: 3,
+              color: "#0f172a",
+              fontWeight: 900,
+            }}
+          >
+            {selectedFlight.flightNumber || "-"} - {selectedFlight.flightDate || "-"}
+          </div>
+
+          <div style={smallText}>
+            Allocate Gate Checks here. They will appear automatically as AVAILABLE in this flight's Counter and Gate workflow.
+          </div>
+        </div>
+      )}
 
       <div
         style={
