@@ -183,11 +183,14 @@ export default function GateCheckDatabasePage({
     ]
   );
 
-  const canManage =
+  const canAccessDatabase =
     role === "station_manager" ||
     role === "duty_manager" ||
     role === "duty_managers" ||
     role === "supervisor";
+
+  const canManage =
+    canAccessDatabase;
 
   const [
     inventory,
@@ -1857,6 +1860,49 @@ export default function GateCheckDatabasePage({
       }
     };
 
+  if (!canAccessDatabase) {
+    return (
+      <div
+        style={{
+          padding: 16,
+          borderRadius: 14,
+          border: "1px solid #fecaca",
+          background: "#fff7f7",
+          color: "#991b1b",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "0.72rem",
+            fontWeight: 900,
+            letterSpacing: "0.06em",
+          }}
+        >
+          RESTRICTED ACCESS
+        </div>
+
+        <h3
+          style={{
+            margin: "5px 0 0",
+            color: "#7f1d1d",
+          }}
+        >
+          Gate Check Database
+        </h3>
+
+        <p
+          style={{
+            margin: "7px 0 0",
+            fontSize: "0.82rem",
+            lineHeight: 1.45,
+          }}
+        >
+          This page is available only to Supervisors, Duty Managers and Station Managers.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -1961,13 +2007,6 @@ export default function GateCheckDatabasePage({
           value={counts.disabled}
         />
       </div>
-
-      {!canManage && (
-        <Notice
-          tone="warning"
-          text="Read-only access. Supervisor, Duty Manager or Station Manager is required to change Gate Check inventory."
-        />
-      )}
 
       <div
         style={
