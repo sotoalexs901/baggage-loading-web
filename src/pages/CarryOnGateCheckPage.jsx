@@ -1,4 +1,4 @@
-// src/pages/CarryOnGateCheckPage
+// src/pages/CarryOnGateCheckPage.jsx
 
 import React, {
   useEffect,
