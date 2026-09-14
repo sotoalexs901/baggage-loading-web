@@ -1,4 +1,4 @@
-// src/pages/carryOn/CarryOnCounterPage.jsx
+// src/pages/CarryOnCounterPage.jsx
 
 import React, {
   useEffect,
