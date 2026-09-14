@@ -37,6 +37,7 @@ import AdminUsersPage from "./pages/AdminUsersPage.jsx";
 import CounterScanPage from "./pages/CounterScanPage.jsx";
 import BaggageTrackingPage from "./pages/BaggageTrackingPage.jsx";
 import CarryOnGateCheckPage from "./pages/CarryOnGateCheckPage.jsx";
+import GateCheckDatabasePage from "./pages/GateCheckDatabasePage.jsx";
 
 import {
   createPresenceHeartbeat,
@@ -249,6 +250,16 @@ export default function App() {
   const isStationManager =
     role ===
     "station_manager";
+
+  const canAccessGateCheckDatabase =
+    role ===
+      "station_manager" ||
+    role ===
+      "duty_manager" ||
+    role ===
+      "duty_managers" ||
+    role ===
+      "supervisor";
 
   const canCreateFlights =
     role ===
@@ -1085,6 +1096,48 @@ export default function App() {
 
       if (
         currentView ===
+        "gateCheckDatabase"
+      ) {
+        if (
+          !canAccessGateCheckDatabase
+        ) {
+          return (
+            <div
+              style={{
+                padding: 20,
+                background: "#fff7f7",
+                borderRadius: 14,
+                border: "1px solid #fecaca",
+                color: "#991b1b",
+              }}
+            >
+              <strong>Restricted Access</strong>
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: "0.82rem",
+                }}
+              >
+                Gate Check Database is available only to Supervisors, Duty Managers and Station Managers.
+              </div>
+            </div>
+          );
+        }
+
+        return (
+          <GateCheckDatabasePage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+          />
+        );
+      }
+
+      if (
+        currentView ===
         "carryOnGateChecks"
       ) {
         return (
@@ -1534,6 +1587,31 @@ export default function App() {
             >
               Carry-On Gate Checks
             </button>
+
+            {canAccessGateCheckDatabase && (
+              <button
+                onClick={() =>
+                  goToView(
+                    "gateCheckDatabase"
+                  )
+                }
+                style={{
+                  border:
+                    "1px solid #a7f3d0",
+
+                  background:
+                    "#ecfdf5",
+
+                  color:
+                    "#047857",
+
+                  fontWeight:
+                    800,
+                }}
+              >
+                Gate Check Database
+              </button>
+            )}
 
             <button
               onClick={() =>
