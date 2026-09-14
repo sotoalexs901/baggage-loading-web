@@ -25,6 +25,7 @@ import CarryOnLoadPage from "./CarryOnLoadPage.jsx";
 import CarryOnReportPage from "./CarryOnReportPage.jsx";
 import CarryOnTrackingPage from "./CarryOnTrackingPage.jsx";
 import CarryOnSummaryPage from "./CarryOnSummaryPage.jsx";
+import GateCheckDatabasePage from "./GateCheckDatabasePage.jsx";
 
 import * as pdfjsLib from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
@@ -38,6 +39,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 const TABS = [
   "SETUP",
+  "DATABASE",
   "COUNTER",
   "GATE",
   "RAMP",
@@ -3587,6 +3589,54 @@ export default function CarryOnGateCheckPage({
                         : "Gate Check numbers will unlock only after Load Manifest + Empty Seats Report are saved."
                     }
                   />
+
+                  {documentSetupSaved && canManageGateChecks && (
+                    <div
+                      style={{
+                        padding: 11,
+                        borderRadius: 11,
+                        border: "1px solid #c4b5fd",
+                        background: "#f5f3ff",
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: "#5b21b6",
+                          fontWeight: 900,
+                        }}
+                      >
+                        Gate Check Database
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 4,
+                          color: "#64748b",
+                          fontSize: "0.76rem",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        Pull the required Gate Check numbers from the master inventory for this flight. Unused numbers can be returned after the operation.
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActiveTab("DATABASE")
+                        }
+                        style={{
+                          ...secondaryButton,
+                          marginTop: 9,
+                          width: "100%",
+                          border: "1px solid #7c3aed",
+                          color: "#6d28d9",
+                          background: "white",
+                        }}
+                      >
+                        Open Gate Check Database
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {documentSetupSaved && (
@@ -3812,6 +3862,21 @@ export default function CarryOnGateCheckPage({
               />
             )}
           </div>
+        )}
+
+        {activeTab ===
+          "DATABASE" && (
+          <GateCheckDatabasePage
+            user={
+              user
+            }
+            operationalContext={
+              operationalContext
+            }
+            selectedCarryOnFlightId={
+              selectedCarryOnFlightId
+            }
+          />
         )}
 
         {activeTab ===
