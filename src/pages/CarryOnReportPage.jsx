@@ -55,6 +55,32 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function isGateCreatedGoShow(item) {
+  return (
+    item?.createdAtGate === true ||
+    cleanUpper(item?.creationSource) === "GATE_GOSHOW" ||
+    cleanUpper(item?.passengerSource) === "GATE_GOSHOW" ||
+    cleanUpper(item?.gateCheckSource) === "GATE_GOSHOW"
+  );
+}
+
+function isGateSafetyNotApplicable(item) {
+  if (item?.gatePassengerSafetyRequired === false) {
+    return true;
+  }
+
+  const code = cleanUpper(item?.carryOnCode);
+
+  return [
+    "STROLLER",
+    "WALKER",
+    "WAGON",
+    "CAR_SEAT",
+    "BOOSTER_SEAT",
+    "WCHR",
+  ].includes(code);
+}
+
 function openPrintDocument(html, onBlocked) {
   const printWindow = window.open(
     "",
@@ -98,13 +124,13 @@ function buildCarryOnReportHtml({
       <td><strong>${escapeHtml(item.gateCheckNumber || "-")}</strong></td>
       <td>${escapeHtml(item.carryOnDescription || "-")}</td>
       <td>${escapeHtml(item.carryOnCode || "-")}</td>
-      <td>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</td>
+      <td>${escapeHtml(isGateCreatedGoShow(item) ? "Gate / GoShow" : item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</td>
       <td>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</td>
-      <td>${escapeHtml(item.gateZipTieConfirmed === true ? "YES" : "-")}</td>
-      <td>${escapeHtml(item.gateHighValueRemovalAdvised === true ? "YES" : "-")}</td>
+      <td>${escapeHtml(isGateSafetyNotApplicable(item) ? "N/A" : item.gateZipTieConfirmed === true ? "YES" : "-")}</td>
+      <td>${escapeHtml(isGateSafetyNotApplicable(item) ? "N/A" : item.gateHighValueRemovalAdvised === true ? "YES" : "-")}</td>
       <td>${escapeHtml(item.status || "-")}</td>
-      <td>${escapeHtml(formatTimestamp(item.counterAssignedAt))}</td>
-      <td>${escapeHtml(actorName(item.counterAssignedBy))}</td>
+      <td>${escapeHtml(isGateCreatedGoShow(item) ? "N/A" : formatTimestamp(item.counterAssignedAt))}</td>
+      <td>${escapeHtml(isGateCreatedGoShow(item) ? "N/A" : actorName(item.counterAssignedBy))}</td>
       <td>${escapeHtml(formatTimestamp(item.gateCollectedAt))}</td>
       <td>${escapeHtml(actorName(item.gateCollectedBy))}</td>
       <td>${escapeHtml(formatTimestamp(item.rampReceivedAt))}</td>
@@ -771,9 +797,11 @@ export default function CarryOnReportPage({
                       </Td>
 
                       <Td>
-                        {item.counterRecordedWeightLbs
-                          ? `${item.counterRecordedWeightLbs} lb`
-                          : "-"}
+                        {isGateCreatedGoShow(item)
+                          ? "Gate / GoShow"
+                          : item.counterRecordedWeightLbs
+                            ? `${item.counterRecordedWeightLbs} lb`
+                            : "-"}
                       </Td>
 
                       <Td>
@@ -783,15 +811,19 @@ export default function CarryOnReportPage({
                       </Td>
 
                       <Td>
-                        {item.gateZipTieConfirmed === true
-                          ? "YES"
-                          : "-"}
+                        {isGateSafetyNotApplicable(item)
+                          ? "N/A"
+                          : item.gateZipTieConfirmed === true
+                            ? "YES"
+                            : "-"}
                       </Td>
 
                       <Td>
-                        {item.gateHighValueRemovalAdvised === true
-                          ? "YES"
-                          : "-"}
+                        {isGateSafetyNotApplicable(item)
+                          ? "N/A"
+                          : item.gateHighValueRemovalAdvised === true
+                            ? "YES"
+                            : "-"}
                       </Td>
 
                       <Td>
@@ -799,15 +831,19 @@ export default function CarryOnReportPage({
                       </Td>
 
                       <Td>
-                        {formatTimestamp(
-                          item.counterAssignedAt
-                        )}
+                        {isGateCreatedGoShow(item)
+                          ? "N/A"
+                          : formatTimestamp(
+                              item.counterAssignedAt
+                            )}
                       </Td>
 
                       <Td>
-                        {actorName(
-                          item.counterAssignedBy
-                        )}
+                        {isGateCreatedGoShow(item)
+                          ? "N/A"
+                          : actorName(
+                              item.counterAssignedBy
+                            )}
                       </Td>
 
                       <Td>
