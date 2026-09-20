@@ -181,6 +181,51 @@ const NOTE_OPTIONS = [
   "OTHER",
 ];
 
+function requiresGatePassengerSafety(item) {
+  const code = cleanUpper(
+    item?.carryOnCode ||
+    item?.code ||
+    ""
+  );
+
+  const type = cleanUpper(
+    item?.carryOnType ||
+    item?.type ||
+    ""
+  );
+
+  const description = cleanUpper(
+    item?.carryOnDescription ||
+    item?.description ||
+    ""
+  );
+
+  const exemptCodes = new Set([
+    "STROLLER",
+    "WALKER",
+    "WAGON",
+    "CAR_SEAT",
+    "BOOSTER_SEAT",
+    "WCHR",
+  ]);
+
+  if (exemptCodes.has(code)) {
+    return false;
+  }
+
+  if (
+    ["STROLLER", "WALKER", "WAGON", "CAR SEAT", "BOOSTER SEAT", "WCHR"]
+      .some((value) =>
+        type === value ||
+        description === value
+      )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export default function CarryOnGatePage({
   user,
   operationalContext,
@@ -239,6 +284,7 @@ export default function CarryOnGatePage({
   const [pendingGateSafety, setPendingGateSafety] = useState(null);
   const [zipTieConfirmed, setZipTieConfirmed] = useState(false);
   const [highValueRemovalAdvised, setHighValueRemovalAdvised] = useState(false);
+  const [pendingGateEntrySafety, setPendingGateEntrySafety] = useState(false);
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -513,7 +559,7 @@ export default function CarryOnGatePage({
     [assignments]
   );
 
-  const addGateCheckAtGate = async () => {
+  const addGateCheckAtGate = async (gateSafety = null) => {
     setMessage("");
     setError("");
 
@@ -535,6 +581,26 @@ export default function CarryOnGatePage({
 
     if (!passengerName || !seatNumber || !gateCheckNumber || !gateEntrySelection?.code || !description || !Number.isFinite(verifiedWeightLbs) || verifiedWeightLbs <= 0) {
       setError("Passenger Name, Seat, Gate Check Number, Gate Check Description and valid Weight are required.");
+      return;
+    }
+
+    const safetyRequired =
+      requiresGatePassengerSafety({
+        code: gateEntrySelection?.code,
+        type: gateEntrySelection?.type,
+        description,
+      });
+
+    if (
+      safetyRequired &&
+      (
+        gateSafety?.zipTieConfirmed !== true ||
+        gateSafety?.highValueRemovalAdvised !== true
+      )
+    ) {
+      setZipTieConfirmed(false);
+      setHighValueRemovalAdvised(false);
+      setPendingGateEntrySafety(true);
       return;
     }
 
@@ -615,6 +681,20 @@ export default function CarryOnGatePage({
           gateCheckNumbers: uniqueStrings([...passengerGateChecks, gateCheckNumber]),
           assignmentIds: uniqueStrings([...passengerAssignmentIds, assignmentId]),
           gateCheckCount: uniqueStrings([...passengerGateChecks, gateCheckNumber]).length,
+          ...(safetyRequired
+            ? {
+                gateZipTieConfirmed: true,
+                gateZipTieConfirmedAt: serverTimestamp(),
+                gateZipTieConfirmedBy: actor,
+                gateHighValueRemovalAdvised: true,
+                gateHighValueRemovalAdvisedAt: serverTimestamp(),
+                gateHighValueRemovalAdvisedBy: actor,
+                gatePassengerSafetyConfirmed: true,
+                gatePassengerSafetyConfirmedAt: serverTimestamp(),
+                gatePassengerSafetyConfirmedBy: actor,
+                lastGateSafetyGateCheckNumber: gateCheckNumber,
+              }
+            : {}),
           updatedAt: serverTimestamp(),
           ...(!passengerSnap.exists() ? { createdAt: serverTimestamp(), createdBy: actor } : {}),
         }, { merge: true });
@@ -645,10 +725,14 @@ export default function CarryOnGatePage({
           passengerId,
           passengerName,
           assignedSeat: seatNumber,
-          counterRecordedWeightLbs: verifiedWeightLbs,
+          createdAtGate: true,
+          creationSource: "GATE_GOSHOW",
           carryOnDescription: description,
-          carryOnType: description,
-          carryOnCode,
+          carryOnColor: gateEntrySelection?.color || null,
+          carryOnColorCode: gateEntrySelection?.colorCode || null,
+          carryOnSize: gateEntrySelection?.size || null,
+          carryOnType: gateEntrySelection?.type || description,
+          carryOnCode: gateEntrySelection?.code || carryOnCode,
           assignedAt: serverTimestamp(),
           assignedBy: actor,
           gateCollectedAt: serverTimestamp(),
@@ -656,6 +740,23 @@ export default function CarryOnGatePage({
           gateVerifiedWeightLbs: verifiedWeightLbs,
           gateWeightVerifiedAt: serverTimestamp(),
           gateWeightVerifiedBy: actor,
+          gatePassengerSafetyRequired: safetyRequired,
+          gateZipTieConfirmed:
+            safetyRequired ? true : false,
+          gateHighValueRemovalAdvised:
+            safetyRequired ? true : false,
+          gatePassengerSafetyConfirmed:
+            safetyRequired ? true : false,
+          ...(safetyRequired
+            ? {
+                gateZipTieConfirmedAt: serverTimestamp(),
+                gateZipTieConfirmedBy: actor,
+                gateHighValueRemovalAdvisedAt: serverTimestamp(),
+                gateHighValueRemovalAdvisedBy: actor,
+                gatePassengerSafetyConfirmedAt: serverTimestamp(),
+                gatePassengerSafetyConfirmedBy: actor,
+              }
+            : {}),
           ...(!gateCheckSnap.exists() ? { addedAt: serverTimestamp(), addedBy: actor } : {}),
         }, { merge: true });
 
@@ -667,23 +768,37 @@ export default function CarryOnGatePage({
           assignedSeatType: existingSeat?.seatType || null,
           gateCheckNumber,
           gateCheckSource: existingGateCheck?.source || "GATE_GOSHOW",
-          counterRecordedWeightLbs: verifiedWeightLbs,
+          createdAtGate: true,
+          creationSource: "GATE_GOSHOW",
           carryOnDescription: description,
-          carryOnColor: null,
-          carryOnColorCode: null,
-          carryOnSize: null,
-          carryOnType: description,
-          carryOnCode,
-          counterWeightRecordedAt: serverTimestamp(),
-          counterWeightRecordedBy: actor,
+          carryOnColor: gateEntrySelection?.color || null,
+          carryOnColorCode: gateEntrySelection?.colorCode || null,
+          carryOnSize: gateEntrySelection?.size || null,
+          carryOnType: gateEntrySelection?.type || description,
+          carryOnCode: gateEntrySelection?.code || carryOnCode,
           status: "GATE_COLLECTED",
-          counterAssignedAt: serverTimestamp(),
-          counterAssignedBy: actor,
           gateCollectedAt: serverTimestamp(),
           gateCollectedBy: actor,
           gateVerifiedWeightLbs: verifiedWeightLbs,
           gateWeightVerifiedAt: serverTimestamp(),
           gateWeightVerifiedBy: actor,
+          gatePassengerSafetyRequired: safetyRequired,
+          gateZipTieConfirmed:
+            safetyRequired ? true : false,
+          gateHighValueRemovalAdvised:
+            safetyRequired ? true : false,
+          gatePassengerSafetyConfirmed:
+            safetyRequired ? true : false,
+          ...(safetyRequired
+            ? {
+                gateZipTieConfirmedAt: serverTimestamp(),
+                gateZipTieConfirmedBy: actor,
+                gateHighValueRemovalAdvisedAt: serverTimestamp(),
+                gateHighValueRemovalAdvisedBy: actor,
+                gatePassengerSafetyConfirmedAt: serverTimestamp(),
+                gatePassengerSafetyConfirmedBy: actor,
+              }
+            : {}),
           createdAt: serverTimestamp(),
           createdBy: actor,
           updatedAt: serverTimestamp(),
@@ -700,6 +815,12 @@ export default function CarryOnGatePage({
           status: "GATE_COLLECTED",
           assignmentId, passengerId, passengerName, assignedSeat: seatNumber, gateCheckNumber,
           carryOnDescription: description, carryOnCode: gateEntrySelection?.code || null, carryOnColor: gateEntrySelection?.color || null, carryOnSize: gateEntrySelection?.size || null, carryOnType: gateEntrySelection?.type || description, gateVerifiedWeightLbs: verifiedWeightLbs,
+          createdAtGate: true,
+          creationSource: "GATE_GOSHOW",
+          gatePassengerSafetyRequired: safetyRequired,
+          gateZipTieConfirmed: safetyRequired ? true : false,
+          gateHighValueRemovalAdvised: safetyRequired ? true : false,
+          gatePassengerSafetyConfirmed: safetyRequired ? true : false,
           message: `Gate Check ${gateCheckNumber} added and collected directly at Gate.`,
           createdAt: serverTimestamp(), createdBy: actor,
         });
@@ -714,6 +835,9 @@ export default function CarryOnGatePage({
       setGateEntryDescription("Carry-On");
       setGateEntrySelection(null);
       setGateDescriptionChartOpen(false);
+      setPendingGateEntrySafety(false);
+      setZipTieConfirmed(false);
+      setHighValueRemovalAdvised(false);
       setMessage(`${gateCheckNumber} added and collected directly at Gate.`);
       setDashboardFilter("GATE_COLLECTED");
     } catch (gateEntryError) {
@@ -755,12 +879,29 @@ export default function CarryOnGatePage({
       return;
     }
 
+    const safetyRequired =
+      requiresGatePassengerSafety(assignment);
+
+    if (!safetyRequired) {
+      void completeCollectedAtGate(
+        assignment,
+        {
+          assignment,
+          verifiedWeightLbs,
+          note: getDraftNote(assignment.id),
+          safetyRequired: false,
+        }
+      );
+      return;
+    }
+
     setZipTieConfirmed(false);
     setHighValueRemovalAdvised(false);
     setPendingGateSafety({
       assignment,
       verifiedWeightLbs,
       note: getDraftNote(assignment.id),
+      safetyRequired: true,
     });
   };
 
@@ -798,9 +939,16 @@ export default function CarryOnGatePage({
       return;
     }
 
+    const safetyRequired =
+      gateSafety?.safetyRequired ??
+      requiresGatePassengerSafety(assignment);
+
     if (
-      gateSafety?.zipTieConfirmed !== true ||
-      gateSafety?.highValueRemovalAdvised !== true
+      safetyRequired &&
+      (
+        gateSafety?.zipTieConfirmed !== true ||
+        gateSafety?.highValueRemovalAdvised !== true
+      )
     ) {
       setError(
         "Both passenger safety confirmations are required before Gate collection."
@@ -873,15 +1021,31 @@ export default function CarryOnGatePage({
               serverTimestamp(),
             gateWeightVerifiedBy:
               actor,
-            gateZipTieConfirmed: true,
-            gateZipTieConfirmedAt: serverTimestamp(),
-            gateZipTieConfirmedBy: actor,
-            gateHighValueRemovalAdvised: true,
-            gateHighValueRemovalAdvisedAt: serverTimestamp(),
-            gateHighValueRemovalAdvisedBy: actor,
-            gatePassengerSafetyConfirmed: true,
-            gatePassengerSafetyConfirmedAt: serverTimestamp(),
-            gatePassengerSafetyConfirmedBy: actor,
+            gatePassengerSafetyRequired:
+              safetyRequired,
+            gateZipTieConfirmed:
+              safetyRequired ? true : false,
+            gateHighValueRemovalAdvised:
+              safetyRequired ? true : false,
+            gatePassengerSafetyConfirmed:
+              safetyRequired ? true : false,
+            ...(safetyRequired
+              ? {
+                  gateZipTieConfirmedAt: serverTimestamp(),
+                  gateZipTieConfirmedBy: actor,
+                  gateHighValueRemovalAdvisedAt: serverTimestamp(),
+                  gateHighValueRemovalAdvisedBy: actor,
+                  gatePassengerSafetyConfirmedAt: serverTimestamp(),
+                  gatePassengerSafetyConfirmedBy: actor,
+                }
+              : {
+                  gateZipTieConfirmedAt: null,
+                  gateZipTieConfirmedBy: null,
+                  gateHighValueRemovalAdvisedAt: null,
+                  gateHighValueRemovalAdvisedBy: null,
+                  gatePassengerSafetyConfirmedAt: null,
+                  gatePassengerSafetyConfirmedBy: null,
+                }),
             updatedAt: serverTimestamp(),
             updatedBy: actor,
           },
@@ -906,37 +1070,55 @@ export default function CarryOnGatePage({
               serverTimestamp(),
             gateWeightVerifiedBy:
               actor,
-            gateZipTieConfirmed: true,
-            gateZipTieConfirmedAt: serverTimestamp(),
-            gateZipTieConfirmedBy: actor,
-            gateHighValueRemovalAdvised: true,
-            gateHighValueRemovalAdvisedAt: serverTimestamp(),
-            gateHighValueRemovalAdvisedBy: actor,
-            gatePassengerSafetyConfirmed: true,
-            gatePassengerSafetyConfirmedAt: serverTimestamp(),
-            gatePassengerSafetyConfirmedBy: actor,
+            gatePassengerSafetyRequired:
+              safetyRequired,
+            gateZipTieConfirmed:
+              safetyRequired ? true : false,
+            gateHighValueRemovalAdvised:
+              safetyRequired ? true : false,
+            gatePassengerSafetyConfirmed:
+              safetyRequired ? true : false,
+            ...(safetyRequired
+              ? {
+                  gateZipTieConfirmedAt: serverTimestamp(),
+                  gateZipTieConfirmedBy: actor,
+                  gateHighValueRemovalAdvisedAt: serverTimestamp(),
+                  gateHighValueRemovalAdvisedBy: actor,
+                  gatePassengerSafetyConfirmedAt: serverTimestamp(),
+                  gatePassengerSafetyConfirmedBy: actor,
+                }
+              : {
+                  gateZipTieConfirmedAt: null,
+                  gateZipTieConfirmedBy: null,
+                  gateHighValueRemovalAdvisedAt: null,
+                  gateHighValueRemovalAdvisedBy: null,
+                  gatePassengerSafetyConfirmedAt: null,
+                  gatePassengerSafetyConfirmedBy: null,
+                }),
           },
           { merge: true }
         );
 
-        transaction.set(
-          passengerRef,
-          {
-            gateZipTieConfirmed: true,
-            gateZipTieConfirmedAt: serverTimestamp(),
-            gateZipTieConfirmedBy: actor,
-            gateHighValueRemovalAdvised: true,
-            gateHighValueRemovalAdvisedAt: serverTimestamp(),
-            gateHighValueRemovalAdvisedBy: actor,
-            gatePassengerSafetyConfirmed: true,
-            gatePassengerSafetyConfirmedAt: serverTimestamp(),
-            gatePassengerSafetyConfirmedBy: actor,
-            lastGateSafetyGateCheckNumber:
-              assignment.gateCheckNumber || null,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
+        if (safetyRequired) {
+          transaction.set(
+            passengerRef,
+            {
+              gateZipTieConfirmed: true,
+              gateZipTieConfirmedAt: serverTimestamp(),
+              gateZipTieConfirmedBy: actor,
+              gateHighValueRemovalAdvised: true,
+              gateHighValueRemovalAdvisedAt: serverTimestamp(),
+              gateHighValueRemovalAdvisedBy: actor,
+              gatePassengerSafetyConfirmed: true,
+              gatePassengerSafetyConfirmedAt: serverTimestamp(),
+              gatePassengerSafetyConfirmedBy: actor,
+              lastGateSafetyGateCheckNumber:
+                assignment.gateCheckNumber || null,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
       });
 
       try {
@@ -969,9 +1151,14 @@ export default function CarryOnGatePage({
               note.combined || null,
             gateVerifiedWeightLbs:
               verifiedWeightLbs,
-            gateZipTieConfirmed: true,
-            gateHighValueRemovalAdvised: true,
-            gatePassengerSafetyConfirmed: true,
+            gatePassengerSafetyRequired:
+              safetyRequired,
+            gateZipTieConfirmed:
+              safetyRequired ? true : false,
+            gateHighValueRemovalAdvised:
+              safetyRequired ? true : false,
+            gatePassengerSafetyConfirmed:
+              safetyRequired ? true : false,
             message:
               `Carry-On ${assignment.gateCheckNumber || assignment.id} collected at Gate.`,
             createdAt: serverTimestamp(),
@@ -1957,7 +2144,7 @@ export default function CarryOnGatePage({
                   </label>
                 </div>
 
-                <button type="button" onClick={addGateCheckAtGate} disabled={addingGateEntry || !canOperateGate || flightClosed} style={{ ...primaryButton, marginTop: 10, width: "100%", opacity: addingGateEntry || !canOperateGate || flightClosed ? 0.55 : 1 }}>
+                <button type="button" onClick={() => addGateCheckAtGate()} disabled={addingGateEntry || !canOperateGate || flightClosed} style={{ ...primaryButton, marginTop: 10, width: "100%", opacity: addingGateEntry || !canOperateGate || flightClosed ? 0.55 : 1 }}>
                   {addingGateEntry ? "Adding..." : "Add & Collect at Gate"}
                 </button>
               </>
@@ -2557,6 +2744,32 @@ export default function CarryOnGatePage({
               </div>
             )}
           </div>
+
+          {pendingGateEntrySafety && (
+            <GateSafetyConfirmationModal
+              assignment={{
+                passengerName: gateEntryPassengerName,
+                gateCheckNumber: gateEntryGateCheck,
+              }}
+              zipTieConfirmed={zipTieConfirmed}
+              setZipTieConfirmed={setZipTieConfirmed}
+              highValueRemovalAdvised={highValueRemovalAdvised}
+              setHighValueRemovalAdvised={setHighValueRemovalAdvised}
+              busy={addingGateEntry}
+              onCancel={() => {
+                setPendingGateEntrySafety(false);
+                setZipTieConfirmed(false);
+                setHighValueRemovalAdvised(false);
+              }}
+              onConfirm={() => {
+                setPendingGateEntrySafety(false);
+                void addGateCheckAtGate({
+                  zipTieConfirmed,
+                  highValueRemovalAdvised,
+                });
+              }}
+            />
+          )}
 
           {pendingGateSafety && (
             <GateSafetyConfirmationModal
