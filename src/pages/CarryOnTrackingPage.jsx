@@ -77,6 +77,32 @@ function openPrintDocument(html, onBlocked) {
   }, 400);
 }
 
+function isGateCreatedGoShow(item) {
+  return (
+    item?.createdAtGate === true ||
+    cleanUpper(item?.creationSource) === "GATE_GOSHOW" ||
+    cleanUpper(item?.passengerSource) === "GATE_GOSHOW" ||
+    cleanUpper(item?.gateCheckSource) === "GATE_GOSHOW"
+  );
+}
+
+function isGateSafetyNotApplicable(item) {
+  if (item?.gatePassengerSafetyRequired === false) {
+    return true;
+  }
+
+  const code = cleanUpper(item?.carryOnCode);
+
+  return [
+    "STROLLER",
+    "WALKER",
+    "WAGON",
+    "CAR_SEAT",
+    "BOOSTER_SEAT",
+    "WCHR",
+  ].includes(code);
+}
+
 function statusLabel(status) {
   switch (cleanUpper(status)) {
     case "COUNTER_ASSIGNED":
@@ -140,29 +166,31 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
         </div>
 
         <div class="facts">
-          <div><span>Counter Weight</span><strong>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</strong></div>
+          ${isGateCreatedGoShow(item)
+            ? `<div><span>Created At</span><strong>Gate / GoShow</strong></div>`
+            : `<div><span>Counter Weight</span><strong>${escapeHtml(item.counterRecordedWeightLbs ? `${item.counterRecordedWeightLbs} lb` : "-")}</strong></div>`}
           <div><span>Gate Verified Weight</span><strong>${escapeHtml(item.gateVerifiedWeightLbs ? `${item.gateVerifiedWeightLbs} lb` : "-")}</strong></div>
           <div><span>Compartment</span><strong>${escapeHtml(item.compartment || "-")}</strong></div>
           <div><span>Source</span><strong>${escapeHtml(item.passengerSource || "-")}</strong></div>
           <div><span>Gate Check Description</span><strong>${escapeHtml(item.carryOnDescription || "-")}</strong></div>
           <div><span>Classification Code</span><strong>${escapeHtml(item.carryOnCode || "-")}</strong></div>
-          <div><span>Zip Tie Secured</span><strong>${escapeHtml(item.gateZipTieConfirmed === true ? "YES" : "-")}</strong></div>
-          <div><span>Valuables / Meds / Laptop Advised</span><strong>${escapeHtml(item.gateHighValueRemovalAdvised === true ? "YES" : "-")}</strong></div>
-          <div><span>Safety Confirmed At</span><strong>${escapeHtml(formatTimestamp(item.gatePassengerSafetyConfirmedAt))}</strong></div>
-          <div><span>Safety Confirmed By</span><strong>${escapeHtml(actorName(item.gatePassengerSafetyConfirmedBy))}</strong></div>
+          <div><span>Zip Tie Secured</span><strong>${escapeHtml(isGateSafetyNotApplicable(item) ? "N/A" : item.gateZipTieConfirmed === true ? "YES" : "-")}</strong></div>
+          <div><span>Valuables / Meds / Laptop Advised</span><strong>${escapeHtml(isGateSafetyNotApplicable(item) ? "N/A" : item.gateHighValueRemovalAdvised === true ? "YES" : "-")}</strong></div>
+          <div><span>Safety Confirmed At</span><strong>${escapeHtml(isGateSafetyNotApplicable(item) ? "N/A" : formatTimestamp(item.gatePassengerSafetyConfirmedAt))}</strong></div>
+          <div><span>Safety Confirmed By</span><strong>${escapeHtml(isGateSafetyNotApplicable(item) ? "N/A" : actorName(item.gatePassengerSafetyConfirmedBy))}</strong></div>
         </div>
 
-        ${item.gatePassengerSafetyConfirmed === true ? `<div class="safety-note"><strong>Passenger Safety Confirmation:</strong> Zip tie secured / passenger informed and passenger advised to remove high-value items, medications, laptops and other valuables.</div>` : ""}
+        ${item.gatePassengerSafetyConfirmed === true && !isGateSafetyNotApplicable(item) ? `<div class="safety-note"><strong>Passenger Safety Confirmation:</strong> Zip tie secured / passenger informed and passenger advised to remove high-value items, medications, laptops and other valuables.</div>` : ""}
         ${item.gateCollectionNoteCombined ? `<div class="note"><strong>Gate Note:</strong> ${escapeHtml(item.gateCollectionNoteCombined)}</div>` : ""}
         ${item.offloadReason ? `<div class="offload-note"><strong>Offload:</strong> ${escapeHtml(item.offloadReason)} &middot; ${escapeHtml(formatTimestamp(item.offloadedAt))} &middot; ${escapeHtml(actorName(item.offloadedBy))}</div>` : ""}
 
         <div class="steps">
-          ${trackingStepHtml("Counter Assigned", item.counterAssignedAt, item.counterAssignedBy)}
+          ${isGateCreatedGoShow(item) ? "" : trackingStepHtml("Counter Assigned", item.counterAssignedAt, item.counterAssignedBy)}
           ${trackingStepHtml(
             "Gate Collected",
             item.gateCollectedAt,
             item.gateCollectedBy,
-            item.gatePassengerSafetyConfirmed === true
+            item.gatePassengerSafetyConfirmed === true && !isGateSafetyNotApplicable(item)
               ? "Passenger Safety Confirmed - Zip Tie secured / passenger informed - Valuables, medications and laptops removal advised"
               : ""
           )}
@@ -918,19 +946,26 @@ function TrackingCard({
   const status =
     cleanUpper(item?.status);
 
+  const gateCreated =
+    isGateCreatedGoShow(item);
+
   const steps = [
-    {
-      key: "COUNTER_ASSIGNED",
-      label: "Counter Assigned",
-      active:
-        status === "OFFLOADED"
-          ? Boolean(item.counterAssignedAt)
-          : statusRank(status) >= 1,
-      time:
-        item.counterAssignedAt,
-      actor:
-        item.counterAssignedBy,
-    },
+    ...(!gateCreated
+      ? [
+          {
+            key: "COUNTER_ASSIGNED",
+            label: "Counter Assigned",
+            active:
+              status === "OFFLOADED"
+                ? Boolean(item.counterAssignedAt)
+                : statusRank(status) >= 1,
+            time:
+              item.counterAssignedAt,
+            actor:
+              item.counterAssignedBy,
+          },
+        ]
+      : []),
     {
       key: "GATE_COLLECTED",
       label: "Gate Collected",
@@ -1045,8 +1080,9 @@ function TrackingCard({
               fontSize: "0.75rem",
             }}
           >
-            Counter Weight: {item.counterRecordedWeightLbs || "-"} lb
-            {" - "}
+            {gateCreated
+              ? "Created directly at Gate / GoShow"
+              : `Counter Weight: ${item.counterRecordedWeightLbs || "-"} lb - `}
             Gate Verified: {item.gateVerifiedWeightLbs || "-"} lb
           </div>
 
@@ -1069,7 +1105,8 @@ function TrackingCard({
             {item.carryOnCode ? ` (${item.carryOnCode})` : ""}
           </div>
 
-          {item.gatePassengerSafetyConfirmed === true && (
+          {item.gatePassengerSafetyConfirmed === true &&
+            !isGateSafetyNotApplicable(item) && (
             <div
               style={{
                 marginTop: 6,
@@ -1285,6 +1322,12 @@ function PassengerFullDetail({
   item,
   selectedFlight,
 }) {
+  const gateCreated =
+    isGateCreatedGoShow(item);
+
+  const safetyNotApplicable =
+    isGateSafetyNotApplicable(item);
+
   return (
     <div
       style={{
@@ -1356,14 +1399,21 @@ function PassengerFullDetail({
             value={statusLabel(item.status)}
           />
 
-          <Info
-            label="Counter Weight"
-            value={
-              item.counterRecordedWeightLbs
-                ? `${item.counterRecordedWeightLbs} lb`
-                : "-"
-            }
-          />
+          {gateCreated ? (
+            <Info
+              label="Created At"
+              value="Gate / GoShow"
+            />
+          ) : (
+            <Info
+              label="Counter Weight"
+              value={
+                item.counterRecordedWeightLbs
+                  ? `${item.counterRecordedWeightLbs} lb`
+                  : "-"
+              }
+            />
+          )}
 
           <Info
             label="Gate Verified Weight"
@@ -1382,33 +1432,45 @@ function PassengerFullDetail({
           <Info
             label="Zip Tie Secured"
             value={
-              item.gateZipTieConfirmed === true
-                ? "YES"
-                : "-"
+              safetyNotApplicable
+                ? "N/A"
+                : item.gateZipTieConfirmed === true
+                  ? "YES"
+                  : "-"
             }
           />
 
           <Info
             label="Valuables / Meds / Laptop Advised"
             value={
-              item.gateHighValueRemovalAdvised === true
-                ? "YES"
-                : "-"
+              safetyNotApplicable
+                ? "N/A"
+                : item.gateHighValueRemovalAdvised === true
+                  ? "YES"
+                  : "-"
             }
           />
 
           <Info
             label="Safety Confirmed At"
-            value={formatTimestamp(
-              item.gatePassengerSafetyConfirmedAt
-            )}
+            value={
+              safetyNotApplicable
+                ? "N/A"
+                : formatTimestamp(
+                    item.gatePassengerSafetyConfirmedAt
+                  )
+            }
           />
 
           <Info
             label="Safety Confirmed By"
-            value={actorName(
-              item.gatePassengerSafetyConfirmedBy
-            )}
+            value={
+              safetyNotApplicable
+                ? "N/A"
+                : actorName(
+                    item.gatePassengerSafetyConfirmedBy
+                  )
+            }
           />
 
           <Info
@@ -1453,31 +1515,38 @@ function PassengerFullDetail({
         </div>
       </DocumentHeader>
 
-      <DetailStep
-        title="1. Counter Assigned"
-        time={item.counterAssignedAt}
-        actor={item.counterAssignedBy}
-      />
+      {!gateCreated && (
+        <DetailStep
+          title="1. Counter Assigned"
+          time={item.counterAssignedAt}
+          actor={item.counterAssignedBy}
+        />
+      )}
 
       <DetailStep
-        title="2. Gate Collected"
+        title={
+          gateCreated
+            ? "1. Gate GoShow / Collected"
+            : "2. Gate Collected"
+        }
         time={item.gateCollectedAt}
         actor={item.gateCollectedBy}
         extra={
-          item.gatePassengerSafetyConfirmed === true
+          item.gatePassengerSafetyConfirmed === true &&
+          !safetyNotApplicable
             ? `Passenger Safety Confirmed - Zip Tie: YES - Valuables / Meds / Laptop Advised: YES - ${formatTimestamp(item.gatePassengerSafetyConfirmedAt)} - ${actorName(item.gatePassengerSafetyConfirmedBy)}`
             : null
         }
       />
 
       <DetailStep
-        title="3. Ramp Received"
+        title={gateCreated ? "2. Ramp Received" : "3. Ramp Received"}
         time={item.rampReceivedAt}
         actor={item.rampReceivedBy}
       />
 
       <DetailStep
-        title="4. Aircraft Loaded"
+        title={gateCreated ? "3. Aircraft Loaded" : "4. Aircraft Loaded"}
         time={item.aircraftLoadedAt}
         actor={item.aircraftLoadedBy}
         extra={
