@@ -56,6 +56,26 @@ function getActor(user, operationalContext) {
   };
 }
 
+function assignmentSourceLabel(item) {
+  if (
+    item?.createdAtGate === true ||
+    cleanUpper(item?.creationSource) === "GATE_GOSHOW" ||
+    cleanUpper(item?.passengerSource) === "GATE_GOSHOW" ||
+    cleanUpper(item?.gateCheckSource) === "GATE_GOSHOW"
+  ) {
+    return "Gate / GoShow";
+  }
+
+  if (
+    cleanUpper(item?.passengerSource) === "GOSHOW" ||
+    cleanUpper(item?.passengerSource) === "LAST_MINUTE"
+  ) {
+    return "Counter / GoShow";
+  }
+
+  return "Counter";
+}
+
 function statusLabel(value) {
   const status = cleanUpper(value);
   if (!status) return "SETUP";
@@ -766,6 +786,9 @@ export default function CarryOnSummaryPage({
                                     <div style={rowSubStyle}>
                                       {item.carryOnDescription || "Not classified"}
                                       {item.carryOnCode ? ` | ${item.carryOnCode}` : ""}
+                                    </div>
+                                    <div style={rowSubStyle}>
+                                      Source: {assignmentSourceLabel(item)}
                                     </div>
                                   </div>
 
