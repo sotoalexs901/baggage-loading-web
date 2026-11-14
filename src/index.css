@@ -455,3 +455,47 @@ table {
     font-size: 1.55rem;
   }
 }
+
+
+.mobile-nav-toggle {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  .mobile-nav-toggle {
+    display: inline-flex;
+    width: 100%;
+    min-height: 46px;
+    align-items: center;
+    justify-content: center;
+    margin: 0 0 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    background: #ffffff;
+    color: #0f172a;
+    font-weight: 900;
+    font-size: 0.86rem;
+    cursor: pointer;
+  }
+
+  .nav-buttons {
+    display: none !important;
+  }
+
+  .nav-buttons.mobile-open {
+    display: grid !important;
+  }
+
+  .selected-flight-chip {
+    position: sticky;
+    top: 6px;
+    z-index: 20;
+    display: flex !important;
+    width: 100%;
+    box-sizing: border-box;
+    justify-content: center;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  }
+}
