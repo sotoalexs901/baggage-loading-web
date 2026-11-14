@@ -1450,6 +1450,7 @@ export default function App() {
         </h1>
 
         <div
+          className="app-header-layout"
           style={{
             display:
               "flex",
@@ -1702,6 +1703,7 @@ export default function App() {
           ========================= */}
 
           <div
+            className="app-user-profile"
             style={{
               display:
                 "flex",
@@ -2003,6 +2005,7 @@ export default function App() {
       ========================= */}
 
       <main
+        className="app-main"
         key={
           refreshKey
         }
