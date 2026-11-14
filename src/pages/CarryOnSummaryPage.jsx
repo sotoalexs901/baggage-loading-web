@@ -790,6 +790,11 @@ export default function CarryOnSummaryPage({
                                     <div style={rowSubStyle}>
                                       Source: {assignmentSourceLabel(item)}
                                     </div>
+                                    {item.rampReceiptComment && (
+                                      <div style={rowSubStyle}>
+                                        Ramp Comment: {item.rampReceiptComment}
+                                      </div>
+                                    )}
                                   </div>
 
                                   <div style={{ textAlign: "right" }}>
