@@ -139,6 +139,7 @@ function buildCarryOnReportHtml({
       <td>${escapeHtml(actorName(item.aircraftLoadedBy))}</td>
       <td>${escapeHtml(item.compartment || "-")}</td>
       <td>${escapeHtml(item.gateCollectionNoteCombined || "-")}</td>
+      <td>${escapeHtml(item.rampReceiptComment || "-")}</td>
       <td>${escapeHtml(item.offloadReason || "-")}</td>
       <td>${escapeHtml(formatTimestamp(item.offloadedAt))}</td>
       <td>${escapeHtml(actorName(item.offloadedBy))}</td>
@@ -206,9 +207,9 @@ function buildCarryOnReportHtml({
         <thead><tr>
           <th>Passenger</th><th>Seat</th><th>Gate Check</th><th>Gate Check Description</th><th>Code</th><th>Counter Wt</th><th>Gate Wt</th><th>Zip Tie</th><th>Valuables / Meds / Laptop Advised</th><th>Status</th>
           <th>Counter Time</th><th>Counter By</th><th>Gate Time</th><th>Gate By</th><th>Ramp Time</th><th>Ramp By</th>
-          <th>Loaded Time</th><th>Loaded By</th><th>Compartment</th><th>Gate Notes</th><th>Offload Reason</th><th>Offloaded At</th><th>Offloaded By</th>
+          <th>Loaded Time</th><th>Loaded By</th><th>Compartment</th><th>Gate Notes</th><th>Ramp Comment</th><th>Offload Reason</th><th>Offloaded At</th><th>Offloaded By</th>
         </tr></thead>
-        <tbody>${bodyRows || '<tr><td colspan="23">No Carry-On assignments.</td></tr>'}</tbody>
+        <tbody>${bodyRows || '<tr><td colspan="24">No Carry-On assignments.</td></tr>'}</tbody>
       </table>
 
       <div class="footer">BLCS &middot; Baggage Loading Control System</div>
@@ -749,6 +750,7 @@ export default function CarryOnReportPage({
                   <Th>Loaded By</Th>
                   <Th>Compartment</Th>
                   <Th>Gate Notes</Th>
+                  <Th>Ramp Comment</Th>
                   <Th>Offload Reason</Th>
                   <Th>Offloaded At</Th>
                   <Th>Offloaded By</Th>
@@ -759,7 +761,7 @@ export default function CarryOnReportPage({
                 {rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan="24"
+                      colSpan="25"
                       style={{
                         padding: 14,
                         textAlign: "center",
@@ -888,6 +890,10 @@ export default function CarryOnReportPage({
 
                       <Td>
                         {item.gateCollectionNoteCombined || "-"}
+                      </Td>
+
+                      <Td>
+                        {item.rampReceiptComment || "-"}
                       </Td>
 
                       <Td>

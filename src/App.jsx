@@ -190,6 +190,11 @@ export default function App() {
   ] = useState(0);
 
   const [
+    mobileNavOpen,
+    setMobileNavOpen,
+  ] = useState(false);
+
+  const [
     privacyStatus,
     setPrivacyStatus,
   ] = useState(
@@ -782,6 +787,10 @@ export default function App() {
     ) => {
       setCurrentView(
         view
+      );
+
+      setMobileNavOpen(
+        false
       );
 
       sessionStorage.setItem(
@@ -1449,7 +1458,22 @@ export default function App() {
           Baggage Loading Control System
         </h1>
 
+        <button
+          type="button"
+          className="mobile-nav-toggle"
+          onClick={() =>
+            setMobileNavOpen(
+              (current) => !current
+            )
+          }
+          aria-expanded={mobileNavOpen}
+          aria-controls="blcs-main-navigation"
+        >
+          {mobileNavOpen ? "Close Menu" : "Menu"}
+        </button>
+
         <div
+          className="app-header-layout"
           style={{
             display:
               "flex",
@@ -1468,7 +1492,12 @@ export default function App() {
           }}
         >
           <nav
-            className="nav-buttons"
+            id="blcs-main-navigation"
+            className={
+              mobileNavOpen
+                ? "nav-buttons mobile-open"
+                : "nav-buttons"
+            }
             style={{
               display:
                 "flex",
@@ -1702,6 +1731,7 @@ export default function App() {
           ========================= */}
 
           <div
+            className="app-user-profile"
             style={{
               display:
                 "flex",
@@ -1949,6 +1979,7 @@ export default function App() {
 
         {selectedFlightId && (
           <div
+            className="selected-flight-chip"
             style={{
               marginTop:
                 12,
@@ -2003,6 +2034,7 @@ export default function App() {
       ========================= */}
 
       <main
+        className="app-main"
         key={
           refreshKey
         }
