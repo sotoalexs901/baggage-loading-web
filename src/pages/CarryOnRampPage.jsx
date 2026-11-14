@@ -71,6 +71,7 @@ export default function CarryOnRampPage({
   const [assignments, setAssignments] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [receivingId, setReceivingId] = useState("");
+  const [rampComments, setRampComments] = useState({});
   const [receivedExpanded, setReceivedExpanded] =
     useState(false);
   const [message, setMessage] = useState("");
@@ -151,10 +152,7 @@ export default function CarryOnRampPage({
       assignments
         .filter((item) => {
           const status = cleanUpper(item?.status);
-          return (
-            status === "COUNTER_ASSIGNED" ||
-            status === "GATE_COLLECTED"
-          );
+          return status === "GATE_COLLECTED";
         })
         .sort((a, b) =>
           String(a.gateCheckNumber || "").localeCompare(
@@ -230,13 +228,20 @@ export default function CarryOnRampPage({
     if (!selectedFlight || !assignment) return;
 
     const sourceStatus = cleanUpper(assignment.status);
-    const bypassedGate =
-      sourceStatus === "COUNTER_ASSIGNED";
+
+    if (sourceStatus !== "GATE_COLLECTED") {
+      setError(
+        "Gate must confirm Collected at Gate before Ramp can receive this item."
+      );
+      return;
+    }
+
+    const rampReceiptComment = String(
+      rampComments[assignment.id] || ""
+    ).trim();
 
     const ok = window.confirm(
-      bypassedGate
-        ? `Receive ${assignment.gateCheckNumber || "-"} directly at Ramp?\n\nGate has not marked this item as collected. A Gate bypass alert will be created.`
-        : `Confirm ${assignment.gateCheckNumber || "-"} received at Ramp?`
+      `Confirm ${assignment.gateCheckNumber || "-"} received at Ramp?`
     );
 
     if (!ok) return;
@@ -274,33 +279,24 @@ export default function CarryOnRampPage({
           assignmentSnap.data()?.status
         );
 
-        if (
-          currentStatus !== "GATE_COLLECTED" &&
-          currentStatus !== "COUNTER_ASSIGNED"
-        ) {
+        if (currentStatus !== "GATE_COLLECTED") {
           throw new Error(
-            `This Carry-On cannot be received at Ramp from status ${currentStatus || "UNKNOWN"}.`
+            "Gate must confirm Collected at Gate before Ramp can receive this item."
           );
         }
-
-        const directFromCounter =
-          currentStatus === "COUNTER_ASSIGNED";
 
         const receiptData = {
           status: "RAMP_RECEIVED",
           rampReceivedAt: serverTimestamp(),
           rampReceivedBy: actor,
+          rampReceiptComment:
+            rampReceiptComment || null,
+          rampReceiptCommentAt:
+            rampReceiptComment ? serverTimestamp() : null,
+          rampReceiptCommentBy:
+            rampReceiptComment ? actor : null,
           updatedAt: serverTimestamp(),
           updatedBy: actor,
-          ...(directFromCounter
-            ? {
-                rampBypassedGate: true,
-                gateBypassDetectedAt:
-                  serverTimestamp(),
-                gateBypassAcknowledgedAt: null,
-                gateBypassAcknowledgedBy: null,
-              }
-            : {}),
         };
 
         transaction.set(
@@ -326,9 +322,7 @@ export default function CarryOnRampPage({
             `ramp_received_${assignment.id}_${Date.now()}`
           ),
           {
-            type: bypassedGate
-              ? "RAMP_RECEIVED_GATE_BYPASS"
-              : "RAMP_RECEIVED",
+            type: "RAMP_RECEIVED",
             status: "RAMP_RECEIVED",
             assignmentId: assignment.id,
             passengerId:
@@ -339,11 +333,13 @@ export default function CarryOnRampPage({
               assignment.assignedSeat || null,
             gateCheckNumber:
               assignment.gateCheckNumber || null,
-            rampBypassedGate:
-              bypassedGate,
-            message: bypassedGate
-              ? `Carry-On ${assignment.gateCheckNumber || assignment.id} received at Ramp without Gate collection.`
-              : `Carry-On ${assignment.gateCheckNumber || assignment.id} received at Ramp.`,
+            rampReceiptComment:
+              rampReceiptComment || null,
+            message:
+              `Carry-On ${assignment.gateCheckNumber || assignment.id} received at Ramp.` +
+              (rampReceiptComment
+                ? ` Comment: ${rampReceiptComment}`
+                : ""),
             createdAt: serverTimestamp(),
             createdBy: actor,
           }
@@ -355,10 +351,13 @@ export default function CarryOnRampPage({
         );
       }
 
+      setRampComments((current) => ({
+        ...current,
+        [assignment.id]: "",
+      }));
+
       setMessage(
-        bypassedGate
-          ? `${assignment.gateCheckNumber} received at Ramp. Gate bypass alert created.`
-          : `${assignment.gateCheckNumber} received at Ramp.`
+        `${assignment.gateCheckNumber} received at Ramp.`
       );
     } catch (rampError) {
       console.error(
@@ -496,7 +495,7 @@ export default function CarryOnRampPage({
             </h4>
 
             <p style={helperText}>
-              Includes items collected by Gate and, when necessary, items still showing Counter Assigned.
+              Only Gate Checks confirmed as Collected at Gate are available for Ramp receipt.
             </p>
 
             {filteredReady.length === 0 ? (
@@ -506,39 +505,49 @@ export default function CarryOnRampPage({
             ) : (
               <div style={gateCheckGrid}>
                 {filteredReady.map((item) => {
-                  const bypass =
-                    cleanUpper(item.status) ===
-                    "COUNTER_ASSIGNED";
-
                   return (
                     <div
                       key={item.id}
                       style={{
                         ...gateCheckCard,
-                        border: bypass
-                          ? "1px solid #fde68a"
-                          : "1px solid #bfdbfe",
-                        background: bypass
-                          ? "#fffbeb"
-                          : "white",
+                        border: "1px solid #bfdbfe",
+                        background: "white",
                       }}
                     >
                       <div style={gateCheckNumberStyle}>
                         {item.gateCheckNumber || "-"}
                       </div>
 
-                      {bypass && (
-                        <div
+                      <label
+                        style={{
+                          display: "grid",
+                          gap: 5,
+                          marginTop: 9,
+                          textAlign: "left",
+                        }}
+                      >
+                        <span style={fieldLabel}>
+                          Additional Comment (Optional)
+                        </span>
+
+                        <textarea
+                          value={rampComments[item.id] || ""}
+                          onChange={(event) =>
+                            setRampComments((current) => ({
+                              ...current,
+                              [item.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Add operational comment if needed"
+                          rows={2}
+                          maxLength={300}
                           style={{
-                            marginTop: 5,
-                            color: "#92400e",
-                            fontSize: "0.65rem",
-                            fontWeight: 900,
+                            ...inputStyle,
+                            resize: "vertical",
+                            minHeight: 68,
                           }}
-                        >
-                          DIRECT FROM COUNTER
-                        </div>
-                      )}
+                        />
+                      </label>
 
                       <button
                         type="button"
@@ -638,16 +647,17 @@ export default function CarryOnRampPage({
                           {item.gateCheckNumber || "-"}
                         </div>
 
-                        {item.rampBypassedGate === true && (
+                        {item.rampReceiptComment && (
                           <div
                             style={{
-                              marginTop: 5,
-                              color: "#92400e",
-                              fontSize: "0.64rem",
-                              fontWeight: 900,
+                              marginTop: 6,
+                              color: "#475569",
+                              fontSize: "0.7rem",
+                              lineHeight: 1.35,
                             }}
                           >
-                            GATE BYPASS
+                            <strong>Comment:</strong>{" "}
+                            {item.rampReceiptComment}
                           </div>
                         )}
                       </div>
