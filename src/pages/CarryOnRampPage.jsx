@@ -147,6 +147,15 @@ export default function CarryOnRampPage({
     [flights, selectedCarryOnFlightId]
   );
 
+  const waitingForGate = useMemo(
+    () =>
+      assignments.filter(
+        (item) =>
+          cleanUpper(item?.status) === "COUNTER_ASSIGNED"
+      ),
+    [assignments]
+  );
+
   const readyForRamp = useMemo(
     () =>
       assignments
@@ -469,6 +478,10 @@ export default function CarryOnRampPage({
             }}
           >
             <Metric
+              label="Waiting for Gate"
+              value={waitingForGate.length}
+            />
+            <Metric
               label="Ready for Ramp"
               value={readyForRamp.length}
             />
@@ -496,6 +509,9 @@ export default function CarryOnRampPage({
 
             <p style={helperText}>
               Only Gate Checks confirmed as Collected at Gate are available for Ramp receipt.
+              {waitingForGate.length > 0
+                ? ` ${waitingForGate.length} item(s) are still waiting for Gate collection.`
+                : ""}
             </p>
 
             {filteredReady.length === 0 ? (
