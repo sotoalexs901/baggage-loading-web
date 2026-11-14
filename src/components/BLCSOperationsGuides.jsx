@@ -8,7 +8,7 @@ const GUIDE_TEXT = {
   en: {
     title: "BLCS Operations Guides",
     subtitle:
-      "Quick role-based instructions for Regular Flights and Carry-On Only operations.",
+      "Detailed role-based instructions for Regular Flights and Carry-On Only operations.",
     language: "Language",
     regular: "Regular Flight",
     carryOn: "Carry-On Only",
@@ -16,122 +16,215 @@ const GUIDE_TEXT = {
     agent: "Agent Guide",
     quickRole: "Where should I work?",
     important: "Important",
+
     regularSupervisor: {
       intro:
-        "Supervisors coordinate the flight, monitor progress, resolve exceptions and review the final operation.",
+        "Supervisors control the regular-flight lifecycle: verify the flight, monitor each baggage handoff, manage exceptions and confirm the final operation before closing.",
       roleMap: [
-        ["Flight Setup / Flight Control", "Create or open the correct regular flight and verify the flight information before the operation starts."],
-        ["Tracking / Monitoring", "Monitor the progress of bags through Counter, Gate, Bagroom and Aircraft/Ramp."],
-        ["Reports", "Review the operational totals and final flight information after loading is complete."],
-        ["Exception Support", "Assist agents with incorrect scans, operational exceptions or items that require supervisor review."],
+        ["Flight Control", "FLIGHTS / DASHBOARD"],
+        ["Counter oversight", "COUNTER SCAN"],
+        ["Gate oversight", "GATE CONTROLLER"],
+        ["Bagroom oversight", "BAGROOM"],
+        ["Aircraft / Ramp oversight", "AIRCRAFT"],
+        ["Bag history", "BAGGAGE TRACKING"],
+        ["Final review", "REPORTS"],
       ],
       steps: [
         {
-          title: "1. Open the correct flight",
+          title: "1. Create or open the correct regular flight",
           body:
-            "Confirm Flight Number, Flight Date, route, gate and any other available flight information before the team begins working.",
+            "Verify Flight Number, Flight Date, origin, destination, gate, aircraft/tail information and current flight status. Confirm the team is working the correct flight before scanning begins.",
         },
         {
-          title: "2. Monitor the operation",
+          title: "2. Confirm operational assignments",
           body:
-            "Use the available tracking and operational pages to confirm that baggage is progressing through the expected workflow and that no items remain unexpectedly pending.",
+            "Confirm which employee is covering Counter, Gate Controller, Bagroom and Aircraft/Ramp. The operational position determines where the employee should record physical baggage movements.",
         },
         {
-          title: "3. Review exceptions",
+          title: "3. Monitor Counter Scan",
           body:
-            "Investigate items that appear in the wrong stage, duplicate scans, missing movements or other operational exceptions before the flight is finalized.",
+            "Counter creates the initial baggage record for checked bags, Gate Checks and Oversize items. Review unexpected duplicates, wrong-flight warnings and tags that do not belong to the active flight. A bag should not be accepted into the operation when BLCS identifies it as belonging to another active flight.",
         },
         {
-          title: "4. Review the final result",
+          title: "4. Monitor Gate Controller",
           body:
-            "Confirm the final baggage totals and aircraft loading information. Use the reporting tools to document the completed operation.",
+            "Use Gate Controller for gate-related baggage, manifest/totals and boarding-gate exceptions. Verify that gate activity belongs to the correct flight and investigate discrepancies before the flight progresses.",
+        },
+        {
+          title: "5. Monitor Bagroom / receiving locations",
+          body:
+            "Confirm bags are recorded only when physically received. Review Bagroom, Oversize or Gate/Ramp receiving locations as applicable. Missing or duplicate movements should be resolved before loading.",
+        },
+        {
+          title: "6. Monitor Aircraft / Ramp loading",
+          body:
+            "Confirm the bag is physically at the aircraft before the Aircraft/Ramp action is completed. Review aircraft totals, loading progress and any offload or correction before the flight is finalized.",
+        },
+        {
+          title: "7. Use Baggage Tracking for exceptions",
+          body:
+            "Search the Bag Tag and review its complete movement history, including flight, location, timestamp and employee. Use Tracking to identify where the last confirmed physical handoff occurred.",
+        },
+        {
+          title: "8. Control flight status",
+          body:
+            "Use OPEN, RECEIVING, LOADING and LOADED according to the actual operation. Do not mark the flight LOADED until loading and required reconciliation are complete. Reopen only when an operational correction is legitimately required.",
+        },
+        {
+          title: "9. Review Reports before completion",
+          body:
+            "Compare Counter, Bagroom/Gate, Aircraft and other operational totals. Investigate discrepancies and pending bags before considering the flight complete.",
+        },
+        {
+          title: "10. Protect the audit trail",
+          body:
+            "Deleting or correcting scans changes the operational record. Make corrections only when supported by the physical operation and use supervisor authority responsibly.",
         },
       ],
       note:
-        "Supervisors should avoid performing an agent step unless they are actually covering that operational position.",
+        "The physical movement of the bag must match the BLCS movement. Supervisors should monitor and correct exceptions, not create artificial movements to make totals match.",
     },
+
     regularAgent: {
       intro:
-        "Agents should work only in the page that matches the physical position they are covering.",
+        "Agents record the physical movement of baggage. Work only in the page that matches the position you are actually covering.",
       roleMap: [
-        ["Counter Agent", "COUNTER / Counter Scan"],
-        ["Gate Agent", "GATE / Gate Controller"],
+        ["Counter Agent", "COUNTER SCAN"],
+        ["Gate Agent", "GATE CONTROLLER"],
         ["Bagroom Agent", "BAGROOM"],
-        ["Aircraft / Ramp Agent", "AIRCRAFT / RAMP"],
+        ["Aircraft / Ramp Agent", "AIRCRAFT"],
+        ["Find a bag", "BAGGAGE TRACKING"],
       ],
       steps: [
         {
-          title: "1. Counter",
+          title: "1. Verify the flight before every operation",
           body:
-            "Scan or register the baggage at Counter according to the regular-flight workflow. Verify the correct flight before confirming the bag.",
+            "Confirm the selected flight number/date before scanning. Never continue a scan into the wrong flight just because the scanner accepted the barcode.",
         },
         {
-          title: "2. Gate",
+          title: "2. COUNTER - Create the initial baggage record",
           body:
-            "Work from the Gate page when handling baggage or exceptions at the boarding gate. Confirm the correct bag before completing the Gate action.",
+            "Scan the Bag Tag and select the correct bag type when required: Checked Bag, Gate Check or Oversize. Confirm BLCS does not show a wrong-flight or duplicate warning before accepting the bag.",
         },
         {
-          title: "3. Bagroom",
+          title: "3. GATE - Record gate-related baggage correctly",
           body:
-            "Use the Bagroom page for baggage physically received or processed in the bagroom. Do not complete a Bagroom action before the bag is physically present.",
+            "Use Gate Controller only for baggage physically handled at the boarding gate or for the gate function you are assigned. Verify the Bag Tag and flight before confirming the action.",
         },
         {
-          title: "4. Aircraft / Ramp",
+          title: "4. BAGROOM - Confirm physical receipt",
           body:
-            "Use the Aircraft/Ramp page for bags physically received or loaded at the aircraft. Verify the bag before confirming the movement.",
+            "Do not complete a Bagroom action until the bag is physically present. Use the correct receiving location/cart information when required and verify the tag before confirming.",
+        },
+        {
+          title: "5. AIRCRAFT / RAMP - Confirm physical loading",
+          body:
+            "Use Aircraft/Ramp only for bags physically received at the aircraft or loaded according to the page workflow. Never pre-scan bags that have not reached the aircraft.",
+        },
+        {
+          title: "6. Stop when BLCS shows a conflict",
+          body:
+            "If BLCS reports a duplicate, wrong flight, locked flight or unexpected status, stop and contact the Supervisor. Do not bypass the warning by creating another record.",
+        },
+        {
+          title: "7. Use Tracking when a bag cannot be located",
+          body:
+            "Search the Bag Tag in Baggage Tracking to identify the last recorded location, time and employee. Tracking is the system history; it should match the physical operation.",
+        },
+        {
+          title: "8. Corrections and deletions",
+          body:
+            "Do not delete or recreate scans simply to fix totals. If a scan was made in error, notify the Supervisor and follow the approved correction process.",
         },
       ],
       note:
-        "Always verify the flight and bag before confirming an action. The page you use becomes part of the operational history.",
+        "Scan only what you physically have. Verify the flight and Bag Tag before every confirmation. Never create a system movement before the physical movement occurs.",
     },
+
     carrySupervisor: {
       intro:
-        "Supervisors manage flight preparation, Gate Check inventory, operational monitoring, exceptions and final review.",
+        "Supervisors manage Carry-On setup, reusable Gate Check inventory, the mandatory Counter-to-Gate-to-Ramp-to-Load chain, exceptions and final reconciliation.",
       roleMap: [
-        ["Prepare the flight", "SETUP"],
-        ["Manage reusable Gate Check numbers", "GATE CHECK DATABASE"],
-        ["Monitor the operation", "TRACKING"],
-        ["Review final results", "REPORT"],
-        ["Operational exception support", "GATE when supervisor intervention is required"],
+        ["Create/open Carry-On flight", "FLIGHTS"],
+        ["Prepare flight", "SETUP"],
+        ["Master Gate Check inventory", "GATE CHECK DATABASE"],
+        ["Monitor live movement", "TRACKING"],
+        ["Final reconciliation", "REPORT / SUMMARY"],
       ],
       steps: [
         {
-          title: "1. SETUP - Prepare the flight",
+          title: "1. Create or open the Carry-On flight",
           body:
-            "Open the correct Carry-On flight. Upload and save the required setup documents, verify passenger and seat information, required Carry-On quantity, flight data, gate and tail number. The normal operational flow remains SETUP, COUNTER, GATE, RAMP, LOAD, TRACKING, REPORT and SUMMARY.",
+            "Confirm Flight Number, Flight Date, route, gate and tail/aircraft information. Carry-On flights remain separate from the regular baggage workflow.",
         },
         {
-          title: "2. GATE CHECK DATABASE - Manage the master inventory",
+          title: "2. SETUP - Upload and verify flight documents",
           body:
-            "The Gate Check Database is a separate supervisor/manager page. Import Gate Check numbers from CSV or add them manually. Review numbers in numeric order, correct an AVAILABLE number when it was imported incorrectly, disable a number when necessary, and allocate the required quantity to a flight. At the end of the operation, return unused AVAILABLE numbers to the database so they can be reused on a future flight. Gate Checks that were actually used remain USED for audit history and are not returned to the available pool.",
+            "Load the required Load Manifest and Empty Seats Report. Verify passenger data, available seats and the Required Carry-Ons target before releasing the operation.",
         },
         {
-          title: "3. TRACKING - Monitor the operation",
+          title: "3. SETUP - Confirm Required Carry-Ons",
           body:
-            "Follow every Gate Check through Counter Assigned, Gate Collected, Ramp Received, Aircraft Loaded or Offloaded. Search by passenger, seat, Gate Check or Gate Check Description and review weights, notes, compartments and timestamps.",
+            "Required Carry-Ons is the operational target. Additional assignments above the target are allowed and must remain visible as Additional rather than being blocked.",
         },
         {
-          title: "4. GATE - Review live exceptions when needed",
+          title: "4. GATE CHECK DATABASE - Allocate reusable numbers",
           body:
-            "Gate can now create a Gate Check directly without sending the agent back to Counter. The same visual description chart used at Counter is available at Gate. When a Gate Agent confirms Collected at Gate, the passenger safety confirmation records that the item was secured with a zip tie and that the passenger was advised to remove high-value items, medications and laptops. These confirmations become part of the passenger/assignment history and are shown in the Carry-On Report.",
+            "The Database is separate from the agent workflow and is limited to Supervisor, Duty Manager and Station Manager access. Import or add Gate Check numbers, allocate the required quantity to the flight, correct AVAILABLE numbers when necessary and disable damaged/invalid numbers.",
         },
         {
-          title: "5. REPORT - Final review",
+          title: "5. COUNTER - Monitor assignments",
           body:
-            "Review Assigned, Loaded, Offloaded, Remaining, Additional and Forward/Middle/Aft totals. Confirm passenger, seat, Gate Check, Gate Check Description, weights, timestamps, users, compartment, notes and the Gate passenger-safety confirmations before printing or saving the final report.",
+            "Counter assigns Passenger, Seat, Gate Check Number, weight and visual description. Up to 5 Gate Checks may be associated with the same passenger/seat. The same Gate Check Number must never be reused on the same flight.",
         },
         {
-          title: "6. Close the flight and return unused Gate Checks",
+          title: "6. GoShow handling",
           body:
-            "Close the Carry-On flight only after active items have reached their final disposition, such as Aircraft Loaded or Offloaded. From the separate Gate Check Database, return unused Gate Checks that remain AVAILABLE so they can be used on another flight.",
+            "A GoShow may be created during live operation. Counter may create it, and Gate may create a Gate GoShow directly when necessary. Gate-created GoShows are recorded as Gate/GoShow and must not appear as Counter-created activity.",
+        },
+        {
+          title: "7. GATE - Mandatory handoff before Ramp",
+          body:
+            "Every Carry-On Gate Check must reach GATE_COLLECTED before Ramp can receive it. Ramp no longer accepts COUNTER_ASSIGNED items. If a Gate Check is missing from Ramp, verify Gate collection first rather than bypassing Gate.",
+        },
+        {
+          title: "8. GATE - Safety confirmation",
+          body:
+            "For applicable Carry-Ons, Gate confirms the item is secured with a zip tie and the passenger was advised to remove high-value items, medications and laptops. Strollers, Walkers, Wagons, Car Seats, Booster Seats and WCHR are not subject to this Carry-On safety prompt.",
+        },
+        {
+          title: "9. RAMP - Monitor receipt and comments",
+          body:
+            "Ramp receives only Gate Checks already marked GATE_COLLECTED. Ramp may enter an Additional Comment when operational context is needed; the comment becomes part of Tracking, Report and Summary.",
+        },
+        {
+          title: "10. LOAD - Confirm compartment before loading",
+          body:
+            "The Load Agent selects FORWARD, MIDDLE or AFT first, then selects one or multiple Gate Checks and confirms Load. Use Update Compartment, Unload to Ramp or Offload only when the physical operation requires a correction.",
+        },
+        {
+          title: "11. TRACKING - Follow each Gate Check",
+          body:
+            "Use Tracking to review Counter Assigned, Gate Collected, Ramp Received, Aircraft Loaded and Offloaded history, including users, timestamps, weights, Gate notes, Ramp comments, safety confirmation and compartment.",
+        },
+        {
+          title: "12. REPORT / SUMMARY - Reconcile the flight",
+          body:
+            "Review Assigned, Required, Additional, Loaded, Remaining, Offloaded and Forward/Middle/Aft totals. Investigate every remaining active Gate Check before final completion.",
+        },
+        {
+          title: "13. Return unused Gate Check numbers",
+          body:
+            "After the operation, return only unused numbers that remain AVAILABLE to the Gate Check Database. Numbers actually used remain USED for audit history and are not returned for reuse.",
         },
       ],
       note:
-        "Gate Check Database access is limited to Supervisors, Duty Managers and Station Managers. Agents should not manage the master Gate Check inventory. Use Tracking and Report as the primary supervisor oversight tools.",
+        "Carry-On operational order is mandatory: Counter (or Gate GoShow) -> Gate Collected -> Ramp Received -> Aircraft Loaded. Do not use a later page to compensate for a missing earlier physical handoff.",
     },
+
     carryAgent: {
       intro:
-        "Agents follow the physical movement of each Gate Check through Counter, Gate, Ramp and Load. Gate Check Database is not an Agent page.",
+        "Carry-On Agents record each physical handoff. The normal sequence is COUNTER -> GATE -> RAMP -> LOAD; a Gate GoShow begins at Gate but still must continue Gate -> Ramp -> Load.",
       roleMap: [
         ["Counter Agent", "COUNTER"],
         ["Gate Agent", "GATE"],
@@ -140,40 +233,70 @@ const GUIDE_TEXT = {
       ],
       steps: [
         {
-          title: "1. COUNTER - Assign the Gate Check",
+          title: "1. COUNTER - Select the correct flight",
           body:
-            "Select today's Carry-On flight. Select the Passenger, Assigned Seat and Gate Check Number. Record the Carry-On Weight and choose the Gate Check Description using the visual selector. Up to 5 Gate Checks may be assigned to the same passenger / seat, but the same Gate Check Number can never be reused. Use GoShow for passengers or Gate Checks added during live operation. A GoShow Gate Check number is removed from the available list as soon as it is assigned.",
+            "Confirm the Carry-On flight before assigning anything. Select Passenger, Assigned Seat and an available Gate Check Number.",
         },
         {
-          title: "2. GATE - Collect or add the Gate Check",
+          title: "2. COUNTER - Record weight and description",
           body:
-            "Locate the item by Seat or Gate Check Number. Compare the physical item with the Gate Check Description, verify the weight and add a Gate Note if needed. Gate can also add a GoShow Gate Check directly using the same visual item chart available at Counter, including Wagon and the special-item images.",
+            "Enter the Carry-On weight and choose the correct visual Gate Check Description. Up to 5 Gate Checks may be assigned to the same passenger/seat, but one Gate Check Number cannot be reused.",
         },
         {
-          title: "3. GATE - Passenger safety confirmation",
+          title: "3. COUNTER - Use GoShow when required",
           body:
-            "Before confirming Collected at Gate, complete the passenger safety confirmation. Confirm that the carry-on item is secured with a zip tie and that the passenger was advised to remove high-value items, medications and laptops. The confirmation is saved to the passenger/assignment history and appears in the final Carry-On Report.",
+            "Use GoShow for a passenger or Gate Check added during live operation. Once the Gate Check is assigned, it is no longer available for another assignment.",
         },
         {
-          title: "4. RAMP - Receive the item",
+          title: "4. GATE - Confirm physical collection",
           body:
-            "Identify the physical Gate Check Number and select Receive. Ramp may also receive an item that still shows Counter Assigned; BLCS records the Gate bypass and sends an alert to Gate for acknowledgment.",
+            "Locate the item by Seat or Gate Check Number, compare the physical item to the description, verify weight when required and add a Gate Note if needed. Select Collected only after the item is physically under Gate control.",
         },
         {
-          title: "5. LOAD - Load the item",
+          title: "5. GATE - Create a Gate GoShow when necessary",
           body:
-            "Select the compartment first: FORWARD, MIDDLE or AFT. Then select one or multiple Gate Check Numbers and confirm Load. Loaded Gate Checks can be expanded when a correction is needed. Available controls include Update Compartment, Unload to Ramp and Offload.",
+            "Gate may add a GoShow directly without sending the Agent back to Counter. Select passenger/seat, Gate Check Number, weight and visual description. A Gate-created GoShow is recorded as Gate/GoShow.",
+        },
+        {
+          title: "6. GATE - Complete Carry-On safety confirmation",
+          body:
+            "For applicable Carry-Ons, confirm the zip tie and that the passenger was advised to remove valuables, medications and laptops. This prompt does not apply to Stroller, Walker, Wagon, Car Seat, Booster Seat or WCHR categories.",
+        },
+        {
+          title: "7. RAMP - Gate collection is mandatory",
+          body:
+            "Ramp can receive only Gate Checks showing GATE_COLLECTED. If the item is still COUNTER_ASSIGNED, stop and contact Gate. Do not bypass Gate and do not create a Ramp receipt early.",
+        },
+        {
+          title: "8. RAMP - Verify and receive",
+          body:
+            "Physically verify the Gate Check Number, then select Receive. Use Additional Comment only when useful operational information should follow the item, such as damage, late delivery or special handling.",
+        },
+        {
+          title: "9. LOAD - Select compartment first",
+          body:
+            "Select FORWARD, MIDDLE or AFT before selecting Gate Checks. Then choose one or multiple received Gate Checks and confirm Load.",
+        },
+        {
+          title: "10. LOAD - Corrections",
+          body:
+            "If the physical operation changes, use the available correction controls such as Update Compartment, Unload to Ramp or Offload. Do not change a status only to make the report balance.",
+        },
+        {
+          title: "11. Ask for help when status and reality do not match",
+          body:
+            "If the physical item is in front of you but BLCS shows the wrong prior status, stop and notify the Supervisor. The system sequence must reflect the actual handoff history.",
         },
       ],
       note:
-        "Work only in the page that matches the position you are physically covering. Agents do not access the Gate Check Database. Never reuse a Gate Check Number that has already been assigned.",
+        "Agents do not manage the Gate Check Database. Always verify the physical Gate Check before confirming an action, and never skip Gate before Ramp.",
     },
   },
 
   es: {
     title: "Guias Operacionales de BLCS",
     subtitle:
-      "Instrucciones rapidas por funcion para vuelos regulares y operaciones Carry-On Only.",
+      "Instrucciones detalladas por funcion para vuelos regulares y operaciones Carry-On Only.",
     language: "Idioma",
     regular: "Vuelo Regular",
     carryOn: "Carry-On Only",
@@ -181,122 +304,215 @@ const GUIDE_TEXT = {
     agent: "Guia de Agente",
     quickRole: "Donde debo trabajar?",
     important: "Importante",
+
     regularSupervisor: {
       intro:
-        "Los Supervisores coordinan el vuelo, monitorean el progreso, atienden excepciones y revisan el resultado final de la operacion.",
+        "Los Supervisores controlan el ciclo del vuelo regular: verifican el vuelo, monitorean cada entrega fisica del equipaje, manejan excepciones y confirman el resultado final.",
       roleMap: [
-        ["Preparacion / Control del vuelo", "Crear o abrir el vuelo regular correcto y verificar la informacion antes de comenzar la operacion."],
-        ["Tracking / Monitoreo", "Monitorear el movimiento de los equipajes entre Counter, Gate, Bagroom y Aircraft/Ramp."],
-        ["Reportes", "Revisar los totales operacionales y la informacion final del vuelo despues de completar la carga."],
-        ["Apoyo en excepciones", "Asistir a los agentes con scans incorrectos, excepciones operacionales o situaciones que requieran revision de Supervisor."],
+        ["Control del vuelo", "FLIGHTS / DASHBOARD"],
+        ["Supervision Counter", "COUNTER SCAN"],
+        ["Supervision Gate", "GATE CONTROLLER"],
+        ["Supervision Bagroom", "BAGROOM"],
+        ["Supervision Aircraft / Ramp", "AIRCRAFT"],
+        ["Historial del equipaje", "BAGGAGE TRACKING"],
+        ["Revision final", "REPORTS"],
       ],
       steps: [
         {
-          title: "1. Abrir el vuelo correcto",
+          title: "1. Crear o abrir el vuelo regular correcto",
           body:
-            "Confirmar Flight Number, Flight Date, ruta, gate y cualquier otra informacion disponible antes de que el equipo comience a trabajar.",
+            "Verificar Flight Number, Flight Date, origen, destino, gate, aircraft/tail y status actual. Confirmar que todo el equipo trabaje en el vuelo correcto antes de comenzar los scans.",
         },
         {
-          title: "2. Monitorear la operacion",
+          title: "2. Confirmar posiciones operacionales",
           body:
-            "Usar Tracking y las paginas operacionales disponibles para confirmar que los equipajes avanzan por el flujo esperado y que no queden piezas pendientes sin razon.",
+            "Confirmar quien cubre Counter, Gate Controller, Bagroom y Aircraft/Ramp. La posicion operacional determina donde debe registrarse el movimiento fisico.",
         },
         {
-          title: "3. Revisar excepciones",
+          title: "3. Monitorear Counter Scan",
           body:
-            "Investigar equipajes en una etapa incorrecta, scans duplicados, movimientos faltantes u otras excepciones antes de finalizar el vuelo.",
+            "Counter crea el registro inicial de Checked Bags, Gate Checks y Oversize. Revisar duplicados, alertas de wrong flight y tags que pertenezcan a otro vuelo activo.",
         },
         {
-          title: "4. Revisar el resultado final",
+          title: "4. Monitorear Gate Controller",
           body:
-            "Confirmar los totales finales de equipaje y la informacion de carga del avion. Utilizar los reportes para documentar la operacion completada.",
+            "Usar Gate Controller para equipajes y funciones relacionadas con la puerta de embarque, manifest/totals y excepciones. Resolver discrepancias antes de continuar.",
+        },
+        {
+          title: "5. Monitorear Bagroom y receiving locations",
+          body:
+            "Confirmar que una pieza se registre solamente cuando llegue fisicamente. Revisar Bagroom, Oversize o Gate/Ramp receiving locations segun corresponda.",
+        },
+        {
+          title: "6. Monitorear Aircraft / Ramp",
+          body:
+            "Confirmar que la pieza este fisicamente en aircraft/ramp antes de completar la accion. Revisar carga, totales, offloads y correcciones antes de finalizar.",
+        },
+        {
+          title: "7. Usar Baggage Tracking para excepciones",
+          body:
+            "Buscar el Bag Tag y revisar vuelo, ubicacion, hora y empleado de cada movimiento. Tracking debe indicar el ultimo handoff fisico confirmado.",
+        },
+        {
+          title: "8. Controlar el status del vuelo",
+          body:
+            "Usar OPEN, RECEIVING, LOADING y LOADED de acuerdo con la operacion real. No marcar LOADED hasta terminar carga y reconciliacion. Reopen solo cuando una correccion operacional sea necesaria.",
+        },
+        {
+          title: "9. Revisar Reports",
+          body:
+            "Comparar Counter, Bagroom/Gate, Aircraft y otros totales. Investigar diferencias y equipajes pendientes antes de considerar el vuelo completo.",
+        },
+        {
+          title: "10. Proteger el audit trail",
+          body:
+            "Eliminar o corregir scans modifica el historial. Hacer correcciones solamente cuando correspondan con la operacion fisica.",
         },
       ],
       note:
-        "El Supervisor debe evitar completar una accion de Agent a menos que realmente este cubriendo esa posicion operacional.",
+        "El movimiento fisico debe coincidir con el movimiento registrado en BLCS. No crear movimientos artificiales solamente para cuadrar totales.",
     },
+
     regularAgent: {
       intro:
-        "Los Agents deben trabajar solamente en la pagina que corresponda con la posicion fisica que estan cubriendo.",
+        "Los Agents registran el movimiento fisico del equipaje y deben trabajar solo en la pagina correspondiente a la posicion que realmente estan cubriendo.",
       roleMap: [
-        ["Counter Agent", "COUNTER / Counter Scan"],
-        ["Gate Agent", "GATE / Gate Controller"],
+        ["Counter Agent", "COUNTER SCAN"],
+        ["Gate Agent", "GATE CONTROLLER"],
         ["Bagroom Agent", "BAGROOM"],
-        ["Aircraft / Ramp Agent", "AIRCRAFT / RAMP"],
+        ["Aircraft / Ramp Agent", "AIRCRAFT"],
+        ["Localizar equipaje", "BAGGAGE TRACKING"],
       ],
       steps: [
         {
-          title: "1. Counter",
+          title: "1. Verificar el vuelo antes de cada accion",
           body:
-            "Escanear o registrar el equipaje en Counter siguiendo el flujo del vuelo regular. Verificar el vuelo correcto antes de confirmar la pieza.",
+            "Confirmar Flight Number y fecha antes del scan. No continuar una operacion sobre el vuelo incorrecto aunque el scanner lea el barcode.",
         },
         {
-          title: "2. Gate",
+          title: "2. COUNTER - Crear el registro inicial",
           body:
-            "Trabajar desde la pagina Gate cuando se manejen equipajes o excepciones en la puerta de embarque. Confirmar la pieza correcta antes de completar la accion.",
+            "Escanear el Bag Tag y seleccionar el tipo correcto cuando aplique: Checked Bag, Gate Check u Oversize. Verificar que BLCS no muestre wrong flight o duplicate.",
         },
         {
-          title: "3. Bagroom",
+          title: "3. GATE - Registrar operaciones de Gate",
           body:
-            "Usar la pagina Bagroom para equipajes fisicamente recibidos o procesados en el bagroom. No completar una accion de Bagroom antes de tener la pieza fisicamente.",
+            "Usar Gate Controller solamente para piezas fisicamente manejadas en Gate o para la funcion de Gate asignada. Confirmar Bag Tag y vuelo.",
         },
         {
-          title: "4. Aircraft / Ramp",
+          title: "4. BAGROOM - Confirmar recibo fisico",
           body:
-            "Usar Aircraft/Ramp para equipajes fisicamente recibidos o cargados en el avion. Verificar la pieza antes de confirmar el movimiento.",
+            "No registrar Bagroom antes de tener la pieza fisicamente. Usar receiving location/cart correcto cuando aplique.",
+        },
+        {
+          title: "5. AIRCRAFT / RAMP - Confirmar carga fisica",
+          body:
+            "Usar Aircraft/Ramp solamente para equipajes que realmente llegaron al avion o fueron cargados segun el workflow. No hacer pre-scan.",
+        },
+        {
+          title: "6. Detenerse ante una alerta",
+          body:
+            "Si BLCS muestra duplicate, wrong flight, flight locked o status inesperado, detener la accion y contactar al Supervisor. No crear otro registro para evadir la alerta.",
+        },
+        {
+          title: "7. Usar Tracking para localizar piezas",
+          body:
+            "Buscar el Bag Tag para ver la ultima ubicacion, hora y empleado registrado. El historial debe coincidir con la operacion fisica.",
+        },
+        {
+          title: "8. Correcciones",
+          body:
+            "No borrar o recrear scans solamente para cuadrar totales. Informar al Supervisor si un scan se hizo incorrectamente.",
         },
       ],
       note:
-        "Siempre verificar el vuelo y el equipaje antes de confirmar una accion. La pagina utilizada forma parte del historial operacional.",
+        "Registrar solamente lo que tienes fisicamente. Verificar vuelo y Bag Tag antes de cada confirmacion.",
     },
+
     carrySupervisor: {
       intro:
-        "Los Supervisores administran la preparacion del vuelo, el inventario de Gate Checks, el monitoreo operacional, las excepciones y la revision final.",
+        "Los Supervisores administran Setup, inventario reutilizable de Gate Checks, el flujo obligatorio Counter-Gate-Ramp-Load, excepciones y reconciliacion final.",
       roleMap: [
-        ["Preparar el vuelo", "SETUP"],
-        ["Administrar Gate Checks reutilizables", "GATE CHECK DATABASE"],
-        ["Monitorear la operacion", "TRACKING"],
-        ["Revisar el resultado final", "REPORT"],
-        ["Apoyo en excepciones", "GATE cuando se requiera intervencion del Supervisor"],
+        ["Crear/abrir vuelo Carry-On", "FLIGHTS"],
+        ["Preparar vuelo", "SETUP"],
+        ["Inventario maestro", "GATE CHECK DATABASE"],
+        ["Monitoreo en vivo", "TRACKING"],
+        ["Reconciliacion final", "REPORT / SUMMARY"],
       ],
       steps: [
         {
-          title: "1. SETUP - Preparar el vuelo",
+          title: "1. Crear o abrir el vuelo Carry-On",
           body:
-            "Abrir el vuelo Carry-On correcto. Cargar y guardar los documentos requeridos del setup, verificar pasajeros, asientos, cantidad requerida de Carry-Ons, informacion del vuelo, gate y tail number. El flujo operacional normal permanece SETUP, COUNTER, GATE, RAMP, LOAD, TRACKING, REPORT y SUMMARY.",
+            "Confirmar Flight Number, Flight Date, ruta, gate y tail/aircraft. Carry-On permanece separado del flujo de baggage regular.",
         },
         {
-          title: "2. GATE CHECK DATABASE - Administrar el inventario maestro",
+          title: "2. SETUP - Cargar documentos",
           body:
-            "Gate Check Database es una pagina separada para Supervisores y Managers. Permite importar Gate Check numbers desde CSV o agregarlos manualmente, revisarlos en orden numerico, corregir un numero AVAILABLE que haya sido importado incorrectamente, deshabilitar un numero cuando sea necesario y asignar al vuelo la cantidad requerida. Al finalizar la operacion, los numeros que quedaron AVAILABLE pueden regresar a la base de datos para utilizarse en un vuelo futuro. Los Gate Checks realmente utilizados permanecen como USED para historial y no regresan al inventario disponible.",
+            "Cargar Load Manifest y Empty Seats Report. Verificar passengers, available seats y Required Carry-Ons antes de liberar la operacion.",
         },
         {
-          title: "3. TRACKING - Monitorear la operacion",
+          title: "3. SETUP - Confirmar Required Carry-Ons",
           body:
-            "Dar seguimiento a cada Gate Check por Counter Assigned, Gate Collected, Ramp Received, Aircraft Loaded u Offloaded. Buscar por pasajero, asiento, Gate Check o Gate Check Description y revisar pesos, notas, compartment y timestamps.",
+            "Required es el target operacional. Se permiten assignments adicionales y deben mostrarse como Additional sin bloquear la operacion.",
         },
         {
-          title: "4. GATE - Revisar excepciones en vivo cuando sea necesario",
+          title: "4. GATE CHECK DATABASE - Asignar numeros",
           body:
-            "Gate ahora puede crear un Gate Check directamente sin enviar al Agent de regreso a Counter. Gate utiliza el mismo chart visual de descriptions que Counter. Cuando el Gate Agent confirma Collected at Gate, la confirmacion de seguridad del pasajero registra que la pieza fue asegurada con zip tie y que el pasajero fue informado de remover high-value items, medicines y laptops. Esta confirmacion queda en el historial y aparece en el Carry-On Report.",
+            "Database es una pagina separada solo para Supervisor, Duty Manager y Station Manager. Importar/agregar numeros, asignar la cantidad requerida, corregir AVAILABLE y deshabilitar numeros invalidos.",
         },
         {
-          title: "5. REPORT - Revision final",
+          title: "5. COUNTER - Monitorear assignments",
           body:
-            "Revisar Assigned, Loaded, Offloaded, Remaining, Additional y los totales Forward/Middle/Aft. Confirmar passenger, seat, Gate Check, Gate Check Description, pesos, tiempos, usuarios, compartment, notas y las confirmaciones de seguridad del pasajero antes de imprimir o guardar el reporte final.",
+            "Counter asigna Passenger, Seat, Gate Check Number, Weight y visual Description. Se permiten hasta 5 Gate Checks por passenger/seat. Un mismo Gate Check Number nunca debe reutilizarse en el vuelo.",
         },
         {
-          title: "6. Cerrar el vuelo y devolver Gate Checks no utilizados",
+          title: "6. Manejo de GoShow",
           body:
-            "Cerrar el vuelo Carry-On solamente cuando las piezas activas hayan llegado a su disposicion final, como Aircraft Loaded u Offloaded. Desde la pagina separada Gate Check Database, devolver al inventario los Gate Checks que quedaron AVAILABLE para que puedan utilizarse en otro vuelo.",
+            "GoShow puede crearse durante la operacion. Counter puede crearlo y Gate puede crear un Gate GoShow directamente. Un Gate GoShow debe registrarse como Gate/GoShow, no como creado en Counter.",
+        },
+        {
+          title: "7. GATE - Handoff obligatorio antes de Ramp",
+          body:
+            "Todo Gate Check debe llegar a GATE_COLLECTED antes de que Ramp pueda recibirlo. Ramp ya no acepta COUNTER_ASSIGNED. Si falta una pieza en Ramp, revisar primero Gate Collection.",
+        },
+        {
+          title: "8. GATE - Safety confirmation",
+          body:
+            "Para Carry-Ons aplicables, Gate confirma zip tie y que el pax fue informado de remover high-value items, medications y laptops. Stroller, Walker, Wagon, Car Seat, Booster Seat y WCHR no requieren este prompt.",
+        },
+        {
+          title: "9. RAMP - Recibo y comentarios",
+          body:
+            "Ramp recibe solamente GATE_COLLECTED. Puede agregar Additional Comment cuando exista informacion operacional util; el comentario aparece en Tracking, Report y Summary.",
+        },
+        {
+          title: "10. LOAD - Compartimento primero",
+          body:
+            "Seleccionar FORWARD, MIDDLE o AFT antes de seleccionar uno o multiples Gate Checks. Update Compartment, Unload to Ramp y Offload se usan solo cuando la operacion fisica lo requiere.",
+        },
+        {
+          title: "11. TRACKING - Seguir cada Gate Check",
+          body:
+            "Revisar Counter Assigned, Gate Collected, Ramp Received, Aircraft Loaded y Offloaded con usuarios, timestamps, weights, Gate Notes, Ramp Comments, safety confirmation y compartment.",
+        },
+        {
+          title: "12. REPORT / SUMMARY - Reconciliar",
+          body:
+            "Revisar Assigned, Required, Additional, Loaded, Remaining, Offloaded y totales Forward/Middle/Aft. Investigar todo Gate Check activo pendiente.",
+        },
+        {
+          title: "13. Devolver Gate Checks no utilizados",
+          body:
+            "Al finalizar, devolver al Database solamente numeros no utilizados que permanezcan AVAILABLE. Los numeros USED quedan en historial y no se reutilizan.",
         },
       ],
       note:
-        "Gate Check Database es solo para Supervisores, Duty Managers y Station Managers. Los Agents no deben administrar el inventario maestro. Tracking y Report continÃºan siendo las herramientas principales de supervision.",
+        "Orden obligatorio Carry-On: Counter (o Gate GoShow) -> Gate Collected -> Ramp Received -> Aircraft Loaded. No usar una etapa posterior para compensar un handoff anterior faltante.",
     },
+
     carryAgent: {
       intro:
-        "Los Agents siguen el movimiento fisico de cada Gate Check por Counter, Gate, Ramp y Load. Gate Check Database no es una pagina para Agents.",
+        "Los Agents registran cada handoff fisico. El orden normal es COUNTER -> GATE -> RAMP -> LOAD; un Gate GoShow comienza en Gate y continua Gate -> Ramp -> Load.",
       roleMap: [
         ["Counter Agent", "COUNTER"],
         ["Gate Agent", "GATE"],
@@ -305,33 +521,63 @@ const GUIDE_TEXT = {
       ],
       steps: [
         {
-          title: "1. COUNTER - Asignar el Gate Check",
+          title: "1. COUNTER - Seleccionar el vuelo correcto",
           body:
-            "Seleccionar el vuelo Carry-On del dia. Seleccionar Passenger, Assigned Seat y Gate Check Number. Registrar el Carry-On Weight y escoger la Gate Check Description usando el selector visual. Se pueden asignar hasta 5 Gate Checks al mismo passenger / seat, pero un mismo Gate Check Number nunca puede reutilizarse. Usar GoShow para pasajeros o Gate Checks agregados durante la operacion en vivo. Cuando un GoShow Gate Check es asignado, desaparece de la lista de numeros disponibles.",
+            "Confirmar el vuelo Carry-On antes de asignar. Seleccionar Passenger, Assigned Seat y Gate Check Number disponible.",
         },
         {
-          title: "2. GATE - Recoger o agregar el Gate Check",
+          title: "2. COUNTER - Registrar Weight y Description",
           body:
-            "Localizar la pieza por Seat o Gate Check Number. Comparar la pieza fisica con la Gate Check Description, verificar el peso y agregar Gate Note cuando sea necesario. Gate tambien puede agregar un GoShow Gate Check directamente usando el mismo chart visual disponible en Counter, incluyendo Wagon y las imagenes de Special Items.",
+            "Registrar Weight y escoger la visual Gate Check Description correcta. Se permiten hasta 5 Gate Checks por passenger/seat, pero un mismo numero no puede reutilizarse.",
         },
         {
-          title: "3. GATE - Confirmacion de seguridad del pasajero",
+          title: "3. COUNTER - GoShow",
           body:
-            "Antes de confirmar Collected at Gate, completar la confirmacion de seguridad. Confirmar que el carry-on esta asegurado con zip tie y que el pasajero fue informado de remover articulos de alto valor, medicamentos y laptops. La confirmacion se guarda en el historial del passenger/assignment y aparece en el Carry-On Report.",
+            "Usar GoShow para passenger o Gate Check agregado durante la operacion. Una vez asignado el numero deja de estar disponible.",
         },
         {
-          title: "4. RAMP - Recibir la pieza",
+          title: "4. GATE - Confirmar collection fisica",
           body:
-            "Identificar fisicamente el Gate Check Number y seleccionar Receive. Ramp tambien puede recibir una pieza que aun aparezca como Counter Assigned; BLCS registra el Gate bypass y genera una alerta para que Gate la reconozca.",
+            "Localizar por Seat o Gate Check Number, comparar la pieza con Description, verificar Weight cuando corresponda y agregar Gate Note si es necesario. Marcar Collected solamente cuando Gate tenga fisicamente la pieza.",
         },
         {
-          title: "5. LOAD - Cargar la pieza",
+          title: "5. GATE - Crear Gate GoShow",
           body:
-            "Seleccionar primero el compartment: FORWARD, MIDDLE o AFT. Luego seleccionar uno o multiples Gate Check Numbers y confirmar Load. Los Gate Checks ya cargados pueden abrirse si se necesita una correccion. Los controles disponibles incluyen Update Compartment, Unload to Ramp y Offload.",
+            "Gate puede agregar un GoShow directamente sin regresar a Counter. Seleccionar passenger/seat, Gate Check Number, Weight y visual Description. Se registra como Gate/GoShow.",
+        },
+        {
+          title: "6. GATE - Safety confirmation",
+          body:
+            "Para Carry-Ons aplicables, confirmar zip tie y que el pax fue informado de remover valuables, medications y laptops. No aplica a Stroller, Walker, Wagon, Car Seat, Booster Seat o WCHR.",
+        },
+        {
+          title: "7. RAMP - Gate es obligatorio",
+          body:
+            "Ramp solamente puede recibir Gate Checks con status GATE_COLLECTED. Si aparece COUNTER_ASSIGNED, detenerse y contactar Gate. No existe bypass directo Counter-to-Ramp.",
+        },
+        {
+          title: "8. RAMP - Verificar y recibir",
+          body:
+            "Verificar fisicamente el Gate Check Number y seleccionar Receive. Additional Comment es opcional y se usa para informacion como damage, late delivery o special handling.",
+        },
+        {
+          title: "9. LOAD - Seleccionar compartment primero",
+          body:
+            "Seleccionar FORWARD, MIDDLE o AFT; luego seleccionar uno o multiples Gate Checks recibidos y confirmar Load.",
+        },
+        {
+          title: "10. LOAD - Correcciones",
+          body:
+            "Usar Update Compartment, Unload to Ramp u Offload solamente cuando cambie la operacion fisica. No cambiar status solo para cuadrar reportes.",
+        },
+        {
+          title: "11. Cuando BLCS y la operacion no coinciden",
+          body:
+            "Si tienes la pieza fisicamente pero BLCS muestra un status previo incorrecto, detenerse y avisar al Supervisor. El historial debe reflejar el handoff real.",
         },
       ],
       note:
-        "Trabajar solamente en la pagina correspondiente a la posicion que estas cubriendo fisicamente. Los Agents no tienen acceso a Gate Check Database. Nunca reutilizar un Gate Check Number que ya fue asignado.",
+        "Los Agents no administran Gate Check Database. Verificar siempre la pieza fisica antes de confirmar y nunca saltar Gate antes de Ramp.",
     },
   },
 };
