@@ -182,6 +182,7 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
 
         ${item.gatePassengerSafetyConfirmed === true && !isGateSafetyNotApplicable(item) ? `<div class="safety-note"><strong>Passenger Safety Confirmation:</strong> Zip tie secured / passenger informed and passenger advised to remove high-value items, medications, laptops and other valuables.</div>` : ""}
         ${item.gateCollectionNoteCombined ? `<div class="note"><strong>Gate Note:</strong> ${escapeHtml(item.gateCollectionNoteCombined)}</div>` : ""}
+        ${item.rampReceiptComment ? `<div class="note"><strong>Ramp Comment:</strong> ${escapeHtml(item.rampReceiptComment)}</div>` : ""}
         ${item.offloadReason ? `<div class="offload-note"><strong>Offload:</strong> ${escapeHtml(item.offloadReason)} &middot; ${escapeHtml(formatTimestamp(item.offloadedAt))} &middot; ${escapeHtml(actorName(item.offloadedBy))}</div>` : ""}
 
         <div class="steps">
@@ -194,7 +195,7 @@ function buildTrackingDocument({ flight, rows, passengerOnly = false }) {
               ? "Passenger Safety Confirmed - Zip Tie secured / passenger informed - Valuables, medications and laptops removal advised"
               : ""
           )}
-          ${trackingStepHtml("Ramp Received", item.rampReceivedAt, item.rampReceivedBy)}
+          ${trackingStepHtml("Ramp Received", item.rampReceivedAt, item.rampReceivedBy, item.rampReceiptComment ? `Comment: ${item.rampReceiptComment}` : "")}
           ${trackingStepHtml("Aircraft Loaded", item.aircraftLoadedAt, item.aircraftLoadedBy, item.compartment ? `Compartment: ${item.compartment}` : "")}
         </div>
       </section>
@@ -430,6 +431,7 @@ export default function CarryOnTrackingPage({
             item?.compartment,
             item?.status,
             item?.gateCollectionNoteCombined,
+            item?.rampReceiptComment,
             item?.offloadReason,
             item?.counterRecordedWeightLbs,
             item?.gateVerifiedWeightLbs,
@@ -1543,6 +1545,7 @@ function PassengerFullDetail({
         title={gateCreated ? "2. Ramp Received" : "3. Ramp Received"}
         time={item.rampReceivedAt}
         actor={item.rampReceivedBy}
+        extra={item.rampReceiptComment ? `Comment: ${item.rampReceiptComment}` : null}
       />
 
       <DetailStep
